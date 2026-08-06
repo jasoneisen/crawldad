@@ -15,7 +15,9 @@ internal sealed class FakePageHandle : IPageHandle
     private readonly FakeBrowserSession _session;
     private readonly FakeManifest _manifest;
     private readonly Dictionary<string, IDocument> _documents = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string State, string Frame), IDocument> _frameDocuments = [];
     private readonly List<FakeEmit> _recentRequests = [];
+    private readonly List<string> _injectedStyles = [];
 
     private FakeState _state;
     private IDownloadHandle? _pendingDownload;
@@ -29,6 +31,9 @@ internal sealed class FakePageHandle : IPageHandle
 
     /// <summary>Whether <see cref="CloseAsync"/> was called on this page — asserts the crashed page was torn down on reopen.</summary>
     internal bool CloseAttempted { get; private set; }
+
+    /// <summary>The CSS injected by <c>addStyleTag</c> nodes, in order — observable for test assertion (§5.1, no layout applied).</summary>
+    internal IReadOnlyList<string> InjectedStyles => _injectedStyles;
 
     /// <summary>Whether this page has been closed.</summary>
     internal bool Closed { get; private set; }
@@ -56,6 +61,34 @@ internal sealed class FakePageHandle : IPageHandle
     public ILocatorHandle Locator(string selector) => FakeLocatorHandle.Css(this, selector);
 
     public ILocatorHandle GetByTitle(string title) => FakeLocatorHandle.Title(this, title);
+
+    public IFrameHandle FrameLocator(string selector) => new FakeFrameHandle(this, selector);
+
+    public Task AddStyleTagAsync(string content, CancellationToken ct)
+    {
+        _injectedStyles.Add(content);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The (possibly mutated) document of one iframe on the CURRENT state, parsed on first access and cached per
+    /// (state, frame) so in-frame <c>fill</c>/<c>clear</c> persist and a state swap serves the new frame content. A state
+    /// carrying no content for <paramref name="frameSelector"/> yields an empty document — locators find nothing (count
+    /// 0), Playwright's "frame absent" resolving to an empty match set.
+    /// </summary>
+    /// <param name="frameSelector">The iframe element's CSS selector.</param>
+    internal IDocument FrameDocument(string frameSelector)
+    {
+        var key = (_state.Name, frameSelector);
+        if (!_frameDocuments.TryGetValue(key, out var document))
+        {
+            var html = _state.Frames.TryGetValue(frameSelector, out var file) ? _manifest.ReadTextFile(file) : string.Empty;
+            document = _parser.ParseDocument(html);
+            _frameDocuments[key] = document;
+        }
+
+        return document;
+    }
 
     public Task CloseAsync(CancellationToken ct)
     {
@@ -95,7 +128,9 @@ internal sealed class FakePageHandle : IPageHandle
     /// the transition's emitted request and swaps state. Clicks that match no transition are no-ops.
     /// </summary>
     /// <param name="element">The element the locator resolved and clicked, or null when the locator matched nothing.</param>
-    internal void HandleClick(IElement? element)
+    /// <param name="frame">The iframe selector the click happened inside (§ frames), or null for a page-level click; must
+    /// match the transition's own scope, so an in-frame click never fires a page-level transition and vice versa.</param>
+    internal void HandleClick(IElement? element, string? frame)
     {
         if (element is null)
         {
@@ -109,7 +144,13 @@ internal sealed class FakePageHandle : IPageHandle
                 continue;
             }
 
-            if (ReferenceEquals(CurrentDocument.QuerySelector(transition.ClickSelector), element))
+            if (!string.Equals(transition.In, frame, StringComparison.Ordinal))
+            {
+                continue; // the click's frame scope must match the transition's (§ frames)
+            }
+
+            var document = frame is null ? CurrentDocument : FrameDocument(frame);
+            if (ReferenceEquals(document.QuerySelector(transition.ClickSelector), element))
             {
                 MaybeInject(transition); // a scripted fault (§ Deliverable 3) throws here for its leading attempts
 

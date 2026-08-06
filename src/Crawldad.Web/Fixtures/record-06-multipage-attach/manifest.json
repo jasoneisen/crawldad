@@ -1,0 +1,50 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-06): two-page in-frame attachment pagination with a download on each page (photo-front.bin -> ae20275b-b3e3-a1d3-d1d2-befafd8f1819, photo-rear.bin -> 1ece3680-89f3-c1f1-f687-0cd4d3132570). The page-1 file-link and Next clicks and the page-2 file-link click are all in-frame. No Chromium, no live traffic.",
+  "initialState": "att1",
+  "states": {
+    "att1": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00006&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00006&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame-p1.html"
+      }
+    },
+    "att2": {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00006&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame-p2.html"
+      }
+    }
+  },
+  "transitions": [
+    {
+      "from": "att1",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr:nth-child(2) > td:first-child a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "att1",
+      "download": { "file": "photo-front.bin", "suggestedFilename": "front.jpg" }
+    },
+    {
+      "from": "att1",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr.ACA_Table_Pages table.aca_pagination > tbody > tr > td:last-child > a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "att2"
+    },
+    {
+      "from": "att2",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr:nth-child(2) > td:first-child a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "att2",
+      "download": { "file": "photo-rear.bin", "suggestedFilename": "rear.jpg" }
+    }
+  ]
+}

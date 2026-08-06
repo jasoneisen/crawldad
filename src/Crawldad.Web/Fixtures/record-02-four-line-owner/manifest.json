@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-02): 4-<br> address, a '1)'-prefixed 4-line owner, one violation, and a Normal-only CapTree (projectName == \"\"). No attachments iframe. input.link is the resolveUrl base for the related anchors. No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00002&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00002&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-11): the all-empty-regions edge — only record number + type present; no location/owners/violations/parcels/processing/related, and NO frames map (the attachments frame binds an empty document). status == \"\", recordDate == \"\" (no publishDate). No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00011&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00011&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

@@ -27,6 +27,23 @@ The derivation was cross-checked with a standalone AngleSharp harness executing 
 captured page are the Phase 4 gate** (fake ≡ real, against a local fixture site) — this file is a
 faithful synthesis, not a capture.
 
+## golden-full.json provenance (the full-payload search shape — Phase 3 acceptance)
+`golden.json` above is the **Phase 1 fragment** shape (`{ results, hasMorePages }`, driven by
+`search-fragment.json`). `golden-full.json` is the **full** `SearchEnforcementRecords` result shape
+(`{ newLinks, crawledToEnd, pages }`, Appendix B.1, driven by `search-full.json`) over the **same**
+`results.html` DOM — this fixture's rich single-page grid is **reused** as the acceptance corpus'
+single-page case (`SearchAcceptanceTests`; `knownUrls=[]`, `priorCrawlComplete=false`). It is derived
+from `golden.json` by the B.1 payload's shaping:
+
+- `pages` = `[ <the 10 rows of golden.json's "results", verbatim> ]` — the per-row push expression is
+  byte-identical between `search-fragment.json` and `search-full.json` (`:60`/`:34`).
+- `newLinks` = those 10 rows' urls, in order, through `distinct(...)` (`:901`). All 10 are already
+  distinct here (row 3's missing anchor yields `https://aca-prod.accela.com`, itself unique), so
+  `distinct` is the identity — the de-dup *collapse* is exercised by the sibling `caphome-dedup` fixture.
+- `crawledToEnd` = **true**: `table.aca_pagination td:last-child` has no `<a>` → `hasMorePages` false →
+  the last-page branch sets `crawledToEnd = true` (`HistoricalCrawler.cs:87`).
+- Requests: `goto` + search = **2** (single page; the payload breaks before any pagination postback).
+
 ## Deliberate edge cases baked into results.html (the C# semantics must survive all of them)
 | Data row | Edge case | Expected (golden) |
 |---|---|---|

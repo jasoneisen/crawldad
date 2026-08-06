@@ -1,26 +1,31 @@
+using Crawldad.Contracts.Payloads;
+using FluentValidation;
 using JasperFx.Events.Projections;
 using Marten;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Web.Features.Payloads;
 
 /// <summary>
-/// Self-registration for the Payloads slice (§14.4). A payload is an event-sourced aggregate whose stream is its
-/// version history; Phase 5 fills this in with <c>PayloadDrafted</c>/<c>PayloadRevised</c>/… events, the
-/// <c>Payload</c> snapshot, and the <c>PayloadSummary</c> read model — all on the shared projection lifecycle,
-/// exactly as <c>IncidentModule</c> does in the foundation. Kept as a registered-but-empty stub so the wiring
-/// seam exists now and the later package fills it in place.
+/// Self-registration for the Payloads slice (§14.1/§14.4): the event-sourced <see cref="Payload"/> aggregate whose
+/// stream is its version history, plus the slice's DI (the <c>POST /payloads</c> boundary validator). This work
+/// package ships draft-at-save with validation; revise/rename/archive, the <c>PayloadSummary</c> read model, and drift
+/// arrive in Phase 5, filling this module in place.
 /// </summary>
 public static class PayloadsModule
 {
-    /// <summary>
-    /// Registers the slice's events and projections on the shared <paramref name="lifecycle"/> (Async in
-    /// production, Inline under the test switch). Nothing to register until Phase 5.
-    /// </summary>
+    /// <summary>Registers the <see cref="Payload"/> snapshot on the shared <paramref name="lifecycle"/> (Inline under the test switch, Async in production).</summary>
+    /// <param name="options">The Marten store options.</param>
+    /// <param name="lifecycle">The shared projection lifecycle.</param>
     public static void ConfigureMarten(StoreOptions options, ProjectionLifecycle lifecycle)
     {
-        // No events, snapshots, or projections yet. Discard the seam parameters so this empty stub stays
-        // warning-clean under the zero-warning gate; Phase 5 replaces these lines with the real registrations.
-        _ = options;
-        _ = lifecycle;
+        // Both enums declare Inline=0, Async=1, so the ordinal cast faithfully maps the config-driven lifecycle
+        // (mirrors RunsModule). PayloadDrafted carries a Payload.Create Apply, so Marten discovers it from the snapshot.
+        options.Projections.Snapshot<Payload>((SnapshotLifecycle)(int)lifecycle);
     }
+
+    /// <summary>Registers the slice's services: the <c>POST /payloads</c> boundary validator.</summary>
+    /// <param name="services">The DI container.</param>
+    public static void AddPayloadsServices(IServiceCollection services) =>
+        services.AddScoped<IValidator<SavePayloadRequest>, SavePayloadRequestValidator>();
 }

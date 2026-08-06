@@ -224,69 +224,23 @@ internal sealed class RunInterpreter
 
     // ----- parse-time validation (§Deliverable 4) ----------------------------
 
+    // The run-time structural pre-pass: the SAME PayloadValidator save-time uses (Deliverable 3 — one implementation,
+    // no divergence). It rejects unknown head keys and missing maxIterations before any side effect; the first issue
+    // becomes the terminal §10 failure at its step. Save-time layers the JSON Schema + semantic pass on top of this;
+    // the run path deliberately keeps only this structural pre-pass, letting defined-before-use / expression-parse
+    // faults surface at evaluation exactly as before (inline POST /runs payloads are not held to the save-time bar).
     private void ValidateProgram()
     {
-        var index = 0;
-        foreach (var step in _payload.GetProperty("steps").EnumerateArray())
+        var issues = PayloadValidator.ValidateStructure(_payload);
+        if (issues.Count == 0)
         {
-            _currentStepIndex = index;
-            ValidateNode(step);
-            index++;
-        }
-    }
-
-    private void ValidateNode(JsonElement node)
-    {
-        var kind = node.EnumerateObject().First().Name;
-        if (!_dispatch.ContainsKey(kind))
-        {
-            _currentKind = kind;
-            throw new InterpreterException(InterpreterErrorCodes.UnknownNode, $"unknown node '{kind}'");
+            return;
         }
 
-        if (string.Equals(kind, "comment", StringComparison.Ordinal))
-        {
-            return; // §6: comment is exempt and its body is a bare string, not a node object
-        }
-
-        var body = node.GetProperty(kind);
-        if (RequiresMaxIterations(kind) && !body.TryGetProperty("maxIterations", out _))
-        {
-            _currentKind = kind;
-            throw new InterpreterException(InterpreterErrorCodes.MissingMaxIterations, $"'{kind}' requires a maxIterations cap (§6)");
-        }
-
-        ValidateChildBlocks(body);
-    }
-
-    private static bool RequiresMaxIterations(string kind) =>
-        string.Equals(kind, "loop", StringComparison.Ordinal) || string.Equals(kind, "forEach", StringComparison.Ordinal);
-
-    private void ValidateChildBlocks(JsonElement body)
-    {
-        ValidateBlock(body, "then");
-        ValidateBlock(body, "else");
-        ValidateBlock(body, "do");
-        ValidateBlock(body, "trigger");
-        ValidateBlock(body, "default");
-        if (body.TryGetProperty("cases", out var cases))
-        {
-            foreach (var branch in cases.EnumerateArray())
-            {
-                ValidateBlock(branch, "do");
-            }
-        }
-    }
-
-    private void ValidateBlock(JsonElement owner, string name)
-    {
-        if (owner.TryGetProperty(name, out var block))
-        {
-            foreach (var node in block.EnumerateArray())
-            {
-                ValidateNode(node);
-            }
-        }
+        var first = issues[0];
+        _currentStepIndex = first.StepIndex;
+        _currentKind = first.StepKind;
+        throw new InterpreterException(first.Code, first.Message);
     }
 
     // ----- setup phases ------------------------------------------------------
@@ -352,6 +306,8 @@ internal sealed class RunInterpreter
             ["waitForLoadState"] = Effect(WaitForLoadStateAsync),
             ["waitForRequest"] = Effect(WaitForRequestAsync),
             ["waitFor"] = Effect(WaitForAsync),
+            ["frame"] = Effect(FrameAsync),
+            ["addStyleTag"] = Effect(AddStyleTagAsync),
             ["click"] = Effect(ClickAsync),
             ["fill"] = Effect(FillAsync),
             ["clear"] = Effect(ClearAsync),
@@ -412,6 +368,21 @@ internal sealed class RunInterpreter
     private ValueTask WaitForLoadStateAsync(JsonElement body, CancellationToken ct) =>
         new(_scope.PageHandle.WaitForLoadStateAsync(body.GetProperty("state").GetString()!, Timeout(body), ct));
 
+    // frame binds a FrameLocator handle to a var (§5.1); `in:` on later nodes/Sels roots resolution inside it. The
+    // selector is the iframe element's CSS Tmpl (Playwright FrameLocator takes a string, so a Sel here is its string form).
+    private async ValueTask FrameAsync(JsonElement body, CancellationToken ct)
+    {
+        var selector = await CrawldadTemplate.Parse(body.GetProperty("selector").GetString()!).RenderAsync(_scope, ct);
+        _scope.Set(body.GetProperty("var").GetString()!, _scope.PageHandle.FrameLocator(selector));
+    }
+
+    // addStyleTag injects CSS (data, not code — §15 tension #3); the reference forces record tabs visible (:209).
+    private async ValueTask AddStyleTagAsync(JsonElement body, CancellationToken ct)
+    {
+        var content = await CrawldadTemplate.Parse(body.GetProperty("content").GetString()!).RenderAsync(_scope, ct);
+        await _scope.PageHandle.AddStyleTagAsync(content, ct);
+    }
+
     private async ValueTask WaitForRequestAsync(JsonElement body, CancellationToken ct)
     {
         var urlPrefix = await CrawldadTemplate.Parse(body.GetProperty("urlPrefix").GetString()!).RenderAsync(_scope, ct);
@@ -425,10 +396,12 @@ internal sealed class RunInterpreter
         _requests++;
     }
 
+    // `state` defaults to "visible" (Playwright's Locator.WaitForAsync default) when omitted — the reference's
+    // attachment page-number wait passes no state (:612-614).
     private async ValueTask WaitForAsync(JsonElement body, CancellationToken ct)
     {
         var handle = await ResolveSelectorAsync(body, ct);
-        await handle.WaitForAsync(body.GetProperty("state").GetString()!, Timeout(body), ct);
+        await handle.WaitForAsync(OptString(body, "state") ?? "visible", Timeout(body), ct);
     }
 
     private async ValueTask ClickAsync(JsonElement body, CancellationToken ct)
@@ -454,11 +427,6 @@ internal sealed class RunInterpreter
 
     private async ValueTask LocateAsync(JsonElement body, CancellationToken ct)
     {
-        if (body.TryGetProperty("in", out _))
-        {
-            throw new InterpreterException(InterpreterErrorCodes.NotSupportedInV0, "frames ('in') are not supported in v0");
-        }
-
         var handle = body.TryGetProperty("from", out var from)
             ? await LocateFromHandleAsync(body, from.GetString()!, ct)
             : await LocateFromSelectorAsync(body, ct);
@@ -490,14 +458,15 @@ internal sealed class RunInterpreter
 
     private async ValueTask<ILocatorHandle> LocateFromSelectorAsync(JsonElement body, CancellationToken ct)
     {
-        // `base` names a parent handle; the selector is then a relative CSS template on it.
+        // `base` names a parent handle (which carries its own page/frame context); the selector is then a relative CSS
+        // template on it.
         if (body.TryGetProperty("base", out var baseVar))
         {
             var css = await CrawldadTemplate.Parse(body.GetProperty("selector").GetString()!).RenderAsync(_scope, ct);
             return _scope.Sel.RequireHandle(baseVar.GetString()!).Locator(css);
         }
 
-        return await _scope.Sel.ResolveNodeAsync(body.GetProperty("selector"), ct);
+        return await _scope.Sel.ResolveNodeAsync(body.GetProperty("selector"), FrameArg(body), ct);
     }
 
     // ----- download (§9.3) ---------------------------------------------------
@@ -803,15 +772,12 @@ internal sealed class RunInterpreter
         throw new InterpreterException(InterpreterErrorCodes.MaxIterationsExceeded, "loop exceeded its maxIterations cap");
     }
 
-    private async ValueTask<ILocatorHandle> ResolveSelectorAsync(JsonElement body, CancellationToken ct)
-    {
-        if (body.TryGetProperty("in", out _))
-        {
-            throw new InterpreterException(InterpreterErrorCodes.NotSupportedInV0, "frames ('in') are not supported in v0");
-        }
+    private async ValueTask<ILocatorHandle> ResolveSelectorAsync(JsonElement body, CancellationToken ct) =>
+        await _scope.Sel.ResolveNodeAsync(body.GetProperty("selector"), FrameArg(body), ct);
 
-        return await _scope.Sel.ResolveNodeAsync(body.GetProperty("selector"), ct);
-    }
+    // Resolves a node's `in:` (a frame var name, §5.2) to a bound frame handle, or null when absent (page-rooted).
+    private IFrameHandle? FrameArg(JsonElement body) =>
+        body.TryGetProperty("in", out var inVar) ? _scope.Sel.RequireFrame(inVar.GetString()!) : null;
 
     private ValueTask<object?> ExprAsync(JsonElement expr, CancellationToken ct) =>
         CrawldadExpression.Parse(expr.GetString()!).EvaluateAsync(_scope, ct);

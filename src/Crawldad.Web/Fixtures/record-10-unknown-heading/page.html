@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!-- Synthesized FULL CapDetail record (record-10) — the UNKNOWN-HEADING terminal case (:350-353). The LOCATION and
+     RECORD DETAILS regions parse fine (guards pass), but the owner-details section has a heading the switch does not
+     recognise ("Contact Information" — not description / licensed professional / owner), so B.2's switch default
+     `fail { class:"terminal", code:"unknown_heading" }` fires. A terminal fail is excluded from retryOn, so the run is
+     NOT retried. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <span id="ctl00_PlaceHolderMain_lblPermitNumber">24ENF-00010</span>
+  <span id="ctl00_PlaceHolderMain_lblPermitType">Enforcement</span>
+
+  <!-- LOCATION — 3-<br> branch (parses cleanly before the failure) -->
+  <table id="tbl_worklocation">
+    <tbody>
+      <tr><td>Work Location</td><td><span>*42 UNKNOWN RD*</span><br>LOUISVILLE, KY 40218<span> View Map</span><br></td></tr>
+    </tbody>
+  </table>
+
+  <!-- OWNER DETAILS — an unrecognised heading triggers the terminal unknown_heading failure -->
+  <table id="ctl00_PlaceHolderMain_PermitDetailList1_TBPermitDetailTest">
+    <tbody>
+      <tr>
+        <td>
+          <h1>Contact Information</h1>
+          <table><tbody><tr><td>Phone</td><td>(502) 555-0100</td></tr></tbody></table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

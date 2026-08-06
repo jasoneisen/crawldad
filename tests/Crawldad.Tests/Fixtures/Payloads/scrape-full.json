@@ -1,0 +1,298 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.scrape",
+  "inputs": {
+    "backend":         { "type": "backend",       "required": true },
+    "link":            { "type": "string",        "required": true },
+    "publishDate":     { "type": "string",        "required": false },
+    "attachmentStore": { "type": "storageTarget", "required": true }
+  },
+  "config": {
+    "backend": "input.backend",
+    "defaultTimeoutMs": 120000,
+    "launch":  { "args": ["--disable-web-security"] },
+    "context": { "bypassCsp": true },
+    "route": {
+      "blockHosts": ["www.datadoghq-browser-agent.com","cdn.walkme.com","cdn.gtranslate.net",
+                     "csp-report.browser-intake-datadoghq.com","ec.walkme.com",
+                     "rum.browser-intake-datadoghq.com","connect.facebook.net","fonts.googleapis.com"],
+      "blockResourceTypes": ["image","media","font"],
+      "cacheResourceTypes": ["stylesheet","script"],
+      "cacheUrlSuffixes":   [".html",".js"],
+      "throttle": { "minIntervalMs": 2000 }
+    },
+    "retry": { "maxAttempts": 15, "delayMs": 5000, "backoff": "constant",
+               "retryOn": ["timeout","pageCrashed"], "onPageCrashed": "reopenPage" }
+  },
+  "vars": {
+    "violations": [], "parcels": [], "locations": [], "owners": [], "processingStatus": [],
+    "attachments": [], "relatedRecords": [], "description": "''", "parentRecordNumber": "''",
+    "hasMoreAttachmentPages": false
+  },
+  "steps": [
+    { "goto": { "url": "${input.link}" } },
+    { "waitForLoadState": { "state": "load" } },
+
+    { "comment": "GUARD — redirect to Login/Error is terminal, NOT retried (:203-206)" },
+    { "guard": { "cond": "contains(lower(pageUrl()), 'capdetail.aspx')",
+        "elseFail": { "class": "terminal", "code": "record_not_accessible",
+                      "message": "Record not accessible (redirected to ${urlPath(pageUrl())}): ${input.link}" } } },
+
+    { "addStyleTag": { "content": ".record-detail .record-main-section .record-tab-content { display: block !important; }" } },
+    { "click": { "selector": "#imgMoreDetail" } },
+    { "if": { "cond": "count('#imgASI')  > 0", "then": [ { "click": { "selector": "#imgASI"  } } ] } },
+    { "if": { "cond": "count('#imgASIT') > 0", "then": [ { "click": { "selector": "#imgASIT" } } ] } },
+    { "click": { "selector": "#imgParcel" } },
+    { "click": { "selector": { "title": "Record Info menu, press tab to expand" } } },
+    { "click": { "selector": { "title": "Attachments" } } },
+    { "waitForLoadState": { "state": "networkidle", "timeoutMs": 360000 } },
+
+    { "comment": "===== LOCATION (:229-268) =====" },
+    { "if": { "cond": "count('#tbl_worklocation') > 0", "then": [
+      { "locate": { "var": "addrRows", "selector": "#tbl_worklocation tr:first-child, #tbl_worklocation tr[tips='tr_additional_locations']" } },
+      { "forEach": { "in": "addrRows", "as": "addressRow", "maxIterations": 100000, "do": [
+        { "locate": { "var": "addressBlock", "base": "addressRow", "selector": "td:nth-child(2)" } },
+        { "set": { "var": "html",         "value": "innerHtml(addressBlock)" } },
+        { "set": { "var": "addressLines", "value": "length(split(html, '<br>'))" } },
+        { "set": { "var": "address1",     "value": "trim(replace(coalesce(text(addressBlock,'span:first-child'),''), '*', ''))" } },
+        { "set": { "var": "address2",     "value": "''" } },
+        { "set": { "var": "cityStateZip", "value": "''" } },
+        { "switch": { "cases": [
+            { "when": "addressLines == 3", "do": [
+                { "set": { "var": "cityStateZip", "value": "split(split(trim(html),'<br>')[1], '<span')[0]" } } ] },
+            { "when": "addressLines == 4", "do": [
+                { "set": { "var": "address2",     "value": "split(trim(html),'<br>')[1]" } },
+                { "set": { "var": "cityStateZip", "value": "split(split(trim(html),'<br>')[2], '<span')[0]" } } ] },
+            { "when": "addressLines == 5", "do": [
+                { "set": { "var": "address2",     "value": "split(trim(html),'<br>')[1]" } },
+                { "set": { "var": "cityStateZip", "value": "split(trim(html),'<br>')[2]" } } ] }
+          ], "default": [
+            { "log": { "level": "warning", "message": "Exceptional location address lines (${addressLines}): ${input.link}" } }
+          ] } },
+        { "push": { "into": "locations", "value": "{ address1: trim(address1), address2: trim(address2), cityStateZip: trim(cityStateZip) }" } }
+      ] } }
+    ] } },
+
+    { "comment": "===== RECORD DETAILS (:270-357) =====" },
+    { "set": { "var": "recordNumber", "value": "coalesce(text('#ctl00_PlaceHolderMain_lblPermitNumber'), '')" } },
+    { "guard": { "cond": "!isNullOrWhitespace(recordNumber)",
+        "elseFail": { "class": "terminal", "code": "missing_record_number", "message": "Failed to locate record number: ${input.link}" } } },
+    { "set": { "var": "recordType", "value": "coalesce(text('#ctl00_PlaceHolderMain_lblPermitType'), '')" } },
+    { "guard": { "cond": "!isNullOrWhitespace(recordType)",
+        "elseFail": { "class": "terminal", "code": "missing_record_type", "message": "Failed to locate record type: ${input.link}" } } },
+    { "set": { "var": "recordStatus", "value": "count('#ctl00_PlaceHolderMain_lblRecordStatus') > 0 ? coalesce(text('#ctl00_PlaceHolderMain_lblRecordStatus'),'') : ''" } },
+    { "set": { "var": "projectName", "value":
+        "count('#tableCapTreeList') == 0 ? recordType : (count('#tableCapTreeList tr.ACA_RelatedCap_Highlight > td:nth-child(3)') > 0 ? trim(coalesce(text({ css: '#tableCapTreeList tr.ACA_RelatedCap_Highlight > td:nth-child(3)', first: true }),'')) : '')" } },
+    { "set": { "var": "recordDate", "value": "coalesce(input.publishDate, '')" } },
+
+    { "locate": { "var": "ownerDetails", "selector": "#ctl00_PlaceHolderMain_PermitDetailList1_TBPermitDetailTest > tbody > tr > td" } },
+    { "if": { "cond": "count(ownerDetails) > 0", "then": [
+      { "forEach": { "in": "ownerDetails", "as": "detail", "maxIterations": 100000, "do": [
+        { "set": { "var": "heading", "value": "trim(coalesce(text(detail,'h1'),''))" } },
+        { "switch": { "cases": [
+          { "when": "startsWith(lower(heading), 'description')", "do": [
+              { "set": { "var": "description", "value": "trim(replace(coalesce(text(detail,'table td:nth-child(2)'),''), '*', ''))" } } ] },
+          { "when": "startsWith(lower(heading), 'licensed professional')", "do": [
+              { "comment": "TODO in the reference — intentional no-op (:301-304)" } ] },
+          { "when": "startsWith(lower(heading), 'owner')", "do": [
+              { "locate": { "var": "ownerBlocks", "base": "detail", "selector": "table.table_child table.table_child" } },
+              { "if": { "cond": "count(ownerBlocks) > 1",
+                  "then": [ { "log": { "level": "warning", "message": "MULTIPLE OWNERS: ${input.link}" } } ] } },
+              { "forEach": { "in": "ownerBlocks", "as": "ownerBlock", "maxIterations": 100000, "do": [
+                { "set": { "var": "name",      "value": "trim(replace(coalesce(text(ownerBlock,'table tr:first-child td'),''), '*', ''))" } },
+                { "locate": { "var": "ownerRows", "base": "ownerBlock", "selector": "table tr" } },
+                { "set": { "var": "ownerLines","value": "count(ownerRows)" } },
+                { "if": { "cond": "length(name) >= 2 && substring(name,1,2) == ')'",
+                    "then": [ { "set": { "var": "name", "value": "trim(substring(name,2))" } } ] } },
+                { "continue": { "when": "isNullOrWhitespace(name) && ownerLines == 1" } },
+                { "set": { "var": "ownerAddr1", "value": "exists({ base: 'ownerBlock', css: 'table tr:nth-child(2) td' }) ? coalesce(text(ownerBlock,'table tr:nth-child(2) td'),'') : ''" } },
+                { "set": { "var": "ownerAddr2", "value": "''" } },
+                { "switch": { "cases": [
+                    { "when": "ownerLines == 4", "do": [
+                        { "set": { "var": "ownerAddr2", "value": "coalesce(text(ownerBlock,'table tr:nth-child(3) td'),'')" } } ] },
+                    { "when": "ownerLines < 2 || ownerLines > 4", "do": [
+                        { "log": { "level": "warning", "message": "EXCEPTIONAL OWNER LINE COUNT: ${input.link}" } } ] }
+                  ] } },
+                { "set": { "var": "ownerCsz", "value": "coalesce(text(ownerBlock,'table tr:last-child td'),'')" } },
+                { "push": { "into": "owners", "value": "{ name: trim(name), address1: trim(ownerAddr1), address2: trim(ownerAddr2), cityStateZip: trim(ownerCsz) }" } }
+              ] } }
+          ] }
+        ], "default": [
+          { "fail": { "class": "terminal", "code": "unknown_heading", "message": "UNKNOWN HEADING: ${heading} AT ${input.link}" } }
+        ] } }
+      ] } }
+    ] } },
+
+    { "comment": "===== APPLICATION INFORMATION TABLE (:359-425) =====" },
+    { "if": { "cond": "count('#trASITList > td > table') > 0", "then": [
+      { "loop": { "maxIterations": 100000,
+        "for": { "var": "i", "from": "1", "to": "count('#trASITList > td > table')", "inclusiveTo": true },
+        "do": [
+          { "set": { "var": "asitHeading", "value": "trim(coalesce(text('#trASITList > td > table:nth-child(' + i + ') tbody > tr:first-child'),''))" } },
+          { "switch": { "cases": [
+            { "when": "equalsIgnoreCase(asitHeading, 'VIOLATIONS')", "do": [
+              { "loop": { "maxIterations": 100000,
+                "for": { "var": "j", "from": "2", "to": "count('#trASITList > td > table:nth-child(' + i + ') tbody > tr')", "inclusiveTo": true },
+                "do": [
+                  { "set": { "var": "v", "value": "{ title:'', status:'', code:'', dueDate:'', inspectorComment:'', referralType:'', referralDate:'', workOrderType:'', referralResult:'' }" } },
+                  { "loop": { "maxIterations": 100000,
+                    "for": { "var": "k", "from": "0", "to": "count('#trASITList > td > table:nth-child(' + i + ') tbody > tr:nth-child(' + j + ') > td > div > div.MoreDetail_ItemCol1')", "exclusiveTo": true },
+                    "do": [
+                      { "set": { "var": "key",   "value": "trim(coalesce(text('#trASITList > td > table:nth-child(' + i + ') tbody > tr:nth-child(' + j + ') > td > div > div:nth-child(' + (k*2+1) + ')'),''))" } },
+                      { "set": { "var": "value", "value": "trim(coalesce(text('#trASITList > td > table:nth-child(' + i + ') tbody > tr:nth-child(' + j + ') > td > div > div:nth-child(' + (k*2+2) + ')'),''))" } },
+                      { "switch": { "cases": [
+                        { "when": "startsWith(lower(key),'violation')",    "do": [ { "set": { "var": "v", "path": "title",            "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'status')",       "do": [ { "set": { "var": "v", "path": "status",           "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'code')",         "do": [ { "set": { "var": "v", "path": "code",             "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'due date')",     "do": [ { "set": { "var": "v", "path": "dueDate",          "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'inspector co')", "do": [ { "set": { "var": "v", "path": "inspectorComment", "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'referral typ')", "do": [ { "set": { "var": "v", "path": "referralType",     "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'referral dat')", "do": [ { "set": { "var": "v", "path": "referralDate",     "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'work order t')", "do": [ { "set": { "var": "v", "path": "workOrderType",    "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'referral res')", "do": [ { "set": { "var": "v", "path": "referralResult",   "value": "value" } } ] }
+                      ] } }
+                    ] } },
+                  { "push": { "into": "violations", "value": "v" } }
+                ] } }
+            ] },
+            { "when": "equalsIgnoreCase(asitHeading, 'CODE ENFORCEMENT BOARD')", "do": [
+              { "comment": "ignored in the reference (:414-417)" } ] }
+          ], "default": [
+            { "log": { "level": "warning", "message": "Unknown heading in application information table" } }
+          ] } }
+        ] } }
+    ] } },
+
+    { "comment": "===== PARCEL LIST (:427-453) =====" },
+    { "if": { "cond": "count('#trParcelList table') > 0", "then": [
+      { "if": { "cond": "count('#trParcelList table') > 1", "then": [
+          { "log": { "level": "warning", "message": "MULTIPLE PARCELS: ${input.link}" } } ] } },
+      { "locate": { "var": "parcelBlocks", "selector": "#trParcelList table" } },
+      { "forEach": { "in": "parcelBlocks", "as": "parcelBlock", "maxIterations": 100000, "do": [
+        { "push": { "into": "parcels", "value":
+          "{ parcelNumber: trim(split(coalesce(replace(text(parcelBlock,'tr:first-child .MoreDetail_ItemCol2'),'*',''),':'),':')[1]), block: trim(split(coalesce(text(parcelBlock,'tr:nth-child(2) .MoreDetail_ItemCol2'),':'),':')[1]), lot: trim(split(coalesce(text(parcelBlock,'tr:nth-child(3) .MoreDetail_ItemCol2 div:first-child'),':'),':')[1]), subdivision: trim(split(coalesce(text(parcelBlock,'tr:nth-child(3) .MoreDetail_ItemCol2 div:last-child'),':'),':')[1]) }" } }
+      ] } }
+    ] } },
+
+    { "comment": "===== PROCESSING STATUS (:455-529) — paired rows i*2 / i*2+1 =====" },
+    { "locate": { "var": "processingRows", "selector": "#divProcessingTable > table > tbody > tr" } },
+    { "set": { "var": "procRowCount", "value": "count(processingRows)" } },
+    { "loop": { "maxIterations": 100000,
+      "for": { "var": "i", "from": "0", "to": "procRowCount", "exclusiveTo": true },
+      "do": [
+        { "comment": "true bound is i*2+1 <= procRowCount (:462); break enforces it before any row access" },
+        { "break": { "when": "i*2+1 > procRowCount" } },
+        { "locate": { "var": "headRow", "from": "processingRows", "nth": "i*2" } },
+        { "comment": "heading = ... ?? throw (:464). text() yields null when the cell is absent." },
+        { "set": { "var": "procHeading", "value": "text(headRow,'td:last-child')" } },
+        { "guard": { "cond": "procHeading != null",
+            "elseFail": { "class": "terminal", "code": "processing_heading_unparseable", "message": "Heading cannot be parsed" } } },
+        { "if": { "cond": "exists({ base:'headRow', css:'a' })", "then": [
+          { "locate": { "var": "expandLink", "base": "headRow", "selector": "a" } },
+          { "click": { "selector": "expandLink" } },
+          { "locate": { "var": "detailRow", "from": "processingRows", "nth": "i*2+1" } },
+          { "locate": { "var": "lineBlocks", "base": "detailRow", "selector": "td:last-child > table:first-child > tbody > tr:first-child td:last-child td" } },
+          { "continue": { "when": "count(lineBlocks) == 0" } },
+          { "set": { "var": "lines", "value": "[]" } },
+          { "forEach": { "in": "lineBlocks", "as": "lineBlock", "maxIterations": 100000, "do": [
+            { "forEach": { "in": "split(innerText(lineBlock), '\n')", "as": "ln", "maxIterations": 100000, "do": [
+              { "push": { "into": "lines", "value": "trim(ln)" } }
+            ] } }
+          ] } },
+          { "if": { "cond": "count(lines) > 2", "then": [
+              { "log": { "level": "warning", "message": "Processing status lines > 2: ${input.link}" } } ] } },
+          { "set": { "var": "due",        "value": "replace(trim(split(lines[0],',')[0]), 'Due on ', '')" } },
+          { "set": { "var": "assignedTo", "value": "replace(trim(split(lines[0],',')[1]), 'assigned to ', '')" } },
+          { "set": { "var": "markedAs",   "value": "replace(trim(split(lines[1],' on ')[0]), 'Marked as ', '')" } },
+          { "set": { "var": "markedOn",   "value": "trim(split(split(lines[1],' on ')[1], ' by ')[0])" } },
+          { "set": { "var": "markedBy",   "value": "trim(split(split(lines[1],' on ')[1], ' by ')[1])" } },
+          { "set": { "var": "addtl", "value": "{}" } },
+          { "if": { "cond": "exists({ base:'detailRow', css:'td:last-child > table:first-child > tbody > tr:nth-child(2) td:last-child tr' })", "then": [
+            { "locate": { "var": "addtlRows", "base": "detailRow", "selector": "td:last-child > table:first-child > tbody > tr:nth-child(2) td:last-child tr" } },
+            { "forEach": { "in": "addtlRows", "as": "ar", "maxIterations": 100000, "do": [
+              { "set": { "var": "h", "value": "trim(coalesce(text(ar,'td:first-child'),''))" } },
+              { "set": { "var": "b", "value": "trim(coalesce(text(ar,'td:last-child'),''))" } },
+              { "if": { "cond": "!isNullOrWhitespace(h) && !isNullOrWhitespace(b)",
+                  "then": [ { "set": { "var": "addtl", "path": "[${endsWith(h,':') ? substring(h,0,length(h)-1) : h}]", "value": "b" } } ],
+                  "else": [ { "log": { "level": "warning", "message": "Could not parse additional comment lines: ${input.link}" } } ] } }
+            ] } }
+          ] } },
+          { "push": { "into": "processingStatus", "value": "{ category: procHeading, dueDate: due, assignedTo: assignedTo, status: markedAs, statusDate: markedOn, statusBy: markedBy, lines: addtl }" } }
+        ] } }
+      ] } },
+
+    { "comment": "===== ATTACHMENTS (:531-623) — iframe + capped pagination + downloads =====" },
+    { "frame": { "var": "attFrame", "selector": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList" } },
+    { "set": { "var": "attPagesVisited", "value": "0" } },
+    { "loop": { "maxIterations": 100000, "while": "hasMoreAttachmentPages", "do": [
+      { "locate": { "var": "attRows", "in": "attFrame", "selector": "#attachmentList_gdvAttachmentList > tbody > tr:not(.ACA_Table_Pages)" } },
+      { "if": { "cond": "count(attRows) > 1", "then": [
+        { "loop": { "maxIterations": 100000,
+          "for": { "var": "i", "from": "1", "to": "count(attRows)", "exclusiveTo": true },
+          "do": [
+            { "locate": { "var": "attRow", "in": "attFrame", "selector": "#attachmentList_gdvAttachmentList > tbody > tr:nth-child(${i+1})" } },
+            { "continue": { "when": "equalsIgnoreCase(trim(coalesce(text(attRow),'')), 'No records found.')" } },
+            { "locate": { "var": "fileLink", "base": "attRow", "selector": "td:first-child a" } },
+            { "continue": { "when": "count(fileLink) == 0" } },
+            { "set": { "var": "filename",     "value": "trim(coalesce(text(attRow,'td:first-child'),''))" } },
+            { "set": { "var": "attType",      "value": "trim(coalesce(text(attRow,'td:nth-child(5)'),''))" } },
+            { "set": { "var": "attSize",      "value": "trim(coalesce(text(attRow,'td:nth-child(6)'),''))" } },
+            { "set": { "var": "latestUpdate", "value": "trim(coalesce(text(attRow,'td:nth-child(7)'),''))" } },
+            { "comment": "download hashes the bytes and streams to the store; idempotent by content identity (§9.3)" },
+            { "download": { "trigger": [ { "click": { "selector": "fileLink" } } ],
+                            "to": "input.attachmentStore", "timeoutMs": 180000, "var": "dl" } },
+            { "if": { "cond": "dl.stored",
+                "then": [ { "push": { "into": "attachments", "value":
+                  "{ attachmentId: dl.contentId, filename: filename, internalFilename: string(dl.contentId) + (contains(filename,'.') ? '.' + substringAfterLast(filename,'.') : ''), type: attType, size: attSize, latestUpdate: latestUpdate }" } } ],
+                "else": [ { "log": { "level": "warning", "message": "Handling attachment failed: ${input.link}: ${filename}" } } ] } }
+          ] } }
+      ] } },
+      { "set": { "var": "attPagesVisited", "value": "attPagesVisited + 1" } },
+      { "locate": { "var": "nextAtt", "in": "attFrame", "selector": "#attachmentList_gdvAttachmentList > tbody > tr.ACA_Table_Pages table.aca_pagination > tbody > tr > td:last-child > a" } },
+      { "set": { "var": "hasNextAttLink",          "value": "count(nextAtt) > 0" } },
+      { "set": { "var": "hasMoreAttachmentPages",  "value": "hasNextAttLink && attPagesVisited < 50" } },
+      { "if": { "cond": "hasMoreAttachmentPages", "then": [
+          { "set": { "var": "nextPageNumber", "value": "string(attPagesVisited + 1)" } },
+          { "click": { "selector": "nextAtt" } },
+          { "waitFor": { "in": "attFrame",
+              "selector": { "css": "table.aca_pagination span.SelectedPageButton", "filter": { "hasTextRegex": "^${nextPageNumber}$" } },
+              "timeoutMs": 360000 } }
+        ], "else": [
+          { "if": { "cond": "hasNextAttLink", "then": [
+              { "log": { "level": "warning", "message": "Attachment pagination hit safety cap (50 pages) for ${input.link}" } } ] } }
+        ] } }
+    ] } },
+
+    { "comment": "===== RELATED RECORDS (:625-697) — indentation-based parent resolution =====" },
+    { "locate": { "var": "relatedBlocks", "selector": "#tableCapTreeList > tbody > tr:not(:first-child)" } },
+    { "if": { "cond": "count(relatedBlocks) > 1", "then": [
+      { "set": { "var": "parents", "value": "{}" } },
+      { "forEach": { "in": "relatedBlocks", "as": "rb", "maxIterations": 100000, "do": [
+        { "set": { "var": "relNum",     "value": "trim(coalesce(text(rb,'td:first-child td:last-child'),''))" } },
+        { "set": { "var": "indentStr",  "value": "trim(replace(coalesce(attr(rb,'td:first-child td:first-child','width'),''), 'px', ''))" } },
+        { "if": { "cond": "!isNullOrWhitespace(indentStr) && isInt(indentStr)",
+            "then": [ { "set": { "var": "parents", "path": "[${toInt(indentStr)}]", "value": "relNum" } } ],
+            "else": [ { "log": { "level": "error", "message": "Could not determine indentation of related record: ${input.link}" } } ] } },
+        { "set": { "var": "tdClass", "value": "trim(coalesce(attr(rb,'class'),''))" } },
+        { "set": { "var": "indent",  "value": "isInt(indentStr) ? toInt(indentStr) : 0" } },
+        { "set": { "var": "cand",    "value": "filter(map(keys(parents), k, toInt(k)), n, n < indent)" } },
+        { "switch": { "cases": [
+          { "when": "contains(tdClass, 'ACA_RelatedCap_Highlight')", "do": [
+              { "set": { "var": "parentRecordNumber", "value": "count(cand) > 0 ? get(parents, string(max(cand))) : ''" } } ] },
+          { "when": "contains(tdClass, 'ACA_RelatedCap_Normal')", "do": [
+              { "set": { "var": "relType", "value": "trim(coalesce(text(rb,'> td:nth-child(2)'),''))" } },
+              { "set": { "var": "relName", "value": "trim(coalesce(text(rb,'> td:nth-child(3)'),''))" } },
+              { "set": { "var": "relDate", "value": "trim(coalesce(text(rb,'> td:nth-child(4)'),''))" } },
+              { "set": { "var": "relLink", "value": "exists({ base:'rb', css:'> td:last-child a' }) && !isNullOrWhitespace(trim(coalesce(attr(rb,'> td:last-child a','href'),''))) ? resolveUrl(input.link, trim(attr(rb,'> td:last-child a','href'))) : ''" } },
+              { "set": { "var": "relParent", "value": "count(cand) > 0 ? get(parents, string(max(cand))) : ''" } },
+              { "push": { "into": "relatedRecords", "value":
+                "{ recordNumber: relNum, parentRecordNumber: relParent, recordType: relType, projectName: relName, date: relDate, link: relLink }" } } ] }
+        ], "default": [
+          { "log": { "level": "error", "message": "Could not determine class of related record: ${input.link}" } }
+        ] } }
+      ] } }
+    ] } }
+  ],
+
+  "result": "{ link: input.link, recordNumber: recordNumber, recordType: recordType, projectName: projectName, recordDate: recordDate, status: recordStatus, description: description, parentRecordNumber: parentRecordNumber, violations: violations, parcels: parcels, locations: locations, owners: owners, processingStatus: processingStatus, attachments: attachments, relatedRecords: relatedRecords }"
+}

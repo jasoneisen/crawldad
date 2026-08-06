@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-05): three owner blocks (MULTIPLE OWNERS warning), two locations, one violation, no CapTree (projectName == recordType), no attachments iframe. No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00005&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00005&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

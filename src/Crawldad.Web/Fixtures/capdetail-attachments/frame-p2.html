@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!-- Attachments grid, page 2 of 2 (last) — served inside the iframe on state att2 after the page-1 "Next" click.
+     The single data row is the "No records found." placeholder (LJCMGClient.cs:548), exercising the row-skip continue;
+     the pagination row's last cell has NO anchor, so hasNextPageLink is false and the do-while stops.
+     The SelectedPageButton reads "2" so the page-number waitFor (filter ^2$) settles. -->
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body>
+  <table id="attachmentList_gdvAttachmentList">
+    <tbody>
+      <tr class="header"><td>Name</td><td>Desc</td><td>Cat</td><td>MIME</td><td>Type</td><td>Size</td><td>Latest Update</td></tr>
+      <tr><td colspan="7">No records found.</td></tr>
+      <tr class="ACA_Table_Pages">
+        <td colspan="7">
+          <table class="aca_pagination">
+            <tbody>
+              <tr>
+                <td><a href="javascript:__doPostBack('prev')">Prev</a></td>
+                <td><span class="SelectedPageButton">2</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

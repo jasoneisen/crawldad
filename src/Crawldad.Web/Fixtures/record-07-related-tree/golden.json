@@ -1,0 +1,74 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00007&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00007",
+  "recordType": "Multi-Case Enforcement",
+  "projectName": "Highlighted Project",
+  "recordDate": "2025-03-01",
+  "status": "Open",
+  "description": "Multiple code violations across related permits.",
+  "parentRecordNumber": "REC-A",
+  "violations": [
+    {
+      "title": "Multiple Violations",
+      "status": "Open",
+      "code": "MULTI-1",
+      "dueDate": "2025-04-15",
+      "inspectorComment": "See related",
+      "referralType": "Internal",
+      "referralDate": "2025-04-16",
+      "workOrderType": "Standard",
+      "referralResult": "Open"
+    }
+  ],
+  "parcels": [],
+  "locations": [
+    { "address1": "77 COURT ST", "address2": "FLOOR 2", "cityStateZip": "LEXINGTON, KY 40507" }
+  ],
+  "owners": [
+    { "name": "COURT STREET LLC", "address1": "77 COURT ST", "address2": "", "cityStateZip": "LEXINGTON, KY 40507" }
+  ],
+  "processingStatus": [],
+  "attachments": [],
+  "relatedRecords": [
+    {
+      "recordNumber": "REC-ROOT",
+      "parentRecordNumber": "",
+      "recordType": "Root Type",
+      "projectName": "Root Project",
+      "date": "2025-01-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=root"
+    },
+    {
+      "recordNumber": "REC-A",
+      "parentRecordNumber": "REC-ROOT",
+      "recordType": "Child A Type",
+      "projectName": "Child A Project",
+      "date": "2025-02-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=a"
+    },
+    {
+      "recordNumber": "REC-C",
+      "parentRecordNumber": "REC-ROOT",
+      "recordType": "Child C Type",
+      "projectName": "Child C Project",
+      "date": "2025-04-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=c"
+    },
+    {
+      "recordNumber": "REC-D",
+      "parentRecordNumber": "REC-C",
+      "recordType": "Grandchild D Type",
+      "projectName": "Grandchild D Project",
+      "date": "2025-05-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=d"
+    },
+    {
+      "recordNumber": "REC-E",
+      "parentRecordNumber": "",
+      "recordType": "Broken Type",
+      "projectName": "Broken Project",
+      "date": "2025-06-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=e"
+    }
+  ]
+}

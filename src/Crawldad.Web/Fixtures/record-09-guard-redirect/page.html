@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<!-- Synthesized error page for record-09 — the CapDetail-guard redirect terminal case (:199-206). Navigating to the
+     record's CapDetail.aspx link is "redirected" to Error.aspx: the manifest state's gotoUrl is the CapDetail link
+     (what goto() targets) but its url is the Error page (what page.Url reports after the redirect), and that url carries
+     NO 'capdetail.aspx' substring. So the payload's guard `contains(lower(pageUrl()), 'capdetail.aspx')` is false and it
+     fails TERMINALLY with code record_not_accessible (message: "Record not accessible (redirected to /LJCMG/Error.aspx):
+     <link>") — a CrawldadFailureException excluded from retryOn, so the run is NOT retried. The DOM below is never read. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Error - LJCMG</title></head>
+<body>
+  <h1>The requested record could not be found or is not accessible.</h1>
+  <p>Error code: RecordNotFound</p>
+</body>
+</html>

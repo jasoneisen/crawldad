@@ -49,4 +49,17 @@ public sealed class CrawldadExpression
         ArgumentNullException.ThrowIfNull(scope);
         return _root.EvaluateAsync(new EvalContext(scope, ct));
     }
+
+    /// <summary>
+    /// The <b>free</b> variable identifiers this expression reads — the bare names it resolves through scope, with any
+    /// bound by an enclosing binding builtin (<c>filter</c>/<c>map</c>/…) excluded. A pure static walk (no scope, no
+    /// evaluation) backing save-time defined-before-use validation (§12). Builtin function names never appear.
+    /// </summary>
+    /// <returns>The distinct free identifier names.</returns>
+    public IReadOnlySet<string> FreeIdentifiers()
+    {
+        var into = new HashSet<string>(StringComparer.Ordinal);
+        _root.CollectFreeIdentifiers(into, new HashSet<string>(StringComparer.Ordinal));
+        return into;
+    }
 }

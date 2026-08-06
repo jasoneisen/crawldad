@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<!-- Synthesized FULL CapDetail record (record-08) — Appendix B.2. Variety focus: the ATTACHMENT SAFETY CAP. The
+     iframe's "Next" pagination is CYCLIC (att_a <-> att_b, each page always has a Next link and no downloadable rows),
+     so attPagesVisited climbs to 50 and the `attPagesVisited < 50` guard (:603) stops the do-while while a next link
+     still exists — firing the one cap warning (:618) and returning a COMPLETE record (attachments == []). Other regions
+     (3-<br> address, one owner) are ordinary. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <span id="ctl00_PlaceHolderMain_lblPermitNumber">24ENF-00008</span>
+  <span id="ctl00_PlaceHolderMain_lblPermitType">Illegal Occupancy</span>
+  <span id="ctl00_PlaceHolderMain_lblRecordStatus">Open</span>
+
+  <!-- LOCATION — 3-<br> branch -->
+  <table id="tbl_worklocation">
+    <tbody>
+      <tr><td>Work Location</td><td><span>*900 TENANT WAY*</span><br>LOUISVILLE, KY 40215<span> View Map</span><br></td></tr>
+    </tbody>
+  </table>
+
+  <!-- OWNER DETAILS — Description + one 3-line owner -->
+  <table id="ctl00_PlaceHolderMain_PermitDetailList1_TBPermitDetailTest">
+    <tbody>
+      <tr>
+        <td>
+          <h1>Description of Work</h1>
+          <table><tbody><tr><td>Label</td><td>Multiple unauthorized dwelling units in single-family structure.</td></tr></tbody></table>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <h1>Owner</h1>
+          <table class="table_child"><tbody><tr><td>
+            <table class="table_child"><tbody><tr><td>
+              <table><tbody>
+                <tr><td>*OCCUPANCY HOLDINGS*</td></tr>
+                <tr><td>900 TENANT WAY</td></tr>
+                <tr><td>LOUISVILLE, KY 40215</td></tr>
+              </tbody></table>
+            </td></tr></tbody></table>
+          </td></tr></tbody></table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ATTACHMENTS — cyclic in-frame pagination (never terminates on its own; the 50-page cap stops it) -->
+  <iframe id="ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList" src="about:blank" title="attachments"></iframe>
+</body>
+</html>

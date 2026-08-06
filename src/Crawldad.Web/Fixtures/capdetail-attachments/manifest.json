@@ -1,0 +1,46 @@
+{
+  "manifest": "1",
+  "description": "Record/replay script for the LJCMG CapDetail attachments iframe (§ frames, LJCMGClient.cs:531-621). The attachment grid lives INSIDE the iframe '#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList', served per state via states.<name>.frames (att1 -> frame-p1.html, att2 -> frame-p2.html); the outer page.html is the same CapDetail shell across both. Page 1 has one downloadable file row + a 'Next' pagination anchor; clicking Next (an IN-FRAME click, on.in) swaps the frame's grid to page 2 (the postback re-render). Clicking the file link (also in-frame) yields sample.bin as a browser download (suggestedFilename 'report.pdf'). A page-level 'Attachments' tab click (on with no in) exists so page vs in-frame clicks are distinguishable. No Chromium, no live traffic.",
+  "initialState": "att1",
+  "states": {
+    "att1": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-ATT01&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-ATT01&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame-p1.html"
+      }
+    },
+    "att2": {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-ATT01&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame-p2.html"
+      }
+    }
+  },
+  "transitions": [
+    {
+      "from": "att1",
+      "on": { "click": "#expandAttachments" },
+      "to": "att1"
+    },
+    {
+      "from": "att1",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr:nth-child(2) > td:first-child a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "att1",
+      "download": { "file": "sample.bin", "suggestedFilename": "report.pdf" }
+    },
+    {
+      "from": "att1",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr.ACA_Table_Pages table.aca_pagination > tbody > tr > td:last-child > a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "att2"
+    }
+  ]
+}

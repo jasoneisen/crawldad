@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<!-- Synthesized CapHome results grid — PAGE 1 of 2. See FIXTURE_NOTES.md.
+     Grid = 3 header + 3 data (indices 3..5) + 2 footer = 8 <tr>, so `for (i=3; i < count-2=6; i++)`
+     visits the 3 data rows: d1-1, d1-2, and the SHARED record (?id=shared). The shared record ALSO
+     appears as page 2's first row — a cross-page duplicate that exercises the result's distinct(...)
+     de-dup (the reference's HashSet<string> newLinks, HistoricalCrawler:79). Clean cells (edge-case
+     cells live in caphome-search). table.aca_pagination td:last-child HAS an <a> → hasMorePages true. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Enforcement Search Results (1) - LJCMG</title></head>
+<body>
+  <div id="divGlobalLoading" style="display:none">Loading...</div>
+  <div id="ctl00_PlaceHolderMain_dgvPermitList">
+    <table id="ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList" class="ACA_GridView">
+      <tbody>
+        <tr class="ACA_GridHeader"><td colspan="7">Search Results</td></tr>
+        <tr class="ACA_GridHeader_Sort"><td colspan="7">Sort</td></tr>
+        <tr class="ACA_TabRow_Header">
+          <th></th><th>Date</th><th>Record Number</th><th>Record Type</th><th>Address</th><th>Status</th><th>Short Notes</th>
+        </tr>
+
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/01/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=d1-1">ENF-24-00701</a></td>
+          <td>Enforcement</td>
+          <td>701 First St</td>
+          <td>Open</td>
+          <td>page 1 only</td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>01/02/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=d1-2">ENF-24-00702</a></td>
+          <td>Enforcement</td>
+          <td>702 First St</td>
+          <td>Open</td>
+          <td>page 1 only</td>
+        </tr>
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/03/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=shared">ENF-24-00777</a></td>
+          <td>Enforcement</td>
+          <td>777 Shared Blvd</td>
+          <td>Open</td>
+          <td>appears on both pages</td>
+        </tr>
+
+        <tr class="ACA_GridFooter"><td colspan="7">Showing 1-3</td></tr>
+        <tr class="ACA_GridPagerRow"><td colspan="7">&nbsp;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Not the last page: td:last-child HAS an <a>, so hasMorePages is true. -->
+  <table class="aca_pagination">
+    <tbody>
+      <tr>
+        <td><span class="SelectedPageButton">1</span></td>
+        <td><a href="#page2">Next</a></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

@@ -13,14 +13,14 @@ internal static class InterpreterErrorCodes
     /// <summary>A <c>loop</c>/<c>forEach</c> omitted the mandatory <c>maxIterations</c> cap (§6).</summary>
     public const string MissingMaxIterations = "missing_max_iterations";
 
+    /// <summary>Save-time only (§12): an expression/selector references a var/frame/input not defined before use.</summary>
+    public const string UndefinedReference = "undefined_reference";
+
     /// <summary>A loop exceeded its <c>maxIterations</c> cap (§6 safety).</summary>
     public const string MaxIterationsExceeded = "max_iterations_exceeded";
 
     /// <summary>A <c>push</c> target is undefined or is not an array.</summary>
     public const string UndefinedPushTarget = "undefined_push_target";
-
-    /// <summary>A feature parsed but is not implemented yet (frames/<c>in</c> — a later phase).</summary>
-    public const string NotSupportedInV0 = "not_supported_in_v0";
 
     /// <summary>The result tree contained an opaque handle (§10 — handles never serialise).</summary>
     public const string HandleInResult = "handle_in_result";

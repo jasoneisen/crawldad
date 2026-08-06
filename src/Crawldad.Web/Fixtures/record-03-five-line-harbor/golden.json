@@ -1,0 +1,30 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00003&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00003",
+  "recordType": "Shoreline Enforcement",
+  "projectName": "Shoreline Enforcement",
+  "recordDate": "2025-05-25",
+  "status": "",
+  "description": "Unpermitted dock construction on waterfront.",
+  "parentRecordNumber": "",
+  "violations": [],
+  "parcels": [],
+  "locations": [
+    { "address1": "88 HARBOR DR", "address2": "BLDG C", "cityStateZip": "NEWPORT, KY 41071" }
+  ],
+  "owners": [
+    { "name": "HARBOR VIEW TRUST", "address1": "88 HARBOR DR", "address2": "", "cityStateZip": "NEWPORT, KY 41071" }
+  ],
+  "processingStatus": [],
+  "attachments": [
+    {
+      "attachmentId": "8597a392-983c-caea-6e98-696dd59c00b7",
+      "filename": "Dock Permit.pdf",
+      "internalFilename": "8597a392-983c-caea-6e98-696dd59c00b7.pdf",
+      "type": "PDF",
+      "size": "1.1 MB",
+      "latestUpdate": "05/10/2025"
+    }
+  ],
+  "relatedRecords": []
+}

@@ -1,0 +1,26 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail enforcement record (record-01) — the whole-program acceptance fixture for Appendix B.2 (LJCMGClient.cs:177-725). One CapDetail.aspx state; the attachment grid is served inside the iframe via states.detail.frames. The single in-frame file-link click yields sample.bin (pinned contentId 18dc2ee2-6e62-f5c6-8ec1-648aa28b2f48). input.link is the resolveUrl base for the related-record anchors. No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00001&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00001&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame.html"
+      }
+    }
+  },
+  "transitions": [
+    {
+      "from": "detail",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr:nth-child(2) > td:first-child a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "detail",
+      "download": { "file": "sample.bin", "suggestedFilename": "report.pdf" }
+    }
+  ]
+}

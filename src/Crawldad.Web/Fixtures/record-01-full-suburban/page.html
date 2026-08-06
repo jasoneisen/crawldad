@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) FULL CapDetail enforcement record — the whole-program fidelity proof for the
+     ScrapeEnforcementRecord payload (Appendix B.2, LJCMGClient.cs:177-725). Every region is populated:
+     LOCATION (3-<br>), RECORD DETAILS (number/type/status), OWNERS (1 owner + a Description block), VIOLATIONS (1),
+     PARCELS (1), PROCESSING STATUS (1 activity w/ 1 additional-comment), ATTACHMENTS (iframe, 1 page, 1 download),
+     RELATED RECORDS (a 3-node tree whose Highlight row supplies projectName + the record's parentRecordNumber).
+     Leaf cells whose textContent/innerText/innerHTML the payload reads without a trim() (record labels, the address
+     td:nth-child(2), the processing category + line-block <td>, parcel col2 cells) are written GAP-FREE. The tab
+     expander anchors (#imgMoreDetail/#imgASI/#imgASIT/#imgParcel, the two title menus) are present so the payload's
+     unconditional/guarded clicks resolve to real (no-op) elements. No Chromium, no live traffic. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <div id="divGlobalLoading" style="display:none">Loading...</div>
+  <a id="imgMoreDetail" href="#">More Details</a>
+  <a id="imgASI" href="#">ASI</a>
+  <a id="imgASIT" href="#">ASIT</a>
+  <a id="imgParcel" href="#">Parcel</a>
+  <a id="recordInfoMenu" title="Record Info menu, press tab to expand" href="#">Record Info</a>
+  <a id="attachmentsTab" title="Attachments" href="#">Attachments</a>
+
+  <!-- ===== RECORD DETAILS labels (raw textContent; gap-free) ===== -->
+  <span id="ctl00_PlaceHolderMain_lblPermitNumber">24ENF-00001</span>
+  <span id="ctl00_PlaceHolderMain_lblPermitType">Property Maintenance</span>
+  <span id="ctl00_PlaceHolderMain_lblRecordStatus">Open - Active</span>
+
+  <!-- ===== LOCATION (:229-268) — one primary location, 3-<br> branch ===== -->
+  <table id="tbl_worklocation">
+    <tbody>
+      <tr><td>Work Location</td><td><span>*100 RIVER RD*</span><br>LOUISVILLE, KY 40202<span> View Map</span><br></td></tr>
+    </tbody>
+  </table>
+
+  <!-- ===== OWNER DETAILS (:282-355) — Description block + one Owner (3 lines) ===== -->
+  <table id="ctl00_PlaceHolderMain_PermitDetailList1_TBPermitDetailTest">
+    <tbody>
+      <tr>
+        <td>
+          <h1>Description of Work</h1>
+          <table><tbody><tr><td>Details</td><td>Illegal dumping of construction debris.</td></tr></tbody></table>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <h1>Owner</h1>
+          <table class="table_child"><tbody><tr><td>
+            <table class="table_child"><tbody><tr><td>
+              <table><tbody>
+                <tr><td>*RIVERSIDE HOLDINGS LLC*</td></tr>
+                <tr><td>500 RIVER RD</td></tr>
+                <tr><td>LOUISVILLE, KY 40202</td></tr>
+              </tbody></table>
+            </td></tr></tbody></table>
+          </td></tr></tbody></table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ===== APPLICATION INFORMATION / VIOLATIONS (:359-425) — one violation ===== -->
+  <table id="asit-outer">
+    <tbody>
+      <tr id="trASITList">
+        <td>
+          <table>
+            <tbody>
+              <tr><td>VIOLATIONS</td></tr>
+              <tr>
+                <td>
+                  <div>
+                    <div class="MoreDetail_ItemCol1">Violation</div><div class="MoreDetail_ItemCol2">Illegal Dumping</div>
+                    <div class="MoreDetail_ItemCol1">Status</div><div class="MoreDetail_ItemCol2">Open</div>
+                    <div class="MoreDetail_ItemCol1">Code</div><div class="MoreDetail_ItemCol2">PM-17</div>
+                    <div class="MoreDetail_ItemCol1">Due Date</div><div class="MoreDetail_ItemCol2">2025-07-01</div>
+                    <div class="MoreDetail_ItemCol1">Inspector Comments</div><div class="MoreDetail_ItemCol2">Cleanup required</div>
+                    <div class="MoreDetail_ItemCol1">Referral Type</div><div class="MoreDetail_ItemCol2">Internal</div>
+                    <div class="MoreDetail_ItemCol1">Referral Date</div><div class="MoreDetail_ItemCol2">2025-07-05</div>
+                    <div class="MoreDetail_ItemCol1">Work Order Type</div><div class="MoreDetail_ItemCol2">Standard</div>
+                    <div class="MoreDetail_ItemCol1">Referral Result</div><div class="MoreDetail_ItemCol2">Pending</div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ===== PARCEL LIST (:427-453) — one parcel ===== -->
+  <table>
+    <tbody>
+      <tr id="trParcelList">
+        <td>
+          <table>
+            <tbody>
+              <tr><td class="MoreDetail_ItemCol1">Parcel Number</td><td class="MoreDetail_ItemCol2">: 072D00450000</td></tr>
+              <tr><td class="MoreDetail_ItemCol1">Block</td><td class="MoreDetail_ItemCol2">: 12</td></tr>
+              <tr><td class="MoreDetail_ItemCol1">Lot / Subdivision</td><td class="MoreDetail_ItemCol2"><div>: 45</div><div>: RIVERSIDE ESTATES</div></td></tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ===== PROCESSING STATUS (:455-529) — one expandable activity, 2 lines + 1 additional-comment ===== -->
+  <div id="divProcessingTable">
+    <table>
+      <tbody>
+        <tr><td class="expandcol"><a href="#">+</a></td><td>Notice Issued</td></tr>
+        <tr>
+          <td>detail-spacer</td>
+          <td>
+            <table>
+              <tbody>
+                <tr>
+                  <td>Lines</td>
+                  <td><table><tbody><tr><td>Due on 06/20/2025, assigned to Officer Ramirez<br>Marked as Sent on 06/22/2025 by Clerk Adams</td></tr></tbody></table></td>
+                </tr>
+                <tr>
+                  <td>Comments</td>
+                  <td><table><tbody><tr><td>Method:</td><td>Certified Mail</td></tr></tbody></table></td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== ATTACHMENTS (:531-623) — grid served inside the iframe (manifest frames map); one download ===== -->
+  <iframe id="ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList" src="about:blank" title="attachments"></iframe>
+
+  <!-- ===== RELATED RECORDS (:625-697) — Highlight supplies projectName + parentRecordNumber; two Normal rows ===== -->
+  <table id="tableCapTreeList">
+    <tbody>
+      <tr class="ACA_RelatedCap_Header"><td colspan="5">Related Records</td></tr>
+
+      <tr class="ACA_RelatedCap_Normal">
+        <td><table><tbody><tr><td width="0px">&nbsp;</td><td>24ENF-00090</td></tr></tbody></table></td>
+        <td>Enforcement Case</td><td>Original Complaint</td><td>2025-05-01</td>
+        <td><a href="CapDetail.aspx?capID=24ENF-00090">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Highlight">
+        <td><table><tbody><tr><td width="20px">&nbsp;</td><td>24ENF-00001</td></tr></tbody></table></td>
+        <td>Property Maintenance</td><td>River Road Cleanup</td><td>2025-06-15</td>
+        <td><a href="CapDetail.aspx?capID=24ENF-00001">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Normal">
+        <td><table><tbody><tr><td width="40px">&nbsp;</td><td>24CV-00120</td></tr></tbody></table></td>
+        <td>Civil Citation</td><td>Debris Removal Order</td><td>2025-06-20</td>
+        <td><a href="CapDetail.aspx?capID=24CV-00120">open</a></td>
+      </tr>
+
+    </tbody>
+  </table>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<!-- Attachments grid served INSIDE the iframe on the single record state (§ frames). One downloadable data row
+     (file link in td:first-child; type/size/latest-update in td 5/6/7) and NO pagination row, so hasNextPageLink is
+     false and the attachments do-while runs exactly one page. Clicking the file link (an in-frame click) yields
+     sample.bin as a browser download (suggestedFilename report.pdf → engine storedAs .pdf; scraped filename
+     "Inspection Report.pdf" → payload internalFilename .pdf). -->
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body>
+  <table id="attachmentList_gdvAttachmentList">
+    <tbody>
+      <tr class="header"><td>Name</td><td>Desc</td><td>Cat</td><td>MIME</td><td>Type</td><td>Size</td><td>Latest Update</td></tr>
+      <tr>
+        <td><a href="/LJCMG/Cap/Attachment.ashx?attId=1">Inspection Report.pdf</a></td>
+        <td>Initial inspection</td>
+        <td>Report</td>
+        <td>application/pdf</td>
+        <td>PDF</td>
+        <td>245 KB</td>
+        <td>06/18/2025</td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

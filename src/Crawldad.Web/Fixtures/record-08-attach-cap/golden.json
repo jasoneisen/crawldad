@@ -1,0 +1,21 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00008&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00008",
+  "recordType": "Illegal Occupancy",
+  "projectName": "Illegal Occupancy",
+  "recordDate": "2025-02-10",
+  "status": "Open",
+  "description": "Multiple unauthorized dwelling units in single-family structure.",
+  "parentRecordNumber": "",
+  "violations": [],
+  "parcels": [],
+  "locations": [
+    { "address1": "900 TENANT WAY", "address2": "", "cityStateZip": "LOUISVILLE, KY 40215" }
+  ],
+  "owners": [
+    { "name": "OCCUPANCY HOLDINGS", "address1": "900 TENANT WAY", "address2": "", "cityStateZip": "LOUISVILLE, KY 40215" }
+  ],
+  "processingStatus": [],
+  "attachments": [],
+  "relatedRecords": []
+}

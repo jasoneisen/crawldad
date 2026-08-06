@@ -1,0 +1,16 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-04): zero owners (Description-only detail), 3-<br> address, an attachments iframe whose only data row is 'No records found.' (attachments == []), no CapTree (projectName == recordType). No download transitions. No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00004&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00004&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame.html"
+      }
+    }
+  },
+  "transitions": []
+}

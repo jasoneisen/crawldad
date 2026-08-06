@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<!-- Attachments grid inside the iframe with ONLY a header row: attachmentRows (tr:not(.ACA_Table_Pages)) counts 1, so
+     `count(attRows) > 1` is false and the per-row loop is skipped; no pagination row, so the do-while stops after one
+     page. attachments == []. This is the empty-grid (header-only) variant of the empty-attachments edge. -->
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body>
+  <table id="attachmentList_gdvAttachmentList">
+    <tbody>
+      <tr class="header"><td>Name</td><td>Desc</td><td>Cat</td><td>MIME</td><td>Type</td><td>Size</td><td>Latest Update</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

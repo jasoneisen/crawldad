@@ -8,7 +8,13 @@ namespace Crawldad.Web.Infrastructure.Browser.Fake;
 /// <param name="GotoUrl">The URL that, when navigated, loads this state; null for states reached only by transition.</param>
 /// <param name="Url">The URL <c>page.Url</c> reports while in this state.</param>
 /// <param name="HtmlFile">The HTML file (relative to the fixture dir) served for this state.</param>
-internal sealed record FakeState(string Name, string? GotoUrl, string Url, string HtmlFile);
+/// <param name="Frames">
+/// The content of each iframe on this state, keyed by the iframe element's CSS selector → the HTML file served as that
+/// frame's document (§ frames, Phase 3). Empty when the state carries no iframes. Because frame content is per-state,
+/// an in-frame pagination transition to a new state swaps the grid the frame serves — reproducing the reference's
+/// attachments postback re-render (LJCMGClient.cs:531-621).
+/// </param>
+internal sealed record FakeState(string Name, string? GotoUrl, string Url, string HtmlFile, IReadOnlyDictionary<string, string> Frames);
 
 /// <summary>A recorded request a transition emits — checked by <c>RunAndWaitForRequestAsync</c> (urlPrefix + method).</summary>
 /// <param name="Url">The absolute request URL.</param>
@@ -39,13 +45,17 @@ internal sealed record FakeDownload(string File, string SuggestedFilename);
 /// <see cref="From"/> swaps to <see cref="To"/>, optionally emits <see cref="Emit"/>, and optionally yields
 /// <see cref="Download"/> bytes.</summary>
 /// <param name="From">The state the transition applies in.</param>
-/// <param name="ClickSelector">CSS of the element whose click fires the transition.</param>
+/// <param name="ClickSelector">CSS of the element whose click fires the transition, resolved against the page document
+/// (when <see cref="In"/> is null) or the named frame's document.</param>
+/// <param name="In">The iframe selector the click happens inside (§ frames), or null for a page-level click. The click's
+/// frame must match this for the transition to fire, so an in-frame pagination/download click never triggers a
+/// page-level transition and vice versa.</param>
 /// <param name="To">The state to switch to (a download link is a self-loop: <c>to == from</c>).</param>
 /// <param name="Emit">The request recorded during the click, or null. Phase 2 relaxes P1's postback-mandatory rule so a
 /// pure download click (which fires no navigation postback) needs no emit.</param>
 /// <param name="Inject">An optional scripted fault fired instead of the transition for its leading attempts (§ Deliverable 3).</param>
 /// <param name="Download">An optional download the click starts (§ Deliverable 2), captured by <c>RunAndWaitForDownloadAsync</c>.</param>
-internal sealed record FakeTransition(string From, string ClickSelector, string To, FakeEmit? Emit, FakeInject? Inject, FakeDownload? Download);
+internal sealed record FakeTransition(string From, string ClickSelector, string? In, string To, FakeEmit? Emit, FakeInject? Inject, FakeDownload? Download);
 
 /// <summary>
 /// The loaded, validated <c>manifest.json</c> (§ Deliverable 1) plus the fixture directory it was loaded from, so the
@@ -92,7 +102,11 @@ internal sealed class FakeManifest
 
     /// <summary>Reads the HTML served for <paramref name="state"/> from the fixture directory.</summary>
     /// <param name="state">The state whose DOM to load.</param>
-    public string ReadHtml(FakeState state) => File.ReadAllText(Path.Combine(_fixtureDir, state.HtmlFile));
+    public string ReadHtml(FakeState state) => ReadTextFile(state.HtmlFile);
+
+    /// <summary>Reads a fixture HTML file's text — the body of a state's DOM or one of its frames' documents.</summary>
+    /// <param name="relativePath">The file path relative to the fixture directory.</param>
+    public string ReadTextFile(string relativePath) => File.ReadAllText(Path.Combine(_fixtureDir, relativePath));
 
     /// <summary>Reads a fixture file's raw bytes — the body a <see cref="FakeDownload"/> transition serves (§ Deliverable 2).</summary>
     /// <param name="relativePath">The file path relative to the fixture directory.</param>
@@ -117,16 +131,17 @@ internal sealed class FakeManifest
 
         var states = dto.States.ToDictionary(
             static kvp => kvp.Key,
-            kvp => new FakeState(kvp.Key, kvp.Value.GotoUrl, kvp.Value.Url, kvp.Value.Html),
+            kvp => new FakeState(kvp.Key, kvp.Value.GotoUrl, kvp.Value.Url, kvp.Value.Html, kvp.Value.Frames ?? _noFrames),
             StringComparer.Ordinal);
 
         // A transition carries an emit (a navigation postback), a download (§ Deliverable 2), or both/neither — a pure
-        // download click has no emit. The null-forgiving derefs are intentional: a malformed authored fixture faults
-        // here rather than adding untested null branches to the hot path.
+        // download click has no emit — and an optional in-frame scope (§ frames). The null-forgiving derefs are
+        // intentional: a malformed authored fixture faults here rather than adding untested null branches to the hot path.
         var transitions = dto.Transitions
             .Select(static t => new FakeTransition(
                 t.From,
                 t.On.Click,
+                t.On.In,
                 t.To,
                 t.Emit is null ? null : new FakeEmit(t.Emit.Url, t.Emit.Method),
                 t.Inject is null ? null : new FakeInject(t.Inject.Type, t.Inject.FailAttempts!.Value),
@@ -138,6 +153,9 @@ internal sealed class FakeManifest
 
     private static readonly JsonSerializerOptions _serializerOptions = new(JsonSerializerDefaults.Web);
 
+    private static readonly IReadOnlyDictionary<string, string> _noFrames =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
     private sealed record ManifestDto(
         [property: JsonPropertyName("initialState")] string InitialState,
         [property: JsonPropertyName("states")] Dictionary<string, StateDto> States,
@@ -146,7 +164,8 @@ internal sealed class FakeManifest
     private sealed record StateDto(
         [property: JsonPropertyName("gotoUrl")] string? GotoUrl,
         [property: JsonPropertyName("url")] string Url,
-        [property: JsonPropertyName("html")] string Html);
+        [property: JsonPropertyName("html")] string Html,
+        [property: JsonPropertyName("frames")] Dictionary<string, string>? Frames);
 
     private sealed record TransitionDto(
         [property: JsonPropertyName("from")] string From,
@@ -156,7 +175,9 @@ internal sealed class FakeManifest
         [property: JsonPropertyName("inject")] InjectDto? Inject,
         [property: JsonPropertyName("download")] DownloadDto? Download);
 
-    private sealed record OnDto([property: JsonPropertyName("click")] string Click);
+    private sealed record OnDto(
+        [property: JsonPropertyName("click")] string Click,
+        [property: JsonPropertyName("in")] string? In);
 
     private sealed record EmitDto(
         [property: JsonPropertyName("url")] string Url,

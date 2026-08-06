@@ -63,6 +63,23 @@ public interface IPageHandle
     ILocatorHandle GetByTitle(string title);
 
     /// <summary>
+    /// Binds a handle to the content of the <c>&lt;iframe&gt;</c> matched by <paramref name="selector"/>
+    /// (<c>page.FrameLocator</c>) — the <c>frame</c> node (§5.1). The returned handle is <b>lazy</b>: see the remarks on
+    /// <see cref="IFrameHandle"/>. Backs the attachments-iframe traversal (LJCMGClient.cs:533).
+    /// </summary>
+    /// <param name="selector">A CSS selector identifying the iframe element on the page.</param>
+    IFrameHandle FrameLocator(string selector);
+
+    /// <summary>
+    /// Injects a <c>&lt;style&gt;</c> tag carrying <paramref name="content"/> into the page (<c>page.AddStyleTagAsync</c>) —
+    /// the <c>addStyleTag</c> node (§5.1). This is data, not code (§15 tension #3): the reference uses it to force all
+    /// record tabs visible at once (LJCMGClient.cs:209).
+    /// </summary>
+    /// <param name="content">The CSS text to inject.</param>
+    /// <param name="ct">Cancels the injection.</param>
+    Task AddStyleTagAsync(string content, CancellationToken ct);
+
+    /// <summary>
     /// Runs <paramref name="trigger"/> and waits for a matching network request to be issued
     /// (<c>RunAndWaitForRequestAsync</c>) — the postback-synchronisation primitive: the wait is armed before the
     /// trigger fires, so a request the trigger causes is never missed.

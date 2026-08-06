@@ -1,0 +1,34 @@
+{
+  "manifest": "1",
+  "description": "Record/replay script for a 2-page LJCMG CapHome enforcement search whose SHARED record (?id=shared) appears on BOTH pages (LJCMGClient.cs:75-175 + HistoricalCrawler goToNextPageCallback :81-105). form → page1 → page2 (last). The search click and the pagination click each emit a POST to CapHome.aspx (the postback waitForRequest matches). page1 carries the pagination anchor (hasMorePages true); page2 does not (hasMorePages false → last page). All results states report the same CapHome.aspx url, so the row-url scheme/host resolve to https://aca-prod.accela.com and the two ?id=shared rows produce the identical url — exercising the result's distinct(...) de-dup (the reference HashSet<string> newLinks). No Chromium, no live traffic.",
+  "initialState": "form",
+  "states": {
+    "form": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "form.html"
+    },
+    "page1": {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "page1.html"
+    },
+    "page2": {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "page2.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "form",
+      "on": { "click": "#ctl00_PlaceHolderMain_btnNewSearch" },
+      "to": "page1",
+      "emit": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST" }
+    },
+    {
+      "from": "page1",
+      "on": { "click": "table.aca_pagination td:last-child a" },
+      "to": "page2",
+      "emit": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST" }
+    }
+  ]
+}

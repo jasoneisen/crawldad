@@ -1,0 +1,38 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00006&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00006",
+  "recordType": "Building Enforcement",
+  "projectName": "Building Enforcement",
+  "recordDate": "2025-05-05",
+  "status": "Open",
+  "description": "Construction without permit; stop-work order issued.",
+  "parentRecordNumber": "",
+  "violations": [],
+  "parcels": [],
+  "locations": [
+    { "address1": "400 INDUSTRIAL PKWY", "address2": "", "cityStateZip": "LOUISVILLE, KY 40210" }
+  ],
+  "owners": [
+    { "name": "BUILDER CORP", "address1": "400 INDUSTRIAL PKWY", "address2": "", "cityStateZip": "LOUISVILLE, KY 40210" }
+  ],
+  "processingStatus": [],
+  "attachments": [
+    {
+      "attachmentId": "ae20275b-b3e3-a1d3-d1d2-befafd8f1819",
+      "filename": "Photo Front.jpg",
+      "internalFilename": "ae20275b-b3e3-a1d3-d1d2-befafd8f1819.jpg",
+      "type": "Photo",
+      "size": "800 KB",
+      "latestUpdate": "05/01/2025"
+    },
+    {
+      "attachmentId": "1ece3680-89f3-c1f1-f687-0cd4d3132570",
+      "filename": "Photo Rear.jpg",
+      "internalFilename": "1ece3680-89f3-c1f1-f687-0cd4d3132570.jpg",
+      "type": "Photo",
+      "size": "750 KB",
+      "latestUpdate": "05/02/2025"
+    }
+  ],
+  "relatedRecords": []
+}

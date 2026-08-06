@@ -1,0 +1,71 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00001&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00001",
+  "recordType": "Property Maintenance",
+  "projectName": "River Road Cleanup",
+  "recordDate": "2025-06-15",
+  "status": "Open - Active",
+  "description": "Illegal dumping of construction debris.",
+  "parentRecordNumber": "24ENF-00090",
+  "violations": [
+    {
+      "title": "Illegal Dumping",
+      "status": "Open",
+      "code": "PM-17",
+      "dueDate": "2025-07-01",
+      "inspectorComment": "Cleanup required",
+      "referralType": "Internal",
+      "referralDate": "2025-07-05",
+      "workOrderType": "Standard",
+      "referralResult": "Pending"
+    }
+  ],
+  "parcels": [
+    { "parcelNumber": "072D00450000", "block": "12", "lot": "45", "subdivision": "RIVERSIDE ESTATES" }
+  ],
+  "locations": [
+    { "address1": "100 RIVER RD", "address2": "", "cityStateZip": "LOUISVILLE, KY 40202" }
+  ],
+  "owners": [
+    { "name": "RIVERSIDE HOLDINGS LLC", "address1": "500 RIVER RD", "address2": "", "cityStateZip": "LOUISVILLE, KY 40202" }
+  ],
+  "processingStatus": [
+    {
+      "category": "Notice Issued",
+      "dueDate": "06/20/2025",
+      "assignedTo": "Officer Ramirez",
+      "status": "Sent",
+      "statusDate": "06/22/2025",
+      "statusBy": "Clerk Adams",
+      "lines": { "Method": "Certified Mail" }
+    }
+  ],
+  "attachments": [
+    {
+      "attachmentId": "18dc2ee2-6e62-f5c6-8ec1-648aa28b2f48",
+      "filename": "Inspection Report.pdf",
+      "internalFilename": "18dc2ee2-6e62-f5c6-8ec1-648aa28b2f48.pdf",
+      "type": "PDF",
+      "size": "245 KB",
+      "latestUpdate": "06/18/2025"
+    }
+  ],
+  "relatedRecords": [
+    {
+      "recordNumber": "24ENF-00090",
+      "parentRecordNumber": "",
+      "recordType": "Enforcement Case",
+      "projectName": "Original Complaint",
+      "date": "2025-05-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?capID=24ENF-00090"
+    },
+    {
+      "recordNumber": "24CV-00120",
+      "parentRecordNumber": "24ENF-00001",
+      "recordType": "Civil Citation",
+      "projectName": "Debris Removal Order",
+      "date": "2025-06-20",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?capID=24CV-00120"
+    }
+  ]
+}

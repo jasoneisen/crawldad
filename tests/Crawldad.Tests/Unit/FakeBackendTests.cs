@@ -174,6 +174,28 @@ public class FakeBackendTests
     }
 
     [Fact]
+    public async Task Chained_child_locator_scopes_to_strict_descendants_not_the_base_itself()
+    {
+        // Playwright's chained Locator scopes to the base's STRICT DESCENDANTS; AngleSharp's querySelectorAll leaks the
+        // leftmost compound onto the base/ancestors (the querySelectorAll gotcha). The owner block is itself a <table>
+        // read via `table tr td`, so without the ':scope' anchoring the leftmost `table` would match the base table and
+        // read its own wrapper row. This pins the fix that keeps the owner-region reads faithful to the reference.
+        var backend = new FakeBrowserBackend(Runner.FixturesRoot);
+        await using var session = await backend.ConnectAsync(Runner.FakeBinding("record-01-full-suburban"), CapHome.Ct);
+        var page = await session.NewPageAsync(CapHome.Ct);
+
+        var ownerBlock = page.Locator(
+            "#ctl00_PlaceHolderMain_PermitDetailList1_TBPermitDetailTest table.table_child table.table_child");
+        (await ownerBlock.CountAsync(CapHome.Ct)).ShouldBe(1);
+
+        // `:scope table tr` ⇒ the 3 inner data rows only (leakage would count the base table_child's own row ⇒ 4).
+        (await ownerBlock.Locator("table tr").CountAsync(CapHome.Ct)).ShouldBe(3);
+        // The first inner cell is the owner NAME, not the whole nested block's concatenated text.
+        (await ownerBlock.Locator("table tr:first-child td").TextContentAsync(CapHome.Ct))
+            .ShouldBe("*RIVERSIDE HOLDINGS LLC*");
+    }
+
+    [Fact]
     public async Task RunAndWaitForRequest_succeeds_when_the_trigger_emits_a_matching_request()
     {
         var page = await Runner.FakePageAsync();

@@ -1,0 +1,26 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-03): 5-<br> address, one owner, no violations, no CapTree (projectName == recordType), no record-status label (status == \"\"), one iframe attachment download (harbor.bin -> contentId 8597a392-983c-caea-6e98-696dd59c00b7). No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00003&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00003&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame.html"
+      }
+    }
+  },
+  "transitions": [
+    {
+      "from": "detail",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr:nth-child(2) > td:first-child a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "detail",
+      "download": { "file": "harbor.bin", "suggestedFilename": "dock.pdf" }
+    }
+  ]
+}

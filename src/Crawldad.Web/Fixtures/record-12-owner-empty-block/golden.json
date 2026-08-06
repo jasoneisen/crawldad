@@ -1,0 +1,21 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00012&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00012",
+  "recordType": "Property Maintenance",
+  "projectName": "Property Maintenance",
+  "recordDate": "2025-07-10",
+  "status": "Open",
+  "description": "Peeling paint and broken windows on rental property.",
+  "parentRecordNumber": "",
+  "violations": [],
+  "parcels": [],
+  "locations": [
+    { "address1": "600 KEEP ST", "address2": "", "cityStateZip": "LOUISVILLE, KY 40220" }
+  ],
+  "owners": [
+    { "name": "MAINTENANCE CO", "address1": "600 KEEP ST", "address2": "", "cityStateZip": "LOUISVILLE, KY 40220" }
+  ],
+  "processingStatus": [],
+  "attachments": [],
+  "relatedRecords": []
+}

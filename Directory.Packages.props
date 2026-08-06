@@ -27,6 +27,14 @@
     <PackageVersion Include="AngleSharp" Version="1.7.1" />
   </ItemGroup>
 
+  <ItemGroup Label="Validation">
+    <!-- Payload validation-at-save (§12): the JSON Schema (schema/crawldad-1.schema.json) is enforced by
+         JsonSchema.Net — the de-facto System.Text.Json-native JSON Schema engine. Pinned to 8.0.0, the last
+         MIT-licensed line (9.x switched to the Open Source Maintenance Fee EULA). Its transitive deps
+         (JsonPointer.Net/Json.More.Net/Humanizer.Core, all MIT) are auto-pinned by transitive pinning above. -->
+    <PackageVersion Include="JsonSchema.Net" Version="8.0.0" />
+  </ItemGroup>
+
   <ItemGroup Label="Test">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />

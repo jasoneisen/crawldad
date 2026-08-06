@@ -157,6 +157,10 @@ public class RetryTests
 
         public ILocatorHandle GetByTitle(string title) => throw new NotSupportedException();
 
+        public IFrameHandle FrameLocator(string selector) => throw new NotSupportedException();
+
+        public Task AddStyleTagAsync(string content, CancellationToken ct) => Task.CompletedTask;
+
         public Task RunAndWaitForRequestAsync(Func<Task> trigger, string urlPrefix, string? method, int? timeoutMs, CancellationToken ct) => Task.CompletedTask;
 
         public Task<IDownloadHandle> RunAndWaitForDownloadAsync(Func<Task> trigger, int? timeoutMs, CancellationToken ct) => throw new NotSupportedException();

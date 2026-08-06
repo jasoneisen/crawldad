@@ -317,8 +317,10 @@ Three rules the worked payloads rely on:
   missing element flows through `replace`/`split`/`trim` as null and `coalesce(…, default)` supplies
   the reference's `?? "…"`. `==`/`!=` compare against `null` directly (the processing-heading guard).
 - **DOM builtins accept a `Sel`** (string *or* structured, §5.2) or a bound locator var, plus the
-  relative form `text(baseVar, "css")`. So `count({ base:'detail', css:'…' })` and
-  `text({ css:'…', first:true })` are valid.
+  relative form `text(baseVar, "css")`. So `exists({ base:'detail', css:'…' })` and
+  `text({ css:'…', first:true })` are valid. (`count` is the exception: on a structured `Sel` map its
+  value-model overload counts map entries, not DOM matches — use `exists` for existence and
+  `locate`+`count(var)` for a DOM count; see B.2's fidelity notes.)
 
 ### 7.2 Builtins (the enumerated surface — the boundary)
 - **String:** `trim, lower, upper, replace(s,old,new), replaceRegex(s,re,rep), split(s,sep)→[],
@@ -1006,16 +1008,17 @@ return (`hitKnown ? !crawledToEnd : hasMorePages`).
           { "when": "startsWith(lower(heading), 'licensed professional')", "do": [
               { "comment": "TODO in the reference — intentional no-op (:301-304)" } ] },
           { "when": "startsWith(lower(heading), 'owner')", "do": [
-              { "if": { "cond": "count({ base: 'detail', css: 'table.table_child table.table_child' }) > 1",
-                  "then": [ { "log": { "level": "warning", "message": "MULTIPLE OWNERS: ${input.link}" } } ] } },
               { "locate": { "var": "ownerBlocks", "base": "detail", "selector": "table.table_child table.table_child" } },
+              { "if": { "cond": "count(ownerBlocks) > 1",
+                  "then": [ { "log": { "level": "warning", "message": "MULTIPLE OWNERS: ${input.link}" } } ] } },
               { "forEach": { "in": "ownerBlocks", "as": "ownerBlock", "maxIterations": 100000, "do": [
                 { "set": { "var": "name",      "value": "trim(replace(coalesce(text(ownerBlock,'table tr:first-child td'),''), '*', ''))" } },
-                { "set": { "var": "ownerLines","value": "count({ base: 'ownerBlock', css: 'table tr' })" } },
+                { "locate": { "var": "ownerRows", "base": "ownerBlock", "selector": "table tr" } },
+                { "set": { "var": "ownerLines","value": "count(ownerRows)" } },
                 { "if": { "cond": "length(name) >= 2 && substring(name,1,2) == ')'",
                     "then": [ { "set": { "var": "name", "value": "trim(substring(name,2))" } } ] } },
                 { "continue": { "when": "isNullOrWhitespace(name) && ownerLines == 1" } },
-                { "set": { "var": "ownerAddr1", "value": "count({ base: 'ownerBlock', css: 'table tr:nth-child(2) td' }) > 0 ? coalesce(text(ownerBlock,'table tr:nth-child(2) td'),'') : ''" } },
+                { "set": { "var": "ownerAddr1", "value": "exists({ base: 'ownerBlock', css: 'table tr:nth-child(2) td' }) ? coalesce(text(ownerBlock,'table tr:nth-child(2) td'),'') : ''" } },
                 { "set": { "var": "ownerAddr2", "value": "''" } },
                 { "switch": { "cases": [
                     { "when": "ownerLines == 4", "do": [
@@ -1097,7 +1100,7 @@ return (`hitKnown ? !crawledToEnd : hasMorePages`).
         { "set": { "var": "procHeading", "value": "text(headRow,'td:last-child')" } },
         { "guard": { "cond": "procHeading != null",
             "elseFail": { "class": "terminal", "code": "processing_heading_unparseable", "message": "Heading cannot be parsed" } } },
-        { "if": { "cond": "count({ base:'headRow', css:'a' }) > 0", "then": [
+        { "if": { "cond": "exists({ base:'headRow', css:'a' })", "then": [
           { "locate": { "var": "expandLink", "base": "headRow", "selector": "a" } },
           { "click": { "selector": "expandLink" } },
           { "locate": { "var": "detailRow", "from": "processingRows", "nth": "i*2+1" } },
@@ -1117,7 +1120,7 @@ return (`hitKnown ? !crawledToEnd : hasMorePages`).
           { "set": { "var": "markedOn",   "value": "trim(split(split(lines[1],' on ')[1], ' by ')[0])" } },
           { "set": { "var": "markedBy",   "value": "trim(split(split(lines[1],' on ')[1], ' by ')[1])" } },
           { "set": { "var": "addtl", "value": "{}" } },
-          { "if": { "cond": "count({ base:'detailRow', css:'td:last-child > table:first-child > tbody > tr:nth-child(2) td:last-child tr' }) > 0", "then": [
+          { "if": { "cond": "exists({ base:'detailRow', css:'td:last-child > table:first-child > tbody > tr:nth-child(2) td:last-child tr' })", "then": [
             { "locate": { "var": "addtlRows", "base": "detailRow", "selector": "td:last-child > table:first-child > tbody > tr:nth-child(2) td:last-child tr" } },
             { "forEach": { "in": "addtlRows", "as": "ar", "maxIterations": 100000, "do": [
               { "set": { "var": "h", "value": "trim(coalesce(text(ar,'td:first-child'),''))" } },
@@ -1193,7 +1196,7 @@ return (`hitKnown ? !crawledToEnd : hasMorePages`).
               { "set": { "var": "relType", "value": "trim(coalesce(text(rb,'> td:nth-child(2)'),''))" } },
               { "set": { "var": "relName", "value": "trim(coalesce(text(rb,'> td:nth-child(3)'),''))" } },
               { "set": { "var": "relDate", "value": "trim(coalesce(text(rb,'> td:nth-child(4)'),''))" } },
-              { "set": { "var": "relLink", "value": "count({ base:'rb', css:'> td:last-child a' }) > 0 && !isNullOrWhitespace(trim(coalesce(attr(rb,'> td:last-child a','href'),''))) ? resolveUrl(input.link, trim(attr(rb,'> td:last-child a','href'))) : ''" } },
+              { "set": { "var": "relLink", "value": "exists({ base:'rb', css:'> td:last-child a' }) && !isNullOrWhitespace(trim(coalesce(attr(rb,'> td:last-child a','href'),''))) ? resolveUrl(input.link, trim(attr(rb,'> td:last-child a','href'))) : ''" } },
               { "set": { "var": "relParent", "value": "count(cand) > 0 ? get(parents, string(max(cand))) : ''" } },
               { "push": { "into": "relatedRecords", "value":
                 "{ recordNumber: relNum, parentRecordNumber: relParent, recordType: relType, projectName: relName, date: relDate, link: relLink }" } } ] }
@@ -1211,6 +1214,19 @@ return (`hitKnown ? !crawledToEnd : hasMorePages`).
 **Fidelity notes.**
 - `guard`/`fail class:"terminal"` are excluded from `retryOn`, so they are not retried — matching the
   Polly policy that retries only `timeout`/`Page crashed`.
+- **`count` on a structured `Sel` map counts map ENTRIES, not DOM matches — DOM counting requires a bound
+  handle or `exists`.** `count`'s value-model overload takes precedence for a `Dictionary` (a `{ base, css }`
+  literal), returning its *entry count* (`2`), never a page query — so `count({base,css}) > 0` is
+  *always* true and `count({base,css}) > 1` is *always* true, regardless of the DOM. The reference's
+  `CountAsync()` on an inline `Locator(...)` counts elements, so this payload reproduces those checks with
+  the two shapes that DO query the page: an **existence** check uses `exists({base,css})` (which resolves the
+  Sel map as a selector and returns match-count > 0), and a **numeric** DOM count binds the locator first
+  (`locate` into a var) and then `count(var)` (a bound handle counts elements). Applied at: the multiple-owners
+  `count(ownerBlocks) > 1` (owner blocks located first), the `ownerLines = count(ownerRows)` line count, and
+  the `exists(...)` existence guards for the owner address-1 cell, the processing expand-link, the
+  processing additional-comment rows, and the related-record anchor. `count(var)` where the var holds a
+  plain array/map still counts entries (the processing `lines`, the parents `cand`) — that is the intended
+  value-model behaviour and is unchanged.
 - Search-row URL uses naive `scheme://host+href` concat (`:130`); related-record link uses
   `resolveUrl` = `new Uri(base, rel)` (`:672`). Both reproduced (§7.3).
 - `dl.contentId` is engine-native and identical to `AttachmentHashing.AttachmentIdFromHash`

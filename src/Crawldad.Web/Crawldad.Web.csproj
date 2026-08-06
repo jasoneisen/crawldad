@@ -10,6 +10,15 @@
     <PackageReference Include="WolverineFx.RuntimeCompilation" />
     <!-- Record/replay fake backend + the read-only DOM builtins parse captured HTML with AngleSharp. -->
     <PackageReference Include="AngleSharp" />
+    <!-- Payload validation-at-save (§12): enforces schema/crawldad-1.schema.json against saved payloads. -->
+    <PackageReference Include="JsonSchema.Net" />
+  </ItemGroup>
+
+  <!-- The payload JSON Schema (Deliverable 1) is the normative structural spec (§4). It lives once at the
+       repo root and is embedded into this assembly so the save-time validator loads it with no file-path
+       dependency; the same file is what an external tool/typed client would consume. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\schema\crawldad-1.schema.json" Link="crawldad-1.schema.json" LogicalName="crawldad-1.schema.json" />
   </ItemGroup>
 
   <ItemGroup>

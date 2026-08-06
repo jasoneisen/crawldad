@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "TERMINAL CapDetail-guard redirect (record-09): goto(the record's CapDetail link) lands on a state whose reported url is Error.aspx (an invalid/broken-record redirect, :199). The guard `contains(lower(pageUrl()),'capdetail.aspx')` is false -> terminal record_not_accessible, NOT retried. gotoUrl is the CapDetail link so goto() resolves here; url is the Error page and carries NO 'capdetail.aspx' substring (a Login.aspx redirect whose ReturnUrl echoes the CapDetail path would instead slip past the :203 guard and fail terminally at the record-number guard -- also not retried; documented in FIXTURE_NOTES). No Chromium, no live traffic.",
+  "initialState": "error",
+  "states": {
+    "error": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00009&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Error.aspx?msg=RecordNotFound",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

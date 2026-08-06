@@ -78,8 +78,10 @@ public static class HostConfiguration
         builder.Services.AddProblemDetails();
 
         // Per-slice service registration (validators + infrastructure seams). Each slice owns its DI, mirroring the
-        // foundation; the Runs slice registers the POST /runs validator and the browser-backend seam.
+        // foundation; the Runs slice registers the POST /runs validator and the browser-backend seam, and the
+        // Payloads slice registers the POST /payloads boundary validator.
         RunsModule.AddRunsServices(builder.Services);
+        PayloadsModule.AddPayloadsServices(builder.Services);
 
         return builder;
     }

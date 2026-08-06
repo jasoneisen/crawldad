@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-07): a non-trivial related-record tree (multi-level indentation parent resolution with a sibling overwrite; one garbled-width and one unknown-class row each logging an error), 4-<br> address, one owner, one violation. input.link is the resolveUrl base for the relative tree anchors. No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00007&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00007&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

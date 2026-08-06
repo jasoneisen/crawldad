@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "TERMINAL unknown-heading (record-10): the owner-details section carries an unrecognised heading ('Contact Information'), so B.2's owner switch default fails terminally with code unknown_heading. NOT retried. Location + record details parse cleanly first. No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00010&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00010&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

@@ -5,9 +5,10 @@ using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>The selector resolver (§5.2): structured <c>Sel</c> maps (css/title/base/nth/first/filter, frames
-/// rejected), node selectors from JSON (string with var-first precedence, or a structured object), and the
-/// per-field evaluation.</summary>
+/// <summary>The selector resolver (§5.2): structured <c>Sel</c> maps (css/title/base/nth/first/filter/in), node
+/// selectors from JSON (string with var-first precedence, or a structured object), and the per-field evaluation. Frame
+/// resolution proper is exercised end-to-end by <see cref="FrameNodeTests"/>; here an <c>in:</c> naming an unbound var
+/// is a terminal <c>malformed_node</c>.</summary>
 public class SelResolverTests
 {
     private static JsonElement Json(string source)
@@ -62,12 +63,13 @@ public class SelResolverTests
     }
 
     [Fact]
-    public async Task ResolveMap_rejects_frames_and_rootless_maps()
+    public async Task ResolveMap_rejects_unbound_frames_and_rootless_maps()
     {
         var scope = await ScopeAsync();
 
+        // `in` names a frame var; "frame" is unbound ⇒ RequireFrame faults with malformed_node.
         Should.Throw<InterpreterException>(() => scope.Sel.ResolveMap(Map(("in", "frame"), ("css", "x"))))
-            .Code.ShouldBe(InterpreterErrorCodes.NotSupportedInV0);
+            .Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
         Should.Throw<InterpreterException>(() => scope.Sel.ResolveMap(Map(("nth", 0L))))
             .Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
     }
@@ -86,16 +88,16 @@ public class SelResolverTests
         var scope = await ScopeAsync();
 
         // "rows" names a bound handle ⇒ used directly (var-first precedence)
-        (await (await scope.Sel.ResolveNodeAsync(Json("\"rows\""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(15);
+        (await (await scope.Sel.ResolveNodeAsync(Json("\"rows\""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(15);
         // a non-var string ⇒ treated as a CSS selector
-        (await (await scope.Sel.ResolveNodeAsync(Json($"\"{CapHome.GridRows}\""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(15);
+        (await (await scope.Sel.ResolveNodeAsync(Json($"\"{CapHome.GridRows}\""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(15);
     }
 
     [Fact]
     public async Task ResolveNode_rejects_non_string_non_object_selectors()
     {
         var scope = await ScopeAsync();
-        var error = await Should.ThrowAsync<InterpreterException>(async () => await scope.Sel.ResolveNodeAsync(Json("5"), CapHome.Ct));
+        var error = await Should.ThrowAsync<InterpreterException>(async () => await scope.Sel.ResolveNodeAsync(Json("5"), null, CapHome.Ct));
         error.Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
     }
 
@@ -104,22 +106,23 @@ public class SelResolverTests
     {
         var scope = await ScopeAsync();
 
-        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}" }"""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(15);
-        (await (await scope.Sel.ResolveNodeAsync(Json("""{ "title": "No such title" }"""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(0);
-        (await (await scope.Sel.ResolveNodeAsync(Json("""{ "base": "rows", "css": "td:nth-child(2)" }"""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(10);
-        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}", "nth": "1 + 2" }"""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(1);
-        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}", "first": true }"""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(1);
-        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}", "filter": { "hasTextRegex": "Void" } }"""), CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(1);
+        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}" }"""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(15);
+        (await (await scope.Sel.ResolveNodeAsync(Json("""{ "title": "No such title" }"""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(0);
+        (await (await scope.Sel.ResolveNodeAsync(Json("""{ "base": "rows", "css": "td:nth-child(2)" }"""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(10);
+        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}", "nth": "1 + 2" }"""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(1);
+        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}", "first": true }"""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(1);
+        (await (await scope.Sel.ResolveNodeAsync(Json($$"""{ "css": "{{CapHome.GridRows}}", "filter": { "hasTextRegex": "Void" } }"""), null, CapHome.Ct)).CountAsync(CapHome.Ct)).ShouldBe(1);
     }
 
     [Fact]
-    public async Task ResolveNode_object_rejects_frames_and_unknown_keys()
+    public async Task ResolveNode_object_rejects_unbound_frames_and_unknown_keys()
     {
         var scope = await ScopeAsync();
 
+        // `in` on a structured Sel roots it in a frame var; "f" is unbound ⇒ malformed_node.
         (await Should.ThrowAsync<InterpreterException>(async () =>
-            await scope.Sel.ResolveNodeAsync(Json("""{ "in": "f", "css": "x" }"""), CapHome.Ct))).Code.ShouldBe(InterpreterErrorCodes.NotSupportedInV0);
+            await scope.Sel.ResolveNodeAsync(Json("""{ "in": "f", "css": "x" }"""), null, CapHome.Ct))).Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
         (await Should.ThrowAsync<InterpreterException>(async () =>
-            await scope.Sel.ResolveNodeAsync(Json("""{ "bogus": "x" }"""), CapHome.Ct))).Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
+            await scope.Sel.ResolveNodeAsync(Json("""{ "bogus": "x" }"""), null, CapHome.Ct))).Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
     }
 }

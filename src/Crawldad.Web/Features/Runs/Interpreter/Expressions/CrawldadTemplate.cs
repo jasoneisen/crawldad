@@ -81,6 +81,28 @@ public sealed class CrawldadTemplate
         return _segments is null ? new ValueTask<string>(_constant!) : RenderSegmentsAsync(scope, ct);
     }
 
+    /// <summary>
+    /// The <b>free</b> variable identifiers read across this template's <c>${…}</c> interpolations (a literal template
+    /// reads none). Backs save-time defined-before-use validation (§12); a pure static walk, no rendering.
+    /// </summary>
+    /// <returns>The distinct free identifier names.</returns>
+    public IReadOnlySet<string> FreeIdentifiers()
+    {
+        var into = new HashSet<string>(StringComparer.Ordinal);
+        if (_segments is not null)
+        {
+            foreach (var segment in _segments)
+            {
+                if (segment.Expression is not null)
+                {
+                    into.UnionWith(segment.Expression.FreeIdentifiers());
+                }
+            }
+        }
+
+        return into;
+    }
+
     private async ValueTask<string> RenderSegmentsAsync(IEvalScope scope, CancellationToken ct)
     {
         var sb = new StringBuilder();

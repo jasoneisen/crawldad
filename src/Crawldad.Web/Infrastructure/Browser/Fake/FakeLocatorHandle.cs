@@ -14,11 +14,13 @@ namespace Crawldad.Web.Infrastructure.Browser.Fake;
 internal sealed class FakeLocatorHandle : ILocatorHandle
 {
     private readonly FakePageHandle _page;
+    private readonly string? _frame;
     private readonly Func<IReadOnlyList<IElement>> _resolve;
 
-    private FakeLocatorHandle(FakePageHandle page, Func<IReadOnlyList<IElement>> resolve)
+    private FakeLocatorHandle(FakePageHandle page, string? frame, Func<IReadOnlyList<IElement>> resolve)
     {
         _page = page;
+        _frame = frame;
         _resolve = resolve;
     }
 
@@ -26,19 +28,28 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
     /// <param name="page">The owning page (source of the current document).</param>
     /// <param name="selector">The CSS selector.</param>
     internal static FakeLocatorHandle Css(FakePageHandle page, string selector) =>
-        new(page, () => Query(page.CurrentDocument, selector));
+        new(page, null, () => Query(page.CurrentDocument, selector));
 
     /// <summary>A page-scoped title locator (<c>page.GetByTitle(title)</c>), modelled as <c>[title='…']</c>.</summary>
     /// <param name="page">The owning page.</param>
     /// <param name="title">The title text to match.</param>
     internal static FakeLocatorHandle Title(FakePageHandle page, string title) =>
-        new(page, () => Query(page.CurrentDocument, $"[title=\"{title}\"]"));
+        new(page, null, () => Query(page.CurrentDocument, $"[title=\"{title}\"]"));
+
+    /// <summary>A frame-scoped CSS root locator (<c>frameLocator.Locator(css)</c>), re-queried against the frame's
+    /// current document. The frame tag rides along so a click on this handle (or any child of it) matches an in-frame
+    /// transition, not a page-level one (§ frames).</summary>
+    /// <param name="page">The owning page (source of the frame document).</param>
+    /// <param name="frameSelector">The iframe element's CSS selector — which frame's document to query and click inside.</param>
+    /// <param name="selector">The CSS selector, evaluated against the frame's current document.</param>
+    internal static FakeLocatorHandle InFrame(FakePageHandle page, string frameSelector, string selector) =>
+        new(page, frameSelector, () => Query(page.FrameDocument(frameSelector), selector));
 
     public ILocatorHandle Locator(string childSelector) =>
-        new FakeLocatorHandle(_page, () => ChildQuery(_resolve(), childSelector));
+        new FakeLocatorHandle(_page, _frame, () => ChildQuery(_resolve(), childSelector));
 
     public ILocatorHandle Nth(int index) =>
-        new FakeLocatorHandle(_page, () =>
+        new FakeLocatorHandle(_page, _frame, () =>
         {
             var matches = _resolve();
             return index >= 0 && index < matches.Count ? [matches[index]] : [];
@@ -51,7 +62,7 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
         // Size- and time-guarded through the shared GuardedRegex factory (§7.2), same as the matches/replaceRegex
         // builtins; built once here and captured by the resolver.
         var regex = GuardedRegex.Compile(hasTextRegex);
-        return new FakeLocatorHandle(_page, () => _resolve().Where(e => regex.IsMatch(e.TextContent)).ToList());
+        return new FakeLocatorHandle(_page, _frame, () => _resolve().Where(e => regex.IsMatch(e.TextContent)).ToList());
     }
 
     public Task<int> CountAsync(CancellationToken ct) => Task.FromResult(_resolve().Count);
@@ -73,7 +84,7 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
 
     public Task ClickAsync(int? timeoutMs, CancellationToken ct)
     {
-        _page.HandleClick(First0());
+        _page.HandleClick(First0(), _frame);
         return Task.CompletedTask;
     }
 
@@ -135,15 +146,15 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
         return result;
     }
 
-    // Playwright scopes a relative selector that begins with a child combinator ('>') to the locator's own element
-    // (e.g. the related-records `> td:nth-child(2)` reads a DIRECT child cell). AngleSharp's element.QuerySelectorAll
-    // ignores a leading '>' and scans descendants instead — so `> td:nth-child(2)` would match a deeply nested cell,
-    // diverging from Chromium. Anchor it with ':scope' to recover Playwright's semantics. Selectors without a leading
-    // combinator are already a descendant match in both engines and pass through unchanged. Only '>' is handled — the
-    // one leading combinator the reference uses (:662-665).
-    private static string ScopeRelative(string selector)
-    {
-        var trimmed = selector.TrimStart();
-        return trimmed.StartsWith('>') ? ":scope " + trimmed : selector;
-    }
+    // Playwright's chained Locator (`parent.Locator(css)`) scopes to the parent's STRICT DESCENDANTS: the selector's
+    // leftmost compound must match a descendant, never the parent element itself or an ancestor. AngleSharp's
+    // element.QuerySelectorAll follows the DOM spec, where the leftmost compound is matched against the whole document
+    // (only the RESULT must be a descendant) — the "querySelectorAll ancestor-leakage" gotcha. That diverges from
+    // Chromium whenever the leftmost type can match the parent: the owner block's `table tr:first-child td` (parent is
+    // itself a <table>) leaks `table` onto the parent and reads the parent's own wrapper cell (the whole block) instead
+    // of the inner name cell; likewise `table tr` counts the parent's own row. Anchoring every relative selector with a
+    // leading ':scope ' forces descendant-only matching — reproducing Playwright's chained-locator semantics — and also
+    // subsumes the leading child combinator the related-records region uses (`> td:nth-child(2)` → `:scope > td:…`,
+    // a DIRECT child read). Verified against Playwright's behaviour; re-gated against real Chromium in Phase 4.
+    private static string ScopeRelative(string selector) => ":scope " + selector.TrimStart();
 }

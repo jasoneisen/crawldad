@@ -8,9 +8,11 @@ namespace Crawldad.Web.Features.Runs.Interpreter;
 /// Resolves selectors to lazy <see cref="ILocatorHandle"/>s (§5.2). One resolver serves three shapes: DOM-access
 /// targets from expressions (a CSS string, an opaque handle, or a structured <c>Sel</c> map), and node selectors from
 /// the payload JSON (a string with <b>var-first</b> precedence — a bound handle var wins over CSS — or a structured
-/// object). Structured resolution chains seam calls for <c>css|title|base|nth|first|filter.hasTextRegex</c>; frames
-/// (<c>in</c>) are a terminal <c>not_supported_in_v0</c> in v0. Malformed structured selectors surface as terminal
-/// failures at execution (save-time validation is Phase 3).
+/// object). Structured resolution chains seam calls for <c>css|title|base|nth|first|filter.hasTextRegex</c>. A frame
+/// (<c>in</c>, §5.2) roots CSS resolution inside a bound <see cref="IFrameHandle"/> instead of the page — supplied
+/// either by the enclosing node (<see cref="ResolveNodeAsync"/>'s <c>frame</c> argument) or by the <c>Sel</c> map's own
+/// <c>in</c> key. Malformed structured selectors surface as terminal failures at execution (save-time validation is
+/// Phase 3).
 /// </summary>
 internal sealed class SelResolver(RunScope scope)
 {
@@ -40,14 +42,14 @@ internal sealed class SelResolver(RunScope scope)
 
     /// <summary>Resolves a structured <c>Sel</c> map (values already evaluated) by chaining seam refinements.</summary>
     /// <param name="map">The structured selector map.</param>
-    public ILocatorHandle ResolveMap(Dictionary<string, object?> map)
+    /// <param name="ambientFrame">The frame supplied by the enclosing node (<c>in</c> on the action), used when the map
+    /// carries no <c>in</c> of its own; null roots at the page.</param>
+    public ILocatorHandle ResolveMap(Dictionary<string, object?> map, IFrameHandle? ambientFrame = null)
     {
-        if (map.ContainsKey("in"))
-        {
-            throw NotSupported("frames ('in') are not supported in v0");
-        }
-
-        var handle = ResolveRoot(map);
+        // The map's own `in` (a frame var name) wins over the ambient node-level frame; absent both, resolution roots at
+        // the page.
+        var frame = map.TryGetValue("in", out var inVar) ? RequireFrame((string)inVar!) : ambientFrame;
+        var handle = ResolveRoot(map, frame);
 
         if (map.TryGetValue("filter", out var filter))
         {
@@ -69,26 +71,31 @@ internal sealed class SelResolver(RunScope scope)
         return handle;
     }
 
-    private ILocatorHandle ResolveRoot(Dictionary<string, object?> map)
+    private ILocatorHandle ResolveRoot(Dictionary<string, object?> map, IFrameHandle? frame)
     {
         if (map.TryGetValue("base", out var baseVar))
         {
+            // A `base` handle already carries its own frame (or page) context; the relative CSS narrows it as-is.
             var baseHandle = RequireHandle((string)baseVar!);
             return map.TryGetValue("css", out var relCss) ? baseHandle.Locator((string)relCss!) : baseHandle;
         }
 
         if (map.TryGetValue("css", out var css))
         {
-            return scope.PageHandle.Locator((string)css!);
+            return RootCss(frame, (string)css!);
         }
 
         if (map.TryGetValue("title", out var title))
         {
-            return scope.PageHandle.GetByTitle((string)title!);
+            return scope.PageHandle.GetByTitle((string)title!); // title is a page-level root (frames expose CSS only)
         }
 
         throw new InterpreterException(InterpreterErrorCodes.MalformedNode, "a Sel object needs one of 'css', 'title', or 'base'");
     }
+
+    // Roots a CSS selector at the page (no frame) or inside a bound frame handle (§5.2 `in`).
+    private ILocatorHandle RootCss(IFrameHandle? frame, string css) =>
+        frame is null ? scope.PageHandle.Locator(css) : frame.Locator(css);
 
     /// <summary>Resolves a variable name that must hold a bound locator handle (<c>locate</c> <c>from</c>/<c>base</c>).</summary>
     /// <param name="name">The variable name.</param>
@@ -98,16 +105,33 @@ internal sealed class SelResolver(RunScope scope)
             ? handle
             : throw new InterpreterException(InterpreterErrorCodes.MalformedNode, $"'{name}' is not a bound locator handle");
 
+    /// <summary>Resolves a variable name that must hold a frame handle bound by the <c>frame</c> node (§5.2 <c>in</c>).</summary>
+    /// <param name="name">The variable name.</param>
+    /// <exception cref="InterpreterException">When the name is unbound or not a frame handle — a terminal
+    /// <c>malformed_node</c>, consistent with <see cref="RequireHandle"/>.</exception>
+    internal IFrameHandle RequireFrame(string name) =>
+        scope.TryResolve(name, out var value) && value is IFrameHandle frame
+            ? frame
+            : throw new InterpreterException(InterpreterErrorCodes.MalformedNode, $"'{name}' is not a bound frame handle");
+
     /// <summary>Resolves a node selector from payload JSON: a string (var-first, else CSS/Tmpl) or a structured object.</summary>
     /// <param name="selector">The node's <c>selector</c> element.</param>
+    /// <param name="frame">The frame named by the node's <c>in</c> (§5.2), or null to root at the page.</param>
     /// <param name="ct">Cancels in-flight DOM reads during field evaluation.</param>
-    public async ValueTask<ILocatorHandle> ResolveNodeAsync(JsonElement selector, CancellationToken ct)
+    public async ValueTask<ILocatorHandle> ResolveNodeAsync(JsonElement selector, IFrameHandle? frame, CancellationToken ct)
     {
         if (selector.ValueKind == JsonValueKind.String)
         {
-            // Interpolate FIRST, then apply var-first precedence: a `${…}`-built string that resolves to a bound handle
-            // var wins over treating it as CSS (a literal selector renders to itself, so this is a no-op for it).
+            // Interpolate FIRST. At the page, apply var-first precedence: a `${…}`-built string that resolves to a bound
+            // handle var wins over treating it as CSS (a literal selector renders to itself, so this is a no-op for it).
+            // Inside a frame, the rendered string is CSS rooted in the frame (a frame-bound handle already knows its
+            // frame, so it is passed by var name to a frame-free node, not re-rooted here).
             var rendered = await CrawldadTemplate.Parse(selector.GetString()!).RenderAsync(scope, ct);
+            if (frame is not null)
+            {
+                return frame.Locator(rendered);
+            }
+
             return scope.TryResolve(rendered, out var value) && value is ILocatorHandle handle
                 ? handle
                 : scope.PageHandle.Locator(rendered);
@@ -115,7 +139,7 @@ internal sealed class SelResolver(RunScope scope)
 
         if (selector.ValueKind == JsonValueKind.Object)
         {
-            return ResolveMap(await EvaluateSelMapAsync(selector, ct));
+            return ResolveMap(await EvaluateSelMapAsync(selector, ct), frame);
         }
 
         throw new InterpreterException(InterpreterErrorCodes.MalformedNode, "a selector must be a string or an object");
@@ -155,7 +179,4 @@ internal sealed class SelResolver(RunScope scope)
                 throw new InterpreterException(InterpreterErrorCodes.MalformedNode, $"unknown selector key '{name}'");
         }
     }
-
-    private static InterpreterException NotSupported(string message) =>
-        new(InterpreterErrorCodes.NotSupportedInV0, message);
 }

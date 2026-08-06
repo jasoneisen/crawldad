@@ -1,0 +1,16 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-12): an owner section with one real block and one empty block (the empty one is skipped via continue; owners has one entry), the MULTIPLE OWNERS warning (two blocks), a 3-<br> address, and a header-only attachments grid (attachments == []). No download transitions. No Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00012&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00012&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame-empty.html"
+      }
+    }
+  },
+  "transitions": []
+}

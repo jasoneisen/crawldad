@@ -1,0 +1,19 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00004&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00004",
+  "recordType": "Nuisance Abatement",
+  "projectName": "Nuisance Abatement",
+  "recordDate": "2025-04-01",
+  "status": "Closed",
+  "description": "Accumulation of junk and debris on vacant lot.",
+  "parentRecordNumber": "",
+  "violations": [],
+  "parcels": [],
+  "locations": [
+    { "address1": "15 CEDAR LN", "address2": "", "cityStateZip": "SHELBYVILLE, KY 40065" }
+  ],
+  "owners": [],
+  "processingStatus": [],
+  "attachments": [],
+  "relatedRecords": []
+}

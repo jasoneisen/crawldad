@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<!-- Attachments grid, page 1 of 2 — the document served INSIDE the iframe on state att1 (§ frames).
+     Row layout mirrors LJCMGClient.cs:540-557: a header row (tr:nth-child(1)), one data row with a file-link in
+     td:first-child and type/size/latest-update in td 5/6/7, then the pagination row (tr.ACA_Table_Pages) carrying the
+     "Next" anchor in table.aca_pagination td:last-child. Also holds an input + button so fill/clear/click with `in:`
+     have an in-frame target. Clicking the file link yields sample.bin (manifest download transition); clicking Next
+     swaps the frame to page 2. -->
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body>
+  <input id="frameInput" type="text" value="" />
+  <button id="frameBtn" type="button">In-frame button</button>
+  <table id="attachmentList_gdvAttachmentList">
+    <tbody>
+      <tr class="header"><td>Name</td><td>Desc</td><td>Cat</td><td>MIME</td><td>Type</td><td>Size</td><td>Latest Update</td></tr>
+      <tr>
+        <td><a href="/LJCMG/Cap/Attachment.ashx?attId=1">Site Photo.jpg</a></td>
+        <td>Site inspection photo</td>
+        <td>Photo</td>
+        <td>image/jpeg</td>
+        <td>Photo</td>
+        <td>1.2 MB</td>
+        <td>01/15/2024</td>
+      </tr>
+      <tr class="ACA_Table_Pages">
+        <td colspan="7">
+          <table class="aca_pagination">
+            <tbody>
+              <tr>
+                <td><span class="SelectedPageButton">1</span></td>
+                <td><a href="javascript:__doPostBack('next')">Next</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

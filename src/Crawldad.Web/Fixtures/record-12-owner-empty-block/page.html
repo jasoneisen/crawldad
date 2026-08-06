@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<!-- Synthesized FULL CapDetail record (record-12) — Appendix B.2. Variety focus: the owner EMPTY-BLOCK skip
+     (:319-323) — the owner section has two blocks, one real (3 lines) and one empty (a single blank row), so the empty
+     one hits `continue when isNullOrWhitespace(name) && ownerLines == 1` and is dropped (owners has ONE entry). Two
+     blocks means count(ownerBlocks) > 1, so the MULTIPLE OWNERS warning also fires (faithful to :307-310). The
+     attachments iframe grid has only a header row (no data rows, no pagination), so attachments == []. 3-<br> address. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <span id="ctl00_PlaceHolderMain_lblPermitNumber">24ENF-00012</span>
+  <span id="ctl00_PlaceHolderMain_lblPermitType">Property Maintenance</span>
+  <span id="ctl00_PlaceHolderMain_lblRecordStatus">Open</span>
+
+  <!-- LOCATION — 3-<br> branch -->
+  <table id="tbl_worklocation">
+    <tbody>
+      <tr><td>Work Location</td><td><span>*600 KEEP ST*</span><br>LOUISVILLE, KY 40220<span> View Map</span><br></td></tr>
+    </tbody>
+  </table>
+
+  <!-- OWNER DETAILS — Description + Owner section with one REAL block and one EMPTY block (skipped) -->
+  <table id="ctl00_PlaceHolderMain_PermitDetailList1_TBPermitDetailTest">
+    <tbody>
+      <tr>
+        <td>
+          <h1>Description of Work</h1>
+          <table><tbody><tr><td>Label</td><td>Peeling paint and broken windows on rental property.</td></tr></tbody></table>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <h1>Owner</h1>
+          <table class="table_child"><tbody>
+            <tr><td>
+              <table class="table_child"><tbody><tr><td>
+                <table><tbody>
+                  <tr><td>*MAINTENANCE CO*</td></tr>
+                  <tr><td>600 KEEP ST</td></tr>
+                  <tr><td>LOUISVILLE, KY 40220</td></tr>
+                </tbody></table>
+              </td></tr></tbody></table>
+            </td></tr>
+            <tr><td>
+              <table class="table_child"><tbody><tr><td>
+                <table><tbody>
+                  <tr><td></td></tr>
+                </tbody></table>
+              </td></tr></tbody></table>
+            </td></tr>
+          </tbody></table>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ATTACHMENTS — iframe grid with ONLY a header row (no data rows) -> attachments == [] -->
+  <iframe id="ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList" src="about:blank" title="attachments"></iframe>
+</body>
+</html>

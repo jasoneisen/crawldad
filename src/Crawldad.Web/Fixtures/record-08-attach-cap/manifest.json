@@ -1,0 +1,40 @@
+{
+  "manifest": "1",
+  "description": "FULL CapDetail record (record-08): CYCLIC in-frame attachment pagination (att_a <-> att_b) whose Next link never disappears, so attPagesVisited reaches the 50-page safety cap and the payload logs one cap warning while returning a complete record (attachments == []). Both states serve frame-cap.html. No downloads. No Chromium, no live traffic.",
+  "initialState": "att_a",
+  "states": {
+    "att_a": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00008&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00008&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame-cap.html"
+      }
+    },
+    "att_b": {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00008&agencyCode=LJCMG",
+      "html": "page.html",
+      "frames": {
+        "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList": "frame-cap.html"
+      }
+    }
+  },
+  "transitions": [
+    {
+      "from": "att_a",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr.ACA_Table_Pages table.aca_pagination > tbody > tr > td:last-child > a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "att_b"
+    },
+    {
+      "from": "att_b",
+      "on": {
+        "click": "#attachmentList_gdvAttachmentList > tbody > tr.ACA_Table_Pages table.aca_pagination > tbody > tr > td:last-child > a",
+        "in": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList"
+      },
+      "to": "att_a"
+    }
+  ]
+}

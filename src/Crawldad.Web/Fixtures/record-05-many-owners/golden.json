@@ -1,0 +1,36 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00005&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00005",
+  "recordType": "Property Maintenance",
+  "projectName": "Property Maintenance",
+  "recordDate": "2025-06-01",
+  "status": "Open",
+  "description": "Overgrown vegetation and accumulated debris across the lot.",
+  "parentRecordNumber": "",
+  "violations": [
+    {
+      "title": "Overgrown Lot",
+      "status": "Open",
+      "code": "PM-9",
+      "dueDate": "2025-06-30",
+      "inspectorComment": "Mow required",
+      "referralType": "Internal",
+      "referralDate": "2025-07-01",
+      "workOrderType": "Standard",
+      "referralResult": "Pending"
+    }
+  ],
+  "parcels": [],
+  "locations": [
+    { "address1": "10 MAIN ST", "address2": "", "cityStateZip": "LOUISVILLE, KY 40201" },
+    { "address1": "20 OAK AVE", "address2": "", "cityStateZip": "LOUISVILLE, KY 40202" }
+  ],
+  "owners": [
+    { "name": "OWNER ONE LLC", "address1": "1 FIRST ST", "address2": "", "cityStateZip": "LOUISVILLE, KY 40201" },
+    { "name": "OWNER TWO INC", "address1": "2 SECOND ST", "address2": "", "cityStateZip": "LOUISVILLE, KY 40202" },
+    { "name": "OWNER THREE", "address1": "3 THIRD ST", "address2": "APT 9", "cityStateZip": "LOUISVILLE, KY 40203" }
+  ],
+  "processingStatus": [],
+  "attachments": [],
+  "relatedRecords": []
+}

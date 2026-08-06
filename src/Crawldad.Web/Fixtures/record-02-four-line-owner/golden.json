@@ -1,0 +1,50 @@
+{
+  "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00002&agencyCode=LJCMG",
+  "recordNumber": "24ENF-00002",
+  "recordType": "Zoning Violation",
+  "projectName": "",
+  "recordDate": "2025-05-20",
+  "status": "Under Review",
+  "description": "Fence exceeds height limit in front yard setback.",
+  "parentRecordNumber": "",
+  "violations": [
+    {
+      "title": "Fence Height",
+      "status": "Open",
+      "code": "ZON-4.2",
+      "dueDate": "2025-06-10",
+      "inspectorComment": "Exceeds 4ft",
+      "referralType": "Internal",
+      "referralDate": "2025-06-12",
+      "workOrderType": "Standard",
+      "referralResult": "Open"
+    }
+  ],
+  "parcels": [],
+  "locations": [
+    { "address1": "250 ELM ST", "address2": "APT 4B", "cityStateZip": "FRANKFORT, KY 40601" }
+  ],
+  "owners": [
+    { "name": "ELM STREET PARTNERS", "address1": "250 ELM ST", "address2": "SUITE 100", "cityStateZip": "FRANKFORT, KY 40601" }
+  ],
+  "processingStatus": [],
+  "attachments": [],
+  "relatedRecords": [
+    {
+      "recordNumber": "24ENF-00050",
+      "parentRecordNumber": "",
+      "recordType": "Enforcement Case",
+      "projectName": "Prior Complaint",
+      "date": "2025-01-10",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?capID=24ENF-00050"
+    },
+    {
+      "recordNumber": "24PMT-00300",
+      "parentRecordNumber": "24ENF-00050",
+      "recordType": "Building Permit",
+      "projectName": "Fence Permit",
+      "date": "2025-03-15",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?capID=24PMT-00300"
+    }
+  ]
+}

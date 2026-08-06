@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crawldad.dev/schema/crawldad-1.schema.json",
+  "title": "Crawldad payload v1",
+  "description": "Normative structure of a Crawldad v1 automation payload (CRAWLDAD_DESIGN.md §4-§6). Leaf expressions/templates are strings validated by the semantic pass, not this schema; this schema fixes the document shape, the node vocabulary (exactly one recognised head per node), and the mandatory loop safety cap.",
+  "type": "object",
+  "required": ["crawldad", "name", "config", "steps", "result"],
+  "additionalProperties": false,
+  "properties": {
+    "crawldad": { "const": "1", "description": "Dialect version — v1 is frozen (§4)." },
+    "name": { "type": "string", "minLength": 1, "description": "Logical identity of the managed payload (§4)." },
+    "inputs": {
+      "type": "object",
+      "description": "Typed parameters bound at run time (§4).",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "enum": ["string", "number", "boolean", "date", "array", "object", "backend", "storageTarget"] },
+          "required": { "type": "boolean" },
+          "default": true
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "Session config (§8.1). Only `backend` (the adapter-resolution Expr) is required here; the launch/context/route/retry blocks are accepted as-is.",
+      "required": ["backend"],
+      "properties": {
+        "backend": { "type": "string", "description": "Expr resolving to the { adapter, options } backend binding (§9)." }
+      }
+    },
+    "vars": {
+      "type": "object",
+      "description": "Initial variable bindings, evaluated once in order (§4). A string value is an Expr; a non-string is a JSON literal.",
+      "additionalProperties": true
+    },
+    "steps": { "$ref": "#/$defs/block", "description": "The ordered program (§5, §6)." },
+    "result": { "type": "string", "description": "Final Expr shaping the response body (§10)." }
+  },
+  "$defs": {
+    "block": {
+      "type": "array",
+      "description": "An ordered list of nodes (a step list or a control-flow body).",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "sel": {
+      "description": "A selector (§5.2): a CSS/xpath/text string, or a structured object rooted at css/title/base with optional refinements. Only the keys the engine's SelResolver implements are permitted.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "css": { "type": "string" },
+            "title": { "type": "string" },
+            "base": { "type": "string" },
+            "in": { "type": "string" },
+            "nth": { "type": "string" },
+            "first": { "type": "boolean" },
+            "filter": {
+              "type": "object",
+              "required": ["hasTextRegex"],
+              "additionalProperties": false,
+              "properties": { "hasTextRegex": { "type": "string" } }
+            }
+          },
+          "anyOf": [
+            { "required": ["css"] },
+            { "required": ["title"] },
+            { "required": ["base"] }
+          ]
+        }
+      ]
+    },
+    "failure": {
+      "type": "object",
+      "description": "A typed failure payload (§4/§8.3).",
+      "required": ["class", "code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "class": { "enum": ["terminal", "retryable"] },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" }
+      }
+    },
+    "node": {
+      "description": "One step: an object with exactly one recognised head key (§5/§6). An unknown head, or more than one head, matches no branch and fails.",
+      "type": "object",
+      "oneOf": [
+        { "required": ["comment"], "additionalProperties": false, "properties": { "comment": { "type": "string" } } },
+
+        { "required": ["goto"], "additionalProperties": false, "properties": { "goto": {
+          "type": "object", "required": ["url"], "additionalProperties": false,
+          "properties": { "url": { "type": "string" }, "waitUntil": { "type": "string" }, "timeoutMs": { "type": "integer" } } } } },
+
+        { "required": ["waitForLoadState"], "additionalProperties": false, "properties": { "waitForLoadState": {
+          "type": "object", "required": ["state"], "additionalProperties": false,
+          "properties": { "state": { "enum": ["load", "domcontentloaded", "networkidle"] }, "timeoutMs": { "type": "integer" } } } } },
+
+        { "required": ["waitForRequest"], "additionalProperties": false, "properties": { "waitForRequest": {
+          "type": "object", "required": ["urlPrefix", "trigger"], "additionalProperties": false,
+          "properties": { "urlPrefix": { "type": "string" }, "method": { "type": "string" }, "timeoutMs": { "type": "integer" }, "trigger": { "$ref": "#/$defs/block" } } } } },
+
+        { "required": ["waitFor"], "additionalProperties": false, "properties": { "waitFor": {
+          "type": "object", "required": ["selector"], "additionalProperties": false,
+          "properties": { "selector": { "$ref": "#/$defs/sel" }, "state": { "enum": ["visible", "hidden", "attached", "detached"] }, "in": { "type": "string" }, "timeoutMs": { "type": "integer" } } } } },
+
+        { "required": ["frame"], "additionalProperties": false, "properties": { "frame": {
+          "type": "object", "required": ["var", "selector"], "additionalProperties": false,
+          "properties": { "var": { "type": "string" }, "selector": { "type": "string" } } } } },
+
+        { "required": ["addStyleTag"], "additionalProperties": false, "properties": { "addStyleTag": {
+          "type": "object", "required": ["content"], "additionalProperties": false,
+          "properties": { "content": { "type": "string" } } } } },
+
+        { "required": ["click"], "additionalProperties": false, "properties": { "click": {
+          "type": "object", "required": ["selector"], "additionalProperties": false,
+          "properties": { "selector": { "$ref": "#/$defs/sel" }, "in": { "type": "string" }, "timeoutMs": { "type": "integer" } } } } },
+
+        { "required": ["fill"], "additionalProperties": false, "properties": { "fill": {
+          "type": "object", "required": ["selector", "value"], "additionalProperties": false,
+          "properties": { "selector": { "$ref": "#/$defs/sel" }, "value": { "type": "string" }, "in": { "type": "string" } } } } },
+
+        { "required": ["clear"], "additionalProperties": false, "properties": { "clear": {
+          "type": "object", "required": ["selector"], "additionalProperties": false,
+          "properties": { "selector": { "$ref": "#/$defs/sel" }, "in": { "type": "string" } } } } },
+
+        { "required": ["locate"], "additionalProperties": false, "properties": { "locate": {
+          "type": "object", "required": ["var"], "additionalProperties": false,
+          "properties": { "var": { "type": "string" }, "selector": { "$ref": "#/$defs/sel" }, "base": { "type": "string" }, "in": { "type": "string" }, "from": { "type": "string" }, "nth": { "type": "string" }, "first": { "type": "boolean" }, "filter": { "type": "object", "required": ["hasTextRegex"], "additionalProperties": false, "properties": { "hasTextRegex": { "type": "string" } } } },
+          "anyOf": [ { "required": ["selector"] }, { "required": ["from"] } ] } } },
+
+        { "required": ["download"], "additionalProperties": false, "properties": { "download": {
+          "type": "object", "required": ["trigger", "to", "var"], "additionalProperties": false,
+          "properties": { "trigger": { "$ref": "#/$defs/block" }, "to": { "type": "string" }, "var": { "type": "string" }, "timeoutMs": { "type": "integer" }, "idempotencyKey": { "type": "string" } } } } },
+
+        { "required": ["set"], "additionalProperties": false, "properties": { "set": {
+          "type": "object", "required": ["var", "value"], "additionalProperties": false,
+          "properties": { "var": { "type": "string" }, "path": { "type": "string" }, "value": { "type": "string" } } } } },
+
+        { "required": ["push"], "additionalProperties": false, "properties": { "push": {
+          "type": "object", "required": ["into", "value"], "additionalProperties": false,
+          "properties": { "into": { "type": "string" }, "value": { "type": "string" } } } } },
+
+        { "required": ["log"], "additionalProperties": false, "properties": { "log": {
+          "type": "object", "required": ["level", "message"], "additionalProperties": false,
+          "properties": { "level": { "enum": ["info", "warning", "error"] }, "message": { "type": "string" } } } } },
+
+        { "required": ["fail"], "additionalProperties": false, "properties": { "fail": { "$ref": "#/$defs/failure" } } },
+
+        { "required": ["guard"], "additionalProperties": false, "properties": { "guard": {
+          "type": "object", "required": ["cond", "elseFail"], "additionalProperties": false,
+          "properties": { "cond": { "type": "string" }, "elseFail": { "$ref": "#/$defs/failure" } } } } },
+
+        { "required": ["if"], "additionalProperties": false, "properties": { "if": {
+          "type": "object", "required": ["cond", "then"], "additionalProperties": false,
+          "properties": { "cond": { "type": "string" }, "then": { "$ref": "#/$defs/block" }, "else": { "$ref": "#/$defs/block" } } } } },
+
+        { "required": ["switch"], "additionalProperties": false, "properties": { "switch": {
+          "type": "object", "required": ["cases"], "additionalProperties": false,
+          "properties": {
+            "cases": { "type": "array", "items": { "type": "object", "required": ["when", "do"], "additionalProperties": false, "properties": { "when": { "type": "string" }, "do": { "$ref": "#/$defs/block" } } } },
+            "default": { "$ref": "#/$defs/block" } } } } },
+
+        { "required": ["loop"], "additionalProperties": false, "properties": { "loop": {
+          "type": "object", "required": ["maxIterations", "do"], "additionalProperties": false,
+          "properties": {
+            "maxIterations": { "type": "integer", "minimum": 1 },
+            "do": { "$ref": "#/$defs/block" },
+            "onMaxIterations": { "enum": ["fail", "warn"] },
+            "for": {
+              "type": "object", "required": ["var", "from", "to"], "additionalProperties": false,
+              "properties": { "var": { "type": "string" }, "from": { "type": "string" }, "to": { "type": "string" }, "step": { "type": "string" }, "inclusiveTo": { "type": "boolean" }, "exclusiveTo": { "type": "boolean" } }
+            },
+            "while": { "type": "string" }
+          },
+          "oneOf": [ { "required": ["for"] }, { "required": ["while"] } ] } } },
+
+        { "required": ["forEach"], "additionalProperties": false, "properties": { "forEach": {
+          "type": "object", "required": ["in", "as", "do", "maxIterations"], "additionalProperties": false,
+          "properties": { "in": { "type": "string" }, "as": { "type": "string" }, "index": { "type": "string" }, "do": { "$ref": "#/$defs/block" }, "maxIterations": { "type": "integer", "minimum": 1 }, "onMaxIterations": { "enum": ["fail", "warn"] } } } } },
+
+        { "required": ["break"], "additionalProperties": false, "properties": { "break": {
+          "type": "object", "additionalProperties": false, "properties": { "when": { "type": "string" } } } } },
+
+        { "required": ["continue"], "additionalProperties": false, "properties": { "continue": {
+          "type": "object", "additionalProperties": false, "properties": { "when": { "type": "string" } } } } }
+      ]
+    }
+  }
+}

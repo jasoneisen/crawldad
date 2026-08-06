@@ -1,0 +1,79 @@
+using System.Text.Json;
+using Crawldad.Tests.Support;
+using Crawldad.Web.Features.Payloads;
+
+namespace Crawldad.Tests.Unit;
+
+/// <summary>
+/// The JSON Schema gate (Deliverable 1): <c>schema/crawldad-1.schema.json</c> accepts the canonical payloads and
+/// rejects the structural violations the semantic pass is not meant to catch — an unknown node head, a loop missing
+/// its <c>maxIterations</c> cap, a bad enum value, a mistyped field, a missing required field, and an unknown
+/// top-level key. Errors carry a JSON-Pointer path into the document.
+/// </summary>
+public class PayloadSchemaTests
+{
+    private static JsonElement Parse(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement Load(string fixture)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Runner.FixturesRoot, "Payloads", fixture)));
+        return doc.RootElement.Clone();
+    }
+
+    private static string Steps(string steps) =>
+        $$"""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend" }, "vars": {}, "steps": {{steps}}, "result": "null" }""";
+
+    [Theory]
+    [InlineData("search-full.json")]
+    [InlineData("scrape-full.json")]
+    public void The_canonical_payloads_satisfy_the_schema(string fixture) =>
+        PayloadSchema.Validate(Load(fixture)).ShouldBeEmpty();
+
+    [Fact]
+    public void An_unknown_node_head_fails_the_schema()
+    {
+        var errors = PayloadSchema.Validate(Parse(Steps("""[ { "frobnicate": {} } ]""")));
+        errors.ShouldNotBeEmpty();
+        errors.ShouldContain(e => e.Path.StartsWith("/steps/0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_loop_missing_max_iterations_fails_the_schema()
+    {
+        var errors = PayloadSchema.Validate(Parse(Steps("""[ { "loop": { "for": { "var": "i", "from": "0", "to": "1" }, "do": [] } } ]""")));
+        errors.ShouldNotBeEmpty();
+        errors.ShouldContain(e => e.Path.StartsWith("/steps/0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_forEach_missing_max_iterations_fails_the_schema() =>
+        PayloadSchema.Validate(Parse(Steps("""[ { "forEach": { "in": "['a']", "as": "x", "do": [] } } ]""")))
+            .ShouldNotBeEmpty();
+
+    [Fact]
+    public void A_bad_enum_value_fails_the_schema() =>
+        PayloadSchema.Validate(Parse(Steps("""[ { "log": { "level": "loud", "message": "x" } } ]""")))
+            .ShouldNotBeEmpty();
+
+    [Fact]
+    public void A_two_headed_node_fails_the_schema() =>
+        PayloadSchema.Validate(Parse(Steps("""[ { "goto": { "url": "x" }, "click": { "selector": "y" } } ]""")))
+            .ShouldNotBeEmpty();
+
+    [Fact]
+    public void A_missing_required_top_level_field_fails_the_schema()
+    {
+        // No `result` — an empty instance-location root error, exercising the root-pointer path.
+        var errors = PayloadSchema.Validate(Parse("""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend" }, "steps": [] }"""));
+        errors.ShouldNotBeEmpty();
+    }
+
+    [Fact]
+    public void An_unknown_top_level_key_fails_the_schema() =>
+        PayloadSchema.Validate(Parse("""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend" }, "steps": [], "result": "null", "bogus": 1 }"""))
+            .ShouldNotBeEmpty();
+}

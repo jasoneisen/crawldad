@@ -15,12 +15,27 @@ internal abstract class ExpressionNode
     /// <summary>Evaluates this node against <paramref name="ctx"/>, producing a value-model value or a terminal failure.</summary>
     /// <param name="ctx">The scope + cancellation token.</param>
     public abstract ValueTask<object?> EvaluateAsync(EvalContext ctx);
+
+    /// <summary>
+    /// Collects the <b>free</b> variable identifiers this subtree reads — the bare names it resolves through scope,
+    /// minus any bound by an enclosing binding builtin (<c>filter</c>/<c>map</c>/…). Backs save-time defined-before-use
+    /// validation (§12); a pure static walk, no evaluation. Builtin function names are not identifiers (resolved at
+    /// parse), so they never appear here.
+    /// </summary>
+    /// <param name="into">Accumulates the free identifier names.</param>
+    /// <param name="bound">Names currently bound by enclosing binding builtins (excluded from <paramref name="into"/>).</param>
+    public abstract void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound);
 }
 
 /// <summary>A constant: number (<see cref="long"/>/<see cref="double"/>), string, bool, or null.</summary>
 internal sealed class LiteralNode(object? value) : ExpressionNode
 {
     public override ValueTask<object?> EvaluateAsync(EvalContext ctx) => new(value);
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        // A literal reads no variables.
+    }
 }
 
 /// <summary>A bare identifier resolved through scope; unbound at eval time is a terminal <c>unknown_identifier</c>.</summary>
@@ -34,6 +49,14 @@ internal sealed class IdentifierNode(string name) : ExpressionNode
             ? new ValueTask<object?>(value)
             : throw new ExpressionEvaluationException(
                 ExpressionErrorCodes.UnknownIdentifier, $"unknown identifier '{Name}'");
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        if (!bound.Contains(Name))
+        {
+            into.Add(Name);
+        }
+    }
 }
 
 /// <summary>An array literal <c>[…]</c> → a fresh <see cref="List{T}"/> of the evaluated elements.</summary>
@@ -48,6 +71,14 @@ internal sealed class ArrayNode(IReadOnlyList<ExpressionNode> items) : Expressio
         }
 
         return list;
+    }
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        foreach (var item in items)
+        {
+            item.CollectFreeIdentifiers(into, bound);
+        }
     }
 }
 
@@ -64,6 +95,15 @@ internal sealed class ObjectNode(IReadOnlyList<KeyValuePair<string, ExpressionNo
 
         return map;
     }
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        // Keys are literal strings, not references; only the value nodes can read variables.
+        foreach (var (_, node) in entries)
+        {
+            node.CollectFreeIdentifiers(into, bound);
+        }
+    }
 }
 
 /// <summary>Logical negation <c>!x</c>: operand must be bool (§7.1).</summary>
@@ -71,6 +111,9 @@ internal sealed class NotNode(ExpressionNode operand) : ExpressionNode
 {
     public override async ValueTask<object?> EvaluateAsync(EvalContext ctx) =>
         !ExpressionValues.RequireBool(await operand.EvaluateAsync(ctx));
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
+        operand.CollectFreeIdentifiers(into, bound);
 }
 
 /// <summary>Arithmetic negation <c>-x</c>: operand must be a number, else a terminal <c>type_error</c>.</summary>
@@ -86,6 +129,9 @@ internal sealed class NegateNode(ExpressionNode operand) : ExpressionNode
             _ => throw ExpressionValues.TypeError($"unary '-' requires a number, got {ExpressionValues.TypeName(value)}"),
         };
     }
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
+        operand.CollectFreeIdentifiers(into, bound);
 }
 
 /// <summary>An eager binary operator (<c>+ - * / % == != &lt; &lt;= &gt; &gt;=</c>) applied via a value-model delegate.</summary>
@@ -93,6 +139,12 @@ internal sealed class BinaryNode(ExpressionNode left, ExpressionNode right, Func
 {
     public override async ValueTask<object?> EvaluateAsync(EvalContext ctx) =>
         op(await left.EvaluateAsync(ctx), await right.EvaluateAsync(ctx));
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        left.CollectFreeIdentifiers(into, bound);
+        right.CollectFreeIdentifiers(into, bound);
+    }
 }
 
 /// <summary>Short-circuiting <c>&amp;&amp;</c>: both operands must be bool; the right is not evaluated when the left is false.</summary>
@@ -106,6 +158,12 @@ internal sealed class AndNode(ExpressionNode left, ExpressionNode right) : Expre
         }
 
         return ExpressionValues.RequireBool(await right.EvaluateAsync(ctx));
+    }
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        left.CollectFreeIdentifiers(into, bound);
+        right.CollectFreeIdentifiers(into, bound);
     }
 }
 
@@ -121,6 +179,12 @@ internal sealed class OrNode(ExpressionNode left, ExpressionNode right) : Expres
 
         return ExpressionValues.RequireBool(await right.EvaluateAsync(ctx));
     }
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        left.CollectFreeIdentifiers(into, bound);
+        right.CollectFreeIdentifiers(into, bound);
+    }
 }
 
 /// <summary>Ternary <c>c ? a : b</c>: the condition must be bool; only the taken branch is evaluated.</summary>
@@ -130,6 +194,13 @@ internal sealed class TernaryNode(ExpressionNode condition, ExpressionNode ifTru
         ExpressionValues.RequireBool(await condition.EvaluateAsync(ctx))
             ? await ifTrue.EvaluateAsync(ctx)
             : await ifFalse.EvaluateAsync(ctx);
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        condition.CollectFreeIdentifiers(into, bound);
+        ifTrue.CollectFreeIdentifiers(into, bound);
+        ifFalse.CollectFreeIdentifiers(into, bound);
+    }
 }
 
 /// <summary>Member access <c>a.b</c>: map → value (absent key → null), null → null (models C# <c>?.</c>), else <c>type_error</c>.</summary>
@@ -145,6 +216,10 @@ internal sealed class MemberNode(ExpressionNode target, string name) : Expressio
             _ => throw ExpressionValues.TypeError($"cannot access member '.{name}' on {ExpressionValues.TypeName(value)}"),
         };
     }
+
+    // The member name is a fixed key, not a variable reference; only the target subtree reads variables.
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
+        target.CollectFreeIdentifiers(into, bound);
 }
 
 /// <summary>
@@ -190,6 +265,12 @@ internal sealed class IndexNode(ExpressionNode target, ExpressionNode index) : E
 
     private static string RequireStringKey(object? key) =>
         key is string s ? s : throw ExpressionValues.TypeError($"map index must be a string, got {ExpressionValues.TypeName(key)}");
+
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        target.CollectFreeIdentifiers(into, bound);
+        index.CollectFreeIdentifiers(into, bound);
+    }
 }
 
 /// <summary>A builtin invocation. The builtin is resolved at parse time (unknown/wrong-arity are parse errors), so
@@ -197,6 +278,15 @@ internal sealed class IndexNode(ExpressionNode target, ExpressionNode index) : E
 internal sealed class CallNode(BuiltinInvoker invoke, IReadOnlyList<ExpressionNode> args) : ExpressionNode
 {
     public override ValueTask<object?> EvaluateAsync(EvalContext ctx) => invoke(args, ctx);
+
+    // The function name is resolved at parse (not a variable); only the argument subtrees read variables.
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        foreach (var arg in args)
+        {
+            arg.CollectFreeIdentifiers(into, bound);
+        }
+    }
 }
 
 /// <summary>
@@ -213,4 +303,17 @@ internal sealed class BindingCallNode(
     BindingBuiltinInvoker invoke, ExpressionNode source, string binding, ExpressionNode body) : ExpressionNode
 {
     public override ValueTask<object?> EvaluateAsync(EvalContext ctx) => invoke(source, binding, body, ctx);
+
+    // The source is read in the outer scope; the body is read with `binding` locally bound (so it is not a free
+    // reference there). Add/remove around the body traversal so nested/shadowing bindings resolve correctly.
+    public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
+    {
+        source.CollectFreeIdentifiers(into, bound);
+        var added = bound.Add(binding);
+        body.CollectFreeIdentifiers(into, bound);
+        if (added)
+        {
+            bound.Remove(binding);
+        }
+    }
 }

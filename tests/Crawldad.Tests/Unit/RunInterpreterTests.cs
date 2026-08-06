@@ -152,15 +152,6 @@ public class RunInterpreterTests
     }
 
     [Fact]
-    public async Task Not_supported_in_v0_guards_frames()
-    {
-        Fail(await Run("""[ { "locate": { "var": "x", "selector": "#a", "in": "frame" } } ]"""))
-            .Code.ShouldBe(InterpreterErrorCodes.NotSupportedInV0);
-        Fail(await Run("""[ { "click": { "selector": "#a", "in": "frame" } } ]"""))
-            .Code.ShouldBe(InterpreterErrorCodes.NotSupportedInV0);
-    }
-
-    [Fact]
     public async Task Config_backend_expression_parse_and_eval_failures_are_terminal()
     {
         // A malformed config.backend expression fails at parse (before connect).
