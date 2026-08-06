@@ -1,0 +1,152 @@
+using System.Text;
+
+namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
+
+/// <summary>
+/// A parsed <c>Tmpl</c> field (§4): a string with <c>${Expr}</c> interpolations. Rendering concatenates the literal
+/// runs with each interpolation's value converted under <c>string(x)</c> rules — so a null interpolation contributes
+/// <c>""</c> (§7.1). A template with no <c>${}</c> is a pure literal and renders with no evaluation cost. Parsing is
+/// pure/static: each interpolation body is parsed with <see cref="CrawldadExpression.Parse"/>, so a bad builtin or
+/// arity inside <c>${…}</c> is rejected at parse time, same as a bare <c>Expr</c>.
+/// </summary>
+public sealed class CrawldadTemplate
+{
+    private readonly string? _constant;
+    private readonly IReadOnlyList<Segment>? _segments;
+
+    private CrawldadTemplate(string constant) => _constant = constant;
+
+    private CrawldadTemplate(IReadOnlyList<Segment> segments) => _segments = segments;
+
+    /// <summary>
+    /// Parses <paramref name="source"/> into a renderable template. Interpolations honour nested braces and
+    /// single-quoted strings, so <c>${ {a:1}['a'] }</c> and <c>${ '}' }</c> parse correctly.
+    /// </summary>
+    /// <param name="source">The template source (literal text with optional <c>${Expr}</c> spans).</param>
+    /// <returns>The parsed template.</returns>
+    /// <exception cref="ExpressionParseException">On an unterminated <c>${…}</c> or a malformed interpolation expression.</exception>
+    public static CrawldadTemplate Parse(string source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        var segments = new List<Segment>();
+        var literal = new StringBuilder();
+        var hasInterpolation = false;
+        var i = 0;
+
+        while (i < source.Length)
+        {
+            var c = source[i];
+            if (c == '$' && i + 1 < source.Length && source[i + 1] == '{')
+            {
+                if (literal.Length > 0)
+                {
+                    segments.Add(new Segment(literal.ToString(), null));
+                    literal.Clear();
+                }
+
+                var start = i + 2;
+                var end = FindInterpolationEnd(source, start);
+                segments.Add(new Segment(null, CrawldadExpression.Parse(source[start..end])));
+                hasInterpolation = true;
+                i = end + 1;
+            }
+            else
+            {
+                literal.Append(c);
+                i++;
+            }
+        }
+
+        if (!hasInterpolation)
+        {
+            return new CrawldadTemplate(source);
+        }
+
+        if (literal.Length > 0)
+        {
+            segments.Add(new Segment(literal.ToString(), null));
+        }
+
+        return new CrawldadTemplate(segments);
+    }
+
+    /// <summary>Renders the template against <paramref name="scope"/>, evaluating each interpolation and concatenating.</summary>
+    /// <param name="scope">The read-only run scope + DOM access.</param>
+    /// <param name="ct">Cancels in-flight DOM reads.</param>
+    /// <returns>The rendered string.</returns>
+    public ValueTask<string> RenderAsync(IEvalScope scope, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        return _segments is null ? new ValueTask<string>(_constant!) : RenderSegmentsAsync(scope, ct);
+    }
+
+    private async ValueTask<string> RenderSegmentsAsync(IEvalScope scope, CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        foreach (var segment in _segments!)
+        {
+            if (segment.Expression is null)
+            {
+                sb.Append(segment.Literal);
+            }
+            else
+            {
+                sb.Append(ExpressionValues.ToStringValue(await segment.Expression.EvaluateAsync(scope, ct)));
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static int FindInterpolationEnd(string source, int start)
+    {
+        var depth = 1; // the '{' of '${'
+        var i = start;
+        while (i < source.Length)
+        {
+            var c = source[i];
+            if (c == '\'')
+            {
+                i = SkipString(source, i);
+                continue;
+            }
+
+            if (c == '{')
+            {
+                depth++;
+            }
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return i;
+                }
+            }
+
+            i++;
+        }
+
+        throw new ExpressionParseException(
+            ExpressionErrorCodes.SyntaxError, "unterminated '${...}' interpolation", start - 2);
+    }
+
+    private static int SkipString(string source, int i)
+    {
+        i++; // opening quote
+        while (i < source.Length && source[i] != '\'')
+        {
+            if (source[i] == '\\')
+            {
+                i++; // the escaped character is not a closing quote
+            }
+
+            i++;
+        }
+
+        return i < source.Length ? i + 1 : i;
+    }
+
+    private sealed record Segment(string? Literal, CrawldadExpression? Expression);
+}

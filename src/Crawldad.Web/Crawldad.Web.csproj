@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- THE combined host: Wolverine.Http JSON API + Marten event store + JasperFx CLI. API-only (no Blazor). -->
+
+  <ItemGroup>
+    <PackageReference Include="Marten" />
+    <PackageReference Include="WolverineFx.Http" />
+    <PackageReference Include="WolverineFx.Marten" />
+    <PackageReference Include="WolverineFx.Http.FluentValidation" />
+    <PackageReference Include="WolverineFx.RuntimeCompilation" />
+    <!-- Record/replay fake backend + the read-only DOM builtins parse captured HTML with AngleSharp. -->
+    <PackageReference Include="AngleSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Crawldad.Contracts\Crawldad.Contracts.csproj" />
+  </ItemGroup>
+
+  <!-- White-box test access: the interpreter node model, run scope, Sel resolver, and the fake backend are
+       internal implementation detail exercised directly by the unit tests (the 100% gate covers them there). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Crawldad.Tests" />
+  </ItemGroup>
+
+  <!-- Ship the fixtures as content so the real host can run the P1 demo, and so they copy transitively
+       into the test project's output (resolved at runtime via AppContext.BaseDirectory). Remove the SDK's
+       default classification first (json→Content, html/md→None), then re-add all as copied Content — the
+       one pattern that works regardless of extension without tripping the duplicate-item guard. -->
+  <ItemGroup>
+    <Content Remove="Fixtures\**\*" />
+    <None Remove="Fixtures\**\*" />
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

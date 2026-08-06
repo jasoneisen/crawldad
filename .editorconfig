@@ -1,0 +1,90 @@
+# The lint ruleset. With EnforceCodeStyleInBuild + TreatWarningsAsErrors, these severities
+# are enforced at build time and by `dotnet format --verify-no-changes`.
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+end_of_line = lf
+
+[*.{json,yml,yaml,csproj,props,targets,razor,html}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+# Usings
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+csharp_using_directive_placement = outside_namespace:warning
+
+# Modern C# idioms
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = when_multiline:warning
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:silent
+csharp_prefer_simple_using_statement = true:warning
+csharp_style_prefer_primary_constructors = true:suggestion
+
+# Public methods are framework entry points (Wolverine endpoints/handlers) whose parameters are bound by the
+# framework and may not all be referenced. Only flag unused params on non-public.
+dotnet_code_quality_unused_parameters = non_public:warning
+
+# Do not qualify with this.
+dotnet_style_qualification_for_field = false:warning
+dotnet_style_qualification_for_property = false:warning
+dotnet_style_qualification_for_method = false:warning
+dotnet_style_qualification_for_event = false:warning
+
+# Expression-bodied members are welcome (this codebase favors them)
+csharp_style_expression_bodied_methods = true:silent
+csharp_style_expression_bodied_properties = true:warning
+csharp_style_expression_bodied_accessors = true:warning
+
+# Naming: private fields _camelCase
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_prefix
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_prefix.capitalization = camel_case
+dotnet_naming_style.underscore_prefix.required_prefix = _
+
+# This is an application/service, not a shipped library: don't demand sealing/internal-by-default
+# or CA1515 (public types). Keep the demonstrative public API readable.
+dotnet_diagnostic.CA1515.severity = none
+# ConfigureAwait(false) is for libraries; app/host code wants the captured context.
+dotnet_diagnostic.CA2007.severity = none
+dotnet_diagnostic.MA0004.severity = none
+# Nullable reference types are enabled, which already enforces non-null params at compile time;
+# CA1062's defensive runtime null checks would be pure noise on every endpoint/handler.
+dotnet_diagnostic.CA1062.severity = none
+# LoggerMessage source-gen / deferred-evaluation micro-optimizations add ceremony for no benefit here.
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1873.severity = none
+# Types instantiated only by DI or JSON deserialization look "never instantiated" to the analyzer.
+dotnet_diagnostic.CA1812.severity = none
+# We deliberately group small, cohesive types per feature file (Events.cs, Enums.cs, ...) for conciseness
+# and discoverability, so don't require one-type-per-file-named-after-the-type.
+dotnet_diagnostic.MA0048.severity = none
+
+[src/Crawldad.Web/Infrastructure/Browser/**.cs]
+# The browser seam mirrors Playwright for .NET 1:1 so the Phase 4 adapters map straight through: URLs,
+# selectors, and wait-states are plain strings (a Playwright selector like "xpath=…" or a comma-union
+# "#a, #b" is not a System.Uri). Turn off the URI-type design rules for this seam only.
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+
+[tests/**.cs]
+# Tests legitimately have public fixtures, magic values, short-lived disposables, and unused-looking params.
+dotnet_diagnostic.CA1707.severity = none   # underscores in test method names
+dotnet_diagnostic.CA1861.severity = none   # constant arrays as arguments
+dotnet_diagnostic.CA2007.severity = none   # ConfigureAwait not needed in tests
+dotnet_diagnostic.CA2000.severity = none   # short-lived HttpClient/handler in test helpers
+dotnet_diagnostic.CA1869.severity = none   # one-off JsonSerializerOptions in tests
+dotnet_diagnostic.CA1711.severity = none   # xUnit collection classes conventionally end in 'Collection'

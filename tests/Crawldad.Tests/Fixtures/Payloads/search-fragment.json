@@ -1,0 +1,39 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.search.fragment",
+  "inputs": {
+    "backend":   { "type": "backend", "required": true },
+    "startDate": { "type": "string",  "required": false },
+    "endDate":   { "type": "string",  "required": false }
+  },
+  "config": { "backend": "input.backend", "defaultTimeoutMs": 120000 },
+  "vars": { "pageResults": [] },
+  "steps": [
+    { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement" } },
+    { "waitForLoadState": { "state": "networkidle" } },
+    { "if": { "cond": "!isNullOrWhitespace(input.startDate)", "then": [
+        { "click": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate" } },
+        { "clear": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate" } },
+        { "fill":  { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate", "value": "input.startDate" } }
+    ] } },
+    { "if": { "cond": "!isNullOrWhitespace(input.endDate)", "then": [
+        { "click": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate" } },
+        { "clear": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate" } },
+        { "fill":  { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate", "value": "input.endDate" } }
+    ] } },
+    { "waitForRequest": {
+        "urlPrefix": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST",
+        "trigger": [ { "click": { "selector": "#ctl00_PlaceHolderMain_btnNewSearch" } } ] } },
+    { "waitFor": { "selector": "#divGlobalLoading", "state": "hidden" } },
+    { "comment": "first-page row extraction — LJCMGClient.cs:125-140" },
+    { "locate": { "var": "rows", "selector": "#ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList tr" } },
+    { "loop": { "maxIterations": 100000,
+        "for": { "var": "i", "from": "3", "to": "count(rows) - 2", "exclusiveTo": true },
+        "do": [
+          { "locate": { "var": "row", "from": "rows", "nth": "i" } },
+          { "push": { "into": "pageResults", "value": "{ url: '' + urlScheme(pageUrl()) + '://' + urlHost(pageUrl()) + trim(coalesce(attr(row,'td:nth-child(3) a','href'),'')), data: { date: trim(coalesce(text(row,'td:nth-child(2)'),'')), recordNumber: trim(coalesce(text(row,'td:nth-child(3) a'),'')), recordType: trim(coalesce(text(row,'td:nth-child(4)'),'')), address: trim(coalesce(text(row,'td:nth-child(5)'),'')), status: trim(coalesce(text(row,'td:nth-child(6)'),'')), shortNotes: trim(coalesce(text(row,'td:nth-child(7)'),'')) } }" } }
+        ] } },
+    { "set": { "var": "hasMorePages", "value": "count('table.aca_pagination td:last-child a') > 0" } }
+  ],
+  "result": "{ results: pageResults, hasMorePages: hasMorePages }"
+}

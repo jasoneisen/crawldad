@@ -1,0 +1,45 @@
+<Project>
+
+  <!-- Central Package Management: every version is declared once, here. Projects reference by name only. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="Critter Stack (Marten + Wolverine)">
+    <PackageVersion Include="Marten" Version="9.11.0" />
+    <PackageVersion Include="WolverineFx.Http" Version="6.15.0" />
+    <PackageVersion Include="WolverineFx.Marten" Version="6.15.0" />
+    <PackageVersion Include="WolverineFx.Http.FluentValidation" Version="6.15.0" />
+    <!-- Wolverine 6 moved the runtime Roslyn compiler out of core; this re-enables dynamic codegen.
+         Production can instead pre-generate code (codegen write) and set TypeLoadMode.Static. -->
+    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.15.0" />
+    <!-- JasperFx (the db-*/projections/codegen CLI) and FluentValidation arrive transitively via the packages
+         above; pinned explicitly so the versions are visible and a later slice can reference them directly
+         (e.g. FluentValidation for AbstractValidator<T> in a Validators.cs) without choosing a version. -->
+    <PackageVersion Include="JasperFx" Version="2.16.0" />
+    <PackageVersion Include="FluentValidation" Version="12.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Browser / DOM">
+    <!-- Pre-declared for a later work package: the expression evaluator's read-only DOM builtins and the
+         record/replay fake backend parse captured HTML with AngleSharp. Not referenced by any project yet. -->
+    <PackageVersion Include="AngleSharp" Version="1.7.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Test">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="coverlet.msbuild" Version="6.0.4" />
+    <PackageVersion Include="Alba" Version="8.5.2" />
+    <PackageVersion Include="Shouldly" Version="4.2.1" />
+  </ItemGroup>
+
+  <!-- Extra linters, applied to every project (PrivateAssets=all is implied by GlobalPackageReference). -->
+  <ItemGroup>
+    <GlobalPackageReference Include="Roslynator.Analyzers" Version="4.15.0" />
+    <GlobalPackageReference Include="Meziantou.Analyzer" Version="2.0.224" />
+  </ItemGroup>
+
+</Project>

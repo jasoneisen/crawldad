@@ -1,0 +1,24 @@
+{
+  "manifest": "1",
+  "description": "Record/replay script for the LJCMG Accela CapHome enforcement search (LJCMGClient.cs:75-175). Drives FakeBrowserBackend deterministically with no Chromium and no live traffic. Phase 1 uses only 'states'/'transitions'; the shape is intentionally open for Phase 2 to add per-transition 'delayMs'/'fail' and per-state 'inject' (timeout/pageCrashed) blocks without restructuring.",
+  "initialState": "form",
+  "states": {
+    "form": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "form.html"
+    },
+    "results": {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "results.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "form",
+      "on": { "click": "#ctl00_PlaceHolderMain_btnNewSearch" },
+      "to": "results",
+      "emit": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST" }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Crawldad.Contracts/Crawldad.Contracts.csproj" />
+    <Project Path="src/Crawldad.Web/Crawldad.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Crawldad.Tests/Crawldad.Tests.csproj" />
+  </Folder>
+</Solution>

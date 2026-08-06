@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) faithful CapHome search RESULTS grid. See FIXTURE_NOTES.md.
+     Grid #...gdvPermitList holds EXACTLY 15 <tr>: 3 header + 10 data + 2 footer, so the
+     reference loop `for (i=3; i < count-2; i++)` iterates data rows 3..12 (10 rows).
+     Multi-node cells are written gap-free on one line so textContent concatenation has no
+     stray whitespace. Pagination table is a SEPARATE sibling so its rows are not counted. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Enforcement Search Results - LJCMG</title></head>
+<body>
+  <div id="divGlobalLoading" style="display:none">Loading...</div>
+  <div id="ctl00_PlaceHolderMain_dgvPermitList">
+    <table id="ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList" class="ACA_GridView">
+      <tbody>
+        <!-- 3 header rows (indices 0,1,2 — skipped by the loop) -->
+        <tr class="ACA_GridHeader"><td colspan="7">Search Results</td></tr>
+        <tr class="ACA_GridHeader_Sort"><td colspan="7">Sort</td></tr>
+        <tr class="ACA_TabRow_Header">
+          <th></th><th>Date</th><th>Record Number</th><th>Record Type</th><th>Address</th><th>Status</th><th>Short Notes</th>
+        </tr>
+
+        <!-- 10 data rows (indices 3..12) -->
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>  01/03/2024  </td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=1">ENF-24-00001</a></td>
+          <td>Enforcement</td>
+          <td>100 Main St</td>
+          <td>Open</td>
+          <td>Initial complaint</td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>01/04/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=2">ENF-24-00002</a></td>
+          <td>Enforcement</td>
+          <td>200 Oak &amp; Pine Ave</td>
+          <td>Open</td>
+          <td>Owner&#39;s response pending</td>
+        </tr>
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/05/2024</td>
+          <td>(no link)</td>
+          <td>Enforcement</td>
+          <td>300 Elm St</td>
+          <td>Void</td>
+          <td>No record link</td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>01/06/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=4">ENF-24-00004</a></td>
+          <td>Enforcement</td>
+          <td></td>
+          <td>Open</td>
+          <td>Empty address test</td>
+        </tr>
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/07/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=5">ENF-24-00005</a></td>
+          <td>Enforcement</td>
+          <td>500 Pine Rd</td>
+          <td>&nbsp;Closed&nbsp;</td>
+          <td><span>Part A </span><span>Part B</span></td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>  01/08/2024  </td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=6">ENF-24-00006</a></td>
+          <td>Zoning Violation</td>
+          <td>600 Maple Dr</td>
+          <td>Open</td>
+          <td>   </td>
+        </tr>
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/09/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=7">ENF-24-00007</a></td>
+          <td>Enforcement</td>
+          <td>700 B&amp;B Lane  </td>
+          <td>In Review</td>
+          <td>Follow-up</td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>01/10/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&amp;id=8">ENF-24-00008</a></td>
+          <td>Enforcement</td>
+          <td>800 Cedar Ct</td>
+          <td>Open</td>
+          <td>Query param link</td>
+        </tr>
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/11/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=9">ENF-24-00009</a></td>
+          <td>Enforcement</td>
+          <td><span>900 </span><span>Birch</span> Way</td>
+          <td>Open</td>
+          <td>Split address nodes</td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>01/12/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=10">ENF-24-00010</a></td>
+          <td>Enforcement</td>
+          <td>1000 Walnut Blvd</td>
+          <td>Open</td>
+          <td>Last data row</td>
+        </tr>
+
+        <!-- 2 footer rows (indices 13,14 — skipped by the loop) -->
+        <tr class="ACA_GridFooter"><td colspan="7">Showing 1-10 of 10</td></tr>
+        <tr class="ACA_GridPagerRow"><td colspan="7">&nbsp;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Last-page pagination: td:last-child has NO <a>, so hasMorePages is false. -->
+  <table class="aca_pagination">
+    <tbody>
+      <tr>
+        <td><span class="SelectedPageButton">1</span></td>
+        <td><span>Last page</span></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

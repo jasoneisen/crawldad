@@ -1,0 +1,115 @@
+{
+  "results": [
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=1",
+      "data": {
+        "date": "01/03/2024",
+        "recordNumber": "ENF-24-00001",
+        "recordType": "Enforcement",
+        "address": "100 Main St",
+        "status": "Open",
+        "shortNotes": "Initial complaint"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=2",
+      "data": {
+        "date": "01/04/2024",
+        "recordNumber": "ENF-24-00002",
+        "recordType": "Enforcement",
+        "address": "200 Oak & Pine Ave",
+        "status": "Open",
+        "shortNotes": "Owner's response pending"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com",
+      "data": {
+        "date": "01/05/2024",
+        "recordNumber": "",
+        "recordType": "Enforcement",
+        "address": "300 Elm St",
+        "status": "Void",
+        "shortNotes": "No record link"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=4",
+      "data": {
+        "date": "01/06/2024",
+        "recordNumber": "ENF-24-00004",
+        "recordType": "Enforcement",
+        "address": "",
+        "status": "Open",
+        "shortNotes": "Empty address test"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=5",
+      "data": {
+        "date": "01/07/2024",
+        "recordNumber": "ENF-24-00005",
+        "recordType": "Enforcement",
+        "address": "500 Pine Rd",
+        "status": "Closed",
+        "shortNotes": "Part A Part B"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=6",
+      "data": {
+        "date": "01/08/2024",
+        "recordNumber": "ENF-24-00006",
+        "recordType": "Zoning Violation",
+        "address": "600 Maple Dr",
+        "status": "Open",
+        "shortNotes": ""
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=7",
+      "data": {
+        "date": "01/09/2024",
+        "recordNumber": "ENF-24-00007",
+        "recordType": "Enforcement",
+        "address": "700 B&B Lane",
+        "status": "In Review",
+        "shortNotes": "Follow-up"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&id=8",
+      "data": {
+        "date": "01/10/2024",
+        "recordNumber": "ENF-24-00008",
+        "recordType": "Enforcement",
+        "address": "800 Cedar Ct",
+        "status": "Open",
+        "shortNotes": "Query param link"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=9",
+      "data": {
+        "date": "01/11/2024",
+        "recordNumber": "ENF-24-00009",
+        "recordType": "Enforcement",
+        "address": "900 Birch Way",
+        "status": "Open",
+        "shortNotes": "Split address nodes"
+      }
+    },
+    {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=10",
+      "data": {
+        "date": "01/12/2024",
+        "recordNumber": "ENF-24-00010",
+        "recordType": "Enforcement",
+        "address": "1000 Walnut Blvd",
+        "status": "Open",
+        "shortNotes": "Last data row"
+      }
+    }
+  ],
+  "hasMorePages": false
+}

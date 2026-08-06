@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <!-- Coverage gate (coverlet.msbuild, VSTest mode — .NET 10's default test runner can't gate coverage).
+       Enforces 100% line+branch of shipped code; during local iteration override with
+       /p:CollectCoverage=false for a quick run. -->
+  <PropertyGroup>
+    <CollectCoverage>true</CollectCoverage>
+    <CoverletOutputFormat>cobertura</CoverletOutputFormat>
+    <CoverletOutput>$(MSBuildThisFileDirectory)TestResults/</CoverletOutput>
+    <Threshold>100</Threshold>
+    <ThresholdType>line,branch</ThresholdType>
+    <ThresholdStat>total</ThresholdStat>
+    <!-- Measure ONLY product assemblies (excludes the test assembly + framework). -->
+    <Include>[Crawldad.Web]*,[Crawldad.Contracts]*</Include>
+    <!-- Don't count trivial auto-property accessors on DTOs/aggregates. -->
+    <SkipAutoProps>true</SkipAutoProps>
+    <!-- Exclude framework source-generated dispatchers (Marten/JasperFx/Wolverine evolvers) and the entry-point
+         shell. Program.cs is listed explicitly so a future file that happens to be named Program.cs is still
+         counted rather than silently dropped from the gate. -->
+    <ExcludeByFile>**/obj/**/*.cs,**/src/Crawldad.Web/Program.cs</ExcludeByFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.msbuild">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Alba" />
+    <PackageReference Include="Shouldly" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Crawldad.Web\Crawldad.Web.csproj" />
+    <ProjectReference Include="..\..\src\Crawldad.Contracts\Crawldad.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Shouldly" />
+  </ItemGroup>
+
+  <!-- Test data assets (the acceptance fragment payload). Resolved at runtime via AppContext.BaseDirectory.
+       The caphome-search fixture (manifest/html/golden) copies transitively from Crawldad.Web. -->
+  <ItemGroup>
+    <Content Remove="Fixtures\**\*" />
+    <None Remove="Fixtures\**\*" />
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

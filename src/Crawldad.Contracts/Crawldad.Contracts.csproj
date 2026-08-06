@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Dependency-free wire types shared by the API endpoints (and, later, any typed clients). Commands, DTOs,
+       and enums land here as the feature slices arrive; today it holds the JSON wire convention and /health. -->
+
+</Project>
