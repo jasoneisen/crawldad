@@ -3,13 +3,12 @@ using System.Text.Json.Serialization;
 
 namespace Crawldad.Contracts.Runs;
 
-/// <summary>Run counters (§10 <c>stats</c>). <c>cacheHits</c>/<c>downloads</c> are always 0 in Phase 1 (no route cache,
-/// no downloads yet).</summary>
+/// <summary>Run counters (§10 <c>stats</c>). <c>cacheHits</c> is always 0 until the route cache lands (Phase 4).</summary>
 /// <param name="DurationMs">Wall-clock duration measured through the <see cref="TimeProvider"/> seam.</param>
 /// <param name="Steps">Executed node count (each dispatched node, loop bodies re-counted per iteration).</param>
 /// <param name="Requests">Navigations plus matched <c>waitForRequest</c>s.</param>
-/// <param name="CacheHits">Route-cache hits (0 in Phase 1).</param>
-/// <param name="Downloads">Completed downloads (0 in Phase 1).</param>
+/// <param name="CacheHits">Route-cache hits (0 until the route cache lands).</param>
+/// <param name="Downloads">Completed <c>download</c> nodes (§9.3).</param>
 public sealed record RunStats(long DurationMs, int Steps, int Requests, int CacheHits, int Downloads);
 
 /// <summary>Where a failure occurred (§10 <c>failure.atStep</c>).</summary>

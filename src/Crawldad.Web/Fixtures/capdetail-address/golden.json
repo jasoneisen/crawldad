@@ -1,0 +1,8 @@
+{
+  "locations": [
+    { "address1": "100 FIRST ST", "address2": "", "cityStateZip": "LOUISVILLE, KY 40202" },
+    { "address1": "200 SECOND AVE", "address2": "SUITE 5", "cityStateZip": "PORTLAND, OR 97201" },
+    { "address1": "300 THIRD BLVD", "address2": "UNIT 12", "cityStateZip": "SEATTLE, WA 98101" },
+    { "address1": "400 FOURTH ST", "address2": "", "cityStateZip": "" }
+  ]
+}

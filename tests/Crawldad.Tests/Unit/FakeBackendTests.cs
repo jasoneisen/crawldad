@@ -259,6 +259,18 @@ public class FakeBackendTests
     }
 
     [Fact]
+    public async Task CloseAsync_marks_a_healthy_page_closed()
+    {
+        var page = await Runner.FakePageAsync();
+        page.Closed.ShouldBeFalse();
+
+        await page.CloseAsync(CapHome.Ct);
+
+        page.CloseAttempted.ShouldBeTrue();
+        page.Closed.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task Session_disposes_cleanly()
     {
         var backend = new FakeBrowserBackend(Runner.FixturesRoot);

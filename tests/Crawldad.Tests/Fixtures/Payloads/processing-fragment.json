@@ -1,0 +1,65 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.scrape.processing",
+  "inputs": {
+    "backend": { "type": "backend", "required": true },
+    "link":    { "type": "string",  "required": true }
+  },
+  "config": { "backend": "input.backend", "defaultTimeoutMs": 120000 },
+  "vars": { "processingStatus": [] },
+  "steps": [
+    { "goto": { "url": "${input.link}" } },
+    { "waitForLoadState": { "state": "load" } },
+    { "guard": { "cond": "contains(lower(pageUrl()), 'capdetail.aspx')",
+        "elseFail": { "class": "terminal", "code": "record_not_accessible",
+                      "message": "Record not accessible (redirected to ${urlPath(pageUrl())}): ${input.link}" } } },
+
+    { "comment": "===== PROCESSING STATUS (:455-529) — paired rows i*2 / i*2+1 =====" },
+    { "locate": { "var": "processingRows", "selector": "#divProcessingTable > table > tbody > tr" } },
+    { "set": { "var": "procRowCount", "value": "count(processingRows)" } },
+    { "loop": { "maxIterations": 100000,
+      "for": { "var": "i", "from": "0", "to": "procRowCount", "exclusiveTo": true },
+      "do": [
+        { "comment": "true bound is i*2+1 <= procRowCount (:462); break enforces it before any row access" },
+        { "break": { "when": "i*2+1 > procRowCount" } },
+        { "locate": { "var": "headRow", "from": "processingRows", "nth": "i*2" } },
+        { "comment": "heading = ... ?? throw (:464). text() yields null when the cell is absent." },
+        { "set": { "var": "procHeading", "value": "text(headRow,'td:last-child')" } },
+        { "guard": { "cond": "procHeading != null",
+            "elseFail": { "class": "terminal", "code": "processing_heading_unparseable", "message": "Heading cannot be parsed" } } },
+        { "if": { "cond": "count({ base:'headRow', css:'a' }) > 0", "then": [
+          { "locate": { "var": "expandLink", "base": "headRow", "selector": "a" } },
+          { "click": { "selector": "expandLink" } },
+          { "locate": { "var": "detailRow", "from": "processingRows", "nth": "i*2+1" } },
+          { "locate": { "var": "lineBlocks", "base": "detailRow", "selector": "td:last-child > table:first-child > tbody > tr:first-child td:last-child td" } },
+          { "continue": { "when": "count(lineBlocks) == 0" } },
+          { "set": { "var": "lines", "value": "[]" } },
+          { "forEach": { "in": "lineBlocks", "as": "lineBlock", "maxIterations": 100000, "do": [
+            { "forEach": { "in": "split(innerText(lineBlock), '\n')", "as": "ln", "maxIterations": 100000, "do": [
+              { "push": { "into": "lines", "value": "trim(ln)" } }
+            ] } }
+          ] } },
+          { "if": { "cond": "count(lines) > 2", "then": [
+              { "log": { "level": "warning", "message": "Processing status lines > 2: ${input.link}" } } ] } },
+          { "set": { "var": "due",        "value": "replace(trim(split(lines[0],',')[0]), 'Due on ', '')" } },
+          { "set": { "var": "assignedTo", "value": "replace(trim(split(lines[0],',')[1]), 'assigned to ', '')" } },
+          { "set": { "var": "markedAs",   "value": "replace(trim(split(lines[1],' on ')[0]), 'Marked as ', '')" } },
+          { "set": { "var": "markedOn",   "value": "trim(split(split(lines[1],' on ')[1], ' by ')[0])" } },
+          { "set": { "var": "markedBy",   "value": "trim(split(split(lines[1],' on ')[1], ' by ')[1])" } },
+          { "set": { "var": "addtl", "value": "{}" } },
+          { "if": { "cond": "count({ base:'detailRow', css:'td:last-child > table:first-child > tbody > tr:nth-child(2) td:last-child tr' }) > 0", "then": [
+            { "locate": { "var": "addtlRows", "base": "detailRow", "selector": "td:last-child > table:first-child > tbody > tr:nth-child(2) td:last-child tr" } },
+            { "forEach": { "in": "addtlRows", "as": "ar", "maxIterations": 100000, "do": [
+              { "set": { "var": "h", "value": "trim(coalesce(text(ar,'td:first-child'),''))" } },
+              { "set": { "var": "b", "value": "trim(coalesce(text(ar,'td:last-child'),''))" } },
+              { "if": { "cond": "!isNullOrWhitespace(h) && !isNullOrWhitespace(b)",
+                  "then": [ { "set": { "var": "addtl", "path": "[${endsWith(h,':') ? substring(h,0,length(h)-1) : h}]", "value": "b" } } ],
+                  "else": [ { "log": { "level": "warning", "message": "Could not parse additional comment lines: ${input.link}" } } ] } }
+            ] } }
+          ] } },
+          { "push": { "into": "processingStatus", "value": "{ category: procHeading, dueDate: due, assignedTo: assignedTo, status: markedAs, statusDate: markedOn, statusBy: markedBy, lines: addtl }" } }
+        ] } }
+      ] } }
+  ],
+  "result": "{ processingStatus: processingStatus }"
+}

@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "Single-state CapDetail RELATED RECORDS region (LJCMGClient.cs:625-697). Serves #tableCapTreeList at a CapDetail.aspx URL; input.link is the resolveUrl base for the relative anchors. Phase 2 WP3 acceptance fixture — no Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00004&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00004&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

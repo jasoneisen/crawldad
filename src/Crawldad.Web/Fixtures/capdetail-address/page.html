@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) CapDetail LOCATION region — LJCMGClient.cs:229-268. See FIXTURE_NOTES.md.
+     Rows matched by "#tbl_worklocation tr:first-child, #tbl_worklocation tr[tips='tr_additional_locations']":
+       row 1 (tr:first-child)                     -> InnerHTML.Split("<br>").Length == 3   (3-branch)
+       rows 2-4 (tips='tr_additional_locations')  -> 4-branch, 5-branch, exceptional (==2)
+     Each td:nth-child(2) is written GAP-FREE on one line so AngleSharp's serialized innerHTML (which preserves
+     whitespace text nodes, exactly like a browser) has no stray whitespace and the <br>/<span> split arithmetic is
+     exact. The first <span> child is address1 (carries the '*' chars that .Replace("*","") strips); a trailing
+     <span> map link is glued onto the city/state/zip line to exercise .Split("<span")[0]. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <table id="tbl_worklocation">
+    <tbody>
+      <tr><td>Work Location</td><td><span>*100 FIRST ST*</span><br>LOUISVILLE, KY 40202<span> View Map</span><br></td></tr>
+      <tr tips="tr_additional_locations"><td>Additional Location</td><td><span>*200 SECOND AVE*</span><br>SUITE 5<br>PORTLAND, OR 97201<span> View Map</span><br></td></tr>
+      <tr tips="tr_additional_locations"><td>Additional Location</td><td><span>*300 THIRD BLVD*</span><br>UNIT 12<br>SEATTLE, WA 98101<br>USA<span> View Map</span><br></td></tr>
+      <tr tips="tr_additional_locations"><td>Additional Location</td><td><span>*400 FOURTH ST*</span><br><span> View Map</span></td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

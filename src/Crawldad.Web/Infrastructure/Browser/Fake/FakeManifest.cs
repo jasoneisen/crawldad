@@ -15,14 +15,37 @@ internal sealed record FakeState(string Name, string? GotoUrl, string Url, strin
 /// <param name="Method">The HTTP method (e.g. <c>POST</c>).</param>
 internal sealed record FakeEmit(string Url, string Method);
 
+/// <summary>
+/// A scripted fault (§ Deliverable 3) attached to a transition: the first <see cref="FailAttempts"/> times the
+/// transition is triggered <em>across the session lifetime</em>, the click throws a retryable browser condition
+/// (<c>timeout</c> ⇒ <see cref="BrowserTimeoutException"/>, <c>pageCrashed</c> ⇒ <see cref="BrowserPageCrashedException"/>)
+/// instead of transitioning; the next trigger succeeds. An unconditional fault (the exhaustion scenario) is expressed
+/// by setting <see cref="FailAttempts"/> at or above the run's <c>maxAttempts</c>. The attempt count is per-transition,
+/// held on the session, so it persists across a page reopen (making pageCrashed-then-succeed work) but resets with a
+/// fresh session (a new run).
+/// </summary>
+/// <param name="Type">The fault kind: <c>timeout</c> or <c>pageCrashed</c>.</param>
+/// <param name="FailAttempts">How many leading triggers fail before the transition succeeds.</param>
+internal sealed record FakeInject(string Type, int FailAttempts);
+
+/// <summary>A file a transition's click yields as a browser download (§ Deliverable 2): the bytes come from
+/// <see cref="File"/> (relative to the fixture dir) and <see cref="SuggestedFilename"/> is the download's HTTP-suggested
+/// name — deliberately allowed to differ from the scraped filename cell, exercising the §9.3 storedAs/internalFilename split.</summary>
+/// <param name="File">The fixture file whose bytes are served as the download body.</param>
+/// <param name="SuggestedFilename">The download's suggested filename (source of the engine's stored-blob extension).</param>
+internal sealed record FakeDownload(string File, string SuggestedFilename);
+
 /// <summary>A record/replay transition: clicking the element matching <see cref="ClickSelector"/> while in
-/// <see cref="From"/> swaps to <see cref="To"/> and (optionally) emits <see cref="Emit"/>.</summary>
+/// <see cref="From"/> swaps to <see cref="To"/>, optionally emits <see cref="Emit"/>, and optionally yields
+/// <see cref="Download"/> bytes.</summary>
 /// <param name="From">The state the transition applies in.</param>
 /// <param name="ClickSelector">CSS of the element whose click fires the transition.</param>
-/// <param name="To">The state to switch to.</param>
-/// <param name="Emit">The request recorded during the click. Mandatory in P1 (every transition is a postback);
-/// Phase 2 relaxes this to model pure client-side state swaps.</param>
-internal sealed record FakeTransition(string From, string ClickSelector, string To, FakeEmit Emit);
+/// <param name="To">The state to switch to (a download link is a self-loop: <c>to == from</c>).</param>
+/// <param name="Emit">The request recorded during the click, or null. Phase 2 relaxes P1's postback-mandatory rule so a
+/// pure download click (which fires no navigation postback) needs no emit.</param>
+/// <param name="Inject">An optional scripted fault fired instead of the transition for its leading attempts (§ Deliverable 3).</param>
+/// <param name="Download">An optional download the click starts (§ Deliverable 2), captured by <c>RunAndWaitForDownloadAsync</c>.</param>
+internal sealed record FakeTransition(string From, string ClickSelector, string To, FakeEmit? Emit, FakeInject? Inject, FakeDownload? Download);
 
 /// <summary>
 /// The loaded, validated <c>manifest.json</c> (§ Deliverable 1) plus the fixture directory it was loaded from, so the
@@ -71,6 +94,10 @@ internal sealed class FakeManifest
     /// <param name="state">The state whose DOM to load.</param>
     public string ReadHtml(FakeState state) => File.ReadAllText(Path.Combine(_fixtureDir, state.HtmlFile));
 
+    /// <summary>Reads a fixture file's raw bytes — the body a <see cref="FakeDownload"/> transition serves (§ Deliverable 2).</summary>
+    /// <param name="relativePath">The file path relative to the fixture directory.</param>
+    public byte[] ReadFile(string relativePath) => File.ReadAllBytes(Path.Combine(_fixtureDir, relativePath));
+
     /// <summary>Loads and validates <c>manifest.json</c> from <paramref name="fixtureDir"/>.</summary>
     /// <param name="fixtureDir">The absolute fixture directory (contains <c>manifest.json</c> and the state HTML files).</param>
     /// <returns>The loaded manifest.</returns>
@@ -93,10 +120,17 @@ internal sealed class FakeManifest
             kvp => new FakeState(kvp.Key, kvp.Value.GotoUrl, kvp.Value.Url, kvp.Value.Html),
             StringComparer.Ordinal);
 
-        // P1 contract: every transition declares an emit (a postback). The null-forgiving deref is intentional —
-        // a malformed authored fixture faults here rather than adding an untested null branch to the hot path.
+        // A transition carries an emit (a navigation postback), a download (§ Deliverable 2), or both/neither — a pure
+        // download click has no emit. The null-forgiving derefs are intentional: a malformed authored fixture faults
+        // here rather than adding untested null branches to the hot path.
         var transitions = dto.Transitions
-            .Select(static t => new FakeTransition(t.From, t.On.Click, t.To, new FakeEmit(t.Emit!.Url, t.Emit.Method)))
+            .Select(static t => new FakeTransition(
+                t.From,
+                t.On.Click,
+                t.To,
+                t.Emit is null ? null : new FakeEmit(t.Emit.Url, t.Emit.Method),
+                t.Inject is null ? null : new FakeInject(t.Inject.Type, t.Inject.FailAttempts!.Value),
+                t.Download is null ? null : new FakeDownload(t.Download.File, t.Download.SuggestedFilename)))
             .ToList();
 
         return new FakeManifest(fixtureDir, dto.InitialState, states, transitions);
@@ -118,11 +152,21 @@ internal sealed class FakeManifest
         [property: JsonPropertyName("from")] string From,
         [property: JsonPropertyName("on")] OnDto On,
         [property: JsonPropertyName("to")] string To,
-        [property: JsonPropertyName("emit")] EmitDto? Emit);
+        [property: JsonPropertyName("emit")] EmitDto? Emit,
+        [property: JsonPropertyName("inject")] InjectDto? Inject,
+        [property: JsonPropertyName("download")] DownloadDto? Download);
 
     private sealed record OnDto([property: JsonPropertyName("click")] string Click);
 
     private sealed record EmitDto(
         [property: JsonPropertyName("url")] string Url,
         [property: JsonPropertyName("method")] string Method);
+
+    private sealed record InjectDto(
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("failAttempts")] int? FailAttempts);
+
+    private sealed record DownloadDto(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("suggestedFilename")] string SuggestedFilename);
 }

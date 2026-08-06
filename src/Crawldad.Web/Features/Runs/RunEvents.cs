@@ -24,3 +24,24 @@ public sealed record RunSucceeded(RunStats Stats, DateTimeOffset FinishedAt);
 /// <param name="Stats">The run counters at failure.</param>
 /// <param name="FinishedAt">When the run finished.</param>
 public sealed record RunFailed(RunFailureDetail Failure, RunStats Stats, DateTimeOffset FinishedAt);
+
+/// <summary>
+/// A <c>log</c> node fired (§13 <c>LogEmitted</c>): part of the run's trace, appended in step order even when the run
+/// later fails. Warnings are <b>not</b> failures (§8.3) — the run continues. PII discipline (§12): a payload can
+/// interpolate extracted text into a <c>${…}</c> message, so this is metadata authored by the payload, not raw input.
+/// </summary>
+/// <param name="Level">The severity the <c>log</c> node declared (<c>info</c>/<c>warning</c>/<c>error</c>).</param>
+/// <param name="Message">The rendered message (its <c>${…}</c> interpolations already resolved).</param>
+/// <param name="At">When the log fired (through the <see cref="TimeProvider"/> seam).</param>
+public sealed record LogEmitted(string Level, string Message, DateTimeOffset At);
+
+/// <summary>
+/// One retryable attempt failed and is being retried (§8.3): a coarse trace marker so retries are observable. Appended
+/// only when an attempt fails on a retryable condition <em>and</em> attempts remain; the final attempt's failure is
+/// carried by <see cref="RunFailed"/> instead. On a <c>pageCrashed</c> attempt the interpreter also reopens the page
+/// (§3.6) before the next attempt.
+/// </summary>
+/// <param name="Attempt">The 1-based number of the attempt that failed.</param>
+/// <param name="Code">The retryable failure code (<c>timeout</c>/<c>pageCrashed</c>, or a retryable <c>fail</c>'s code).</param>
+/// <param name="At">When the attempt failed (through the <see cref="TimeProvider"/> seam).</param>
+public sealed record RunAttemptFailed(int Attempt, string Code, DateTimeOffset At);

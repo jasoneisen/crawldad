@@ -183,9 +183,56 @@ internal static class ExpressionValues
         throw TypeError($"relational operators require numbers, got {TypeName(left)} and {TypeName(right)}");
     }
 
+    /// <summary>
+    /// Requires <paramref name="value"/> to be numeric (<see cref="long"/>/<see cref="double"/>) and returns it as a
+    /// <see cref="double"/> for comparison. Backs <c>min</c>/<c>max</c>; a non-number is a terminal <c>type_error</c>.
+    /// </summary>
+    /// <param name="value">The value that must be numeric.</param>
+    /// <param name="role">The builtin name, for the error message.</param>
+    /// <returns>The value as a double.</returns>
+    /// <exception cref="ExpressionEvaluationException">When <paramref name="value"/> is not numeric.</exception>
+    public static double RequireNumber(object? value, string role) =>
+        IsNumber(value) ? ToDouble(value) : throw TypeError($"{role} expects numbers, got {TypeName(value)}");
+
+    /// <summary>
+    /// Coerces <paramref name="value"/> to an integer index (accepts <see cref="long"/> or an integral
+    /// <see cref="double"/>), backing <c>nth</c>/<c>substring</c>/<c>slice</c> the same way array indexing does. A
+    /// non-integer is a terminal <c>type_error</c>.
+    /// </summary>
+    /// <param name="value">The index value.</param>
+    /// <param name="role">The argument description, for the error message.</param>
+    /// <returns>The index as a <see cref="long"/>.</returns>
+    /// <exception cref="ExpressionEvaluationException">When <paramref name="value"/> is not an integer.</exception>
+    public static long RequireIndex(object? value, string role) => value switch
+    {
+        long l => l,
+        double d when d == Math.Floor(d) && !double.IsInfinity(d) => (long)d,
+        _ => throw TypeError($"{role} must be an integer, got {TypeName(value)}"),
+    };
+
+    /// <summary>
+    /// Value-model scalar equality for <c>distinct</c> dedup: the same notion as <c>==</c> (null-safe, numeric across
+    /// int/double, ordinal string, bool), so <c>1</c> and <c>1.0</c> dedup as equal. Numbers hash through
+    /// <see cref="double"/> so equal numbers share a bucket; a hash collision on two distinct large integers stays
+    /// correct because <see cref="ScalarComparer.Equals"/> defers to the exact <see cref="AreEqual"/>. Callers reject
+    /// non-scalar elements before use (the comparer is never handed an array/map/handle).
+    /// </summary>
+    public static IEqualityComparer<object?> ScalarEqualityComparer { get; } = new ScalarComparer();
+
     internal static ExpressionEvaluationException TypeError(string message) =>
         new(ExpressionErrorCodes.TypeError, message);
 
     private static ExpressionEvaluationException DivByZero() =>
         new(ExpressionErrorCodes.DivisionByZero, "division by zero");
+
+    private sealed class ScalarComparer : IEqualityComparer<object?>
+    {
+        public new bool Equals(object? x, object? y) => AreEqual(x, y);
+
+        // Total, never throws (CA1065). distinct pre-rejects non-scalar elements and the HashSet handles null itself
+        // (it never routes null through a comparer), so obj here is a non-null scalar: integers hash through double so
+        // 1 and 1.0 share a bucket; bool/double/string use their own (ordinal) hash.
+        public int GetHashCode(object? obj) =>
+            obj is long l ? ((double)l).GetHashCode() : obj!.GetHashCode();
+    }
 }

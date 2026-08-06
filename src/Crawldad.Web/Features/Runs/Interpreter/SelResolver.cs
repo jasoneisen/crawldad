@@ -105,14 +105,12 @@ internal sealed class SelResolver(RunScope scope)
     {
         if (selector.ValueKind == JsonValueKind.String)
         {
-            var raw = selector.GetString()!;
-            if (scope.TryResolve(raw, out var value) && value is ILocatorHandle handle)
-            {
-                return handle; // var-first precedence: a bound handle var named by the string wins over CSS
-            }
-
-            var css = await CrawldadTemplate.Parse(raw).RenderAsync(scope, ct);
-            return scope.PageHandle.Locator(css);
+            // Interpolate FIRST, then apply var-first precedence: a `${…}`-built string that resolves to a bound handle
+            // var wins over treating it as CSS (a literal selector renders to itself, so this is a no-op for it).
+            var rendered = await CrawldadTemplate.Parse(selector.GetString()!).RenderAsync(scope, ct);
+            return scope.TryResolve(rendered, out var value) && value is ILocatorHandle handle
+                ? handle
+                : scope.PageHandle.Locator(rendered);
         }
 
         if (selector.ValueKind == JsonValueKind.Object)

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) CapDetail PROCESSING STATUS region — LJCMGClient.cs:455-529.
+     #divProcessingTable > table > tbody > tr holds FIVE top rows (paired head i*2 / detail i*2+1):
+       row 0/1  activity A: expandable (<a>), 2 lines + 2 additional-comment rows (one 'Comment:' → key
+                'Comment'; one with an empty heading → unparseable → warning)
+       row 2/3  activity B: expandable (<a>), 2 lines, no additional comments (lines map is empty)
+       row 4    activity C: head row with NO <a> → skipped; no detail row (odd count) so i=2's detail is
+                Nth(5) (absent) and the loop's i*2+1 > procRowCount break fires at i=3.
+     The category cell (td:last-child of the head row) and each line-block <td> are written GAP-FREE so their
+     textContent / innerText carry no stray whitespace. innerText converts the <br> to a newline (FakeInnerText),
+     which the split chain dissects into 'Due on X, assigned to Y' / 'Marked as S on D by B'. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <div id="divProcessingTable">
+    <table>
+      <tbody>
+
+        <tr><td class="expandcol"><a href="#">+</a></td><td>Violation Notice</td></tr>
+        <tr>
+          <td>detail-spacer</td>
+          <td>
+            <table>
+              <tbody>
+                <tr>
+                  <td>Lines</td>
+                  <td><table><tbody><tr><td>Due on 04/15/2025, assigned to John Smith<br>Marked as Completed on 04/20/2025 by Jane Doe</td></tr></tbody></table></td>
+                </tr>
+                <tr>
+                  <td>Comments</td>
+                  <td>
+                    <table>
+                      <tbody>
+                        <tr><td>Comment:</td><td>Follow-up scheduled</td></tr>
+                        <tr><td></td><td>orphan value with no heading</td></tr>
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
+
+        <tr><td class="expandcol"><a href="#">+</a></td><td>Inspection</td></tr>
+        <tr>
+          <td>detail-spacer</td>
+          <td>
+            <table>
+              <tbody>
+                <tr>
+                  <td>Lines</td>
+                  <td><table><tbody><tr><td>Due on 05/01/2025, assigned to Bob Jones<br>Marked as Pending on 05/02/2025 by Alice Lee</td></tr></tbody></table></td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
+
+        <tr><td class="expandcol">+</td><td>Closed Activity</td></tr>
+
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

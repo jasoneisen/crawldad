@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!-- Synthesized CapHome results grid — EMPTY (zero data rows). See FIXTURE_NOTES.md.
+     Grid = 3 header + 0 data + 2 footer = 5 <tr>, so `for (i=3; i < count-2=3; i++)` runs ZERO times →
+     Results.Count == 0. table.aca_pagination td:last-child has NO <a> → hasMorePages false, so the
+     callback sets crawledToEnd = true BEFORE the empty-results stop. Single page: no pagination transition. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Enforcement Search Results (empty) - LJCMG</title></head>
+<body>
+  <div id="divGlobalLoading" style="display:none">Loading...</div>
+  <div id="ctl00_PlaceHolderMain_dgvPermitList">
+    <table id="ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList" class="ACA_GridView">
+      <tbody>
+        <tr class="ACA_GridHeader"><td colspan="7">Search Results</td></tr>
+        <tr class="ACA_GridHeader_Sort"><td colspan="7">Sort</td></tr>
+        <tr class="ACA_TabRow_Header">
+          <th></th><th>Date</th><th>Record Number</th><th>Record Type</th><th>Address</th><th>Status</th><th>Short Notes</th>
+        </tr>
+        <tr class="ACA_GridFooter"><td colspan="7">No records found.</td></tr>
+        <tr class="ACA_GridPagerRow"><td colspan="7">&nbsp;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- No pagination anchor: td:last-child is a plain span → hasMorePages false. -->
+  <table class="aca_pagination">
+    <tbody>
+      <tr>
+        <td><span class="SelectedPageButton">1</span></td>
+        <td><span>Last page</span></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

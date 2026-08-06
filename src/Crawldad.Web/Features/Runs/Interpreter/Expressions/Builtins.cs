@@ -18,19 +18,46 @@ internal delegate ValueTask<object?> BuiltinInvoker(IReadOnlyList<ExpressionNode
 internal sealed record Builtin(string Name, int MinArity, int MaxArity, BuiltinInvoker Invoke);
 
 /// <summary>
+/// Runs a binding builtin (<c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c>, §7.2) — the fixed
+/// <c>fn(source, v, body)</c> form whose middle argument is a scoped binding, not a value. The parser has already
+/// validated the shape and extracted the binding name, so the invoker receives the source-list node, the binding
+/// name, and the per-element body node (evaluated in a <see cref="BindingScope"/>).
+/// </summary>
+/// <param name="source">The node producing the list to iterate.</param>
+/// <param name="binding">The per-element variable name introduced for <paramref name="body"/>.</param>
+/// <param name="body">The predicate / projection / key node.</param>
+/// <param name="ctx">The scope + cancellation token.</param>
+internal delegate ValueTask<object?> BindingBuiltinInvoker(
+    ExpressionNode source, string binding, ExpressionNode body, EvalContext ctx);
+
+/// <summary>One registered binding builtin: its name and invoker. Arity (always 3) and the bare-identifier binding
+/// slot are enforced structurally by the parser, so no arity window is stored.</summary>
+/// <param name="Name">The function name as written in source.</param>
+/// <param name="Invoke">The evaluator over the <c>(source, binding, body)</c> form.</param>
+internal sealed record BindingBuiltin(string Name, BindingBuiltinInvoker Invoke);
+
+/// <summary>
 /// The enumerated builtin surface (§7.2) — the safety boundary. Only the Phase 1 fragment set is registered; the
 /// registry shape (name → arity window → invoker) is exactly what Phase 2's additions slot into without
 /// restructuring. Resolution is by exact name; an unknown name or an out-of-window arity is a parse-time failure.
 /// </summary>
-internal static class BuiltinRegistry
+internal static partial class BuiltinRegistry
 {
     private static Dictionary<string, Builtin> Registry { get; } = Build();
 
-    /// <summary>Looks a builtin up by exact name.</summary>
+    private static Dictionary<string, BindingBuiltin> BindingRegistry { get; } = BuildBindings();
+
+    /// <summary>Looks an ordinary builtin up by exact name.</summary>
     /// <param name="name">The function name from source.</param>
     /// <param name="builtin">The resolved builtin when found.</param>
-    /// <returns><see langword="true"/> when <paramref name="name"/> is a registered builtin.</returns>
+    /// <returns><see langword="true"/> when <paramref name="name"/> is a registered ordinary builtin.</returns>
     public static bool TryGet(string name, out Builtin builtin) => Registry.TryGetValue(name, out builtin!);
+
+    /// <summary>Looks a binding builtin (<c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c>) up by exact name.</summary>
+    /// <param name="name">The function name from source.</param>
+    /// <param name="binding">The resolved binding builtin when found.</param>
+    /// <returns><see langword="true"/> when <paramref name="name"/> is a registered binding builtin.</returns>
+    public static bool TryGetBinding(string name, out BindingBuiltin binding) => BindingRegistry.TryGetValue(name, out binding!);
 
     private static Dictionary<string, Builtin> Build()
     {
@@ -55,6 +82,7 @@ internal static class BuiltinRegistry
             Fn1("urlScheme", value => UrlPart(value, static uri => uri.Scheme)),
             Fn1("urlHost", value => UrlPart(value, static uri => uri.Host)),
             Fn1("urlPath", value => UrlPart(value, static uri => uri.AbsolutePath)),
+            Fn2("resolveUrl", ResolveUrl),
             new Builtin("pageUrl", 0, 0, static (_, ctx) => new ValueTask<object?>(ctx.Scope.PageUrl())),
 
             // DOM — the only page access (§7.2). count is polymorphic (string ⇒ selector query).
@@ -67,12 +95,29 @@ internal static class BuiltinRegistry
         };
 
         var map = new Dictionary<string, Builtin>(StringComparer.Ordinal);
+        AddAll(map, builtins);
+        AddAll(map, StringBuiltins());     // §7.2 string surface (BuiltinsString.cs)
+        AddAll(map, CollectionBuiltins()); // §7.2 collection surface (BuiltinsCollection.cs)
+        return map;
+    }
+
+    private static Dictionary<string, BindingBuiltin> BuildBindings()
+    {
+        var map = new Dictionary<string, BindingBuiltin>(StringComparer.Ordinal);
+        foreach (var binding in BindingBuiltins()) // §7.2 binding surface (BuiltinsBinding.cs)
+        {
+            map.Add(binding.Name, binding);
+        }
+
+        return map;
+    }
+
+    private static void AddAll(Dictionary<string, Builtin> map, IEnumerable<Builtin> builtins)
+    {
         foreach (var builtin in builtins)
         {
             map.Add(builtin.Name, builtin);
         }
-
-        return map;
     }
 
     // ----- invoker factories -------------------------------------------------
@@ -82,6 +127,10 @@ internal static class BuiltinRegistry
 
     private static Builtin Fn2(string name, Func<object?, object?, object?> fn) =>
         new(name, 2, 2, async (args, ctx) => fn(await args[0].EvaluateAsync(ctx), await args[1].EvaluateAsync(ctx)));
+
+    private static Builtin Fn3(string name, Func<object?, object?, object?, object?> fn) =>
+        new(name, 3, 3, async (args, ctx) =>
+            fn(await args[0].EvaluateAsync(ctx), await args[1].EvaluateAsync(ctx), await args[2].EvaluateAsync(ctx)));
 
     private static BuiltinInvoker DomString(Func<IDomAccess, object, string?, CancellationToken, ValueTask<string?>> read) =>
         async (args, ctx) =>
@@ -248,6 +297,34 @@ internal static class BuiltinRegistry
 
         throw new ExpressionEvaluationException(
             ExpressionErrorCodes.InvalidUrl, $"not a valid absolute URL (got {ExpressionValues.TypeName(value)})");
+    }
+
+    // resolveUrl(base, rel) = new Uri(new Uri(base), rel).ToString() — the reference's proper RFC resolution (:672,
+    // §7.3), distinct from the search rows' naive scheme://host+href concat. base must be an absolute URL (else
+    // invalid_url, like the other URL builtins); rel must be a string (else type_error); a malformed rel that the Uri
+    // resolver rejects is invalid_url. NOT null-propagating — base is always present in the reference (input.link).
+    private static string ResolveUrl(object? baseValue, object? relValue)
+    {
+        if (baseValue is not string baseText || !Uri.TryCreate(baseText, UriKind.Absolute, out var baseUri))
+        {
+            throw new ExpressionEvaluationException(
+                ExpressionErrorCodes.InvalidUrl, $"resolveUrl base is not a valid absolute URL (got {ExpressionValues.TypeName(baseValue)})");
+        }
+
+        if (relValue is not string rel)
+        {
+            throw ExpressionValues.TypeError($"resolveUrl relative must be a string, got {ExpressionValues.TypeName(relValue)}");
+        }
+
+        try
+        {
+            return new Uri(baseUri, rel).ToString();
+        }
+        catch (UriFormatException)
+        {
+            throw new ExpressionEvaluationException(
+                ExpressionErrorCodes.InvalidUrl, $"resolveUrl could not resolve '{rel}' against '{baseText}'");
+        }
     }
 
     // ----- DOM target / argument validation ---------------------------------

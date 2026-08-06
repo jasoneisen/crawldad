@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) minimal attachment row with a file link. See FIXTURE_NOTES.md.
+     The download node clicks the anchor; the manifest's download transition yields sample.bin's bytes with the
+     HTTP-suggested name "report.pdf" (deliberately a DIFFERENT extension than the scraped filename cell
+     "Site Photo.jpg", so storedAs uses .pdf while the payload's internalFilename uses .jpg — the §9.3 split).
+     No iframe: attachment frame traversal is Phase 3; this exercises the download action + content hashing alone. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Attachment - LJCMG</title></head>
+<body>
+  <div id="divGlobalLoading" style="display:none">Loading...</div>
+  <div id="attachmentList">
+    <table>
+      <tbody>
+        <tr>
+          <td><a href="/LJCMG/Cap/Attachment.ashx?attId=1">Site Photo.jpg</a></td>
+          <td>Site inspection photo</td>
+          <td>Photo</td>
+          <td>image/jpeg</td>
+          <td>1.2 MB</td>
+          <td>01/15/2024</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

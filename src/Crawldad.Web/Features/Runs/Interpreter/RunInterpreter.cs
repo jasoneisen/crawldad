@@ -1,8 +1,10 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
+using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Web.Features.Runs.Interpreter;
 
@@ -20,41 +22,64 @@ internal enum Flow
 }
 
 /// <summary>
-/// Interpreter v0 (§ Deliverable 3): executes one payload against a backend and shapes its <c>result</c>. Node dispatch
-/// is by the single recognised head key (unknown ⇒ terminal <c>unknown_node</c>); <c>comment</c> is a no-op. One
-/// attempt only — no retry loop in P1, so timeouts/crashes surface as <c>retryable-exhausted</c> (§8.3). Config's
-/// launch/context/route/retry blocks are accepted but not acted on (P1 simplification).
+/// The interpreter (§ Deliverables): executes one payload against a backend and shapes its <c>result</c>. A parse
+/// pre-pass (§ Deliverable 4) rejects unknown head keys and missing <c>maxIterations</c> before any side effect; node
+/// dispatch is by the single recognised head key through a shared table so validation and execution agree by
+/// construction (<c>comment</c> is a no-op). The whole program is wrapped in the retry/resilience layer (§8.3): a
+/// retryable failure (<c>timeout</c>/<c>pageCrashed</c>, or a retryable <c>fail</c>) re-runs the program with a fresh
+/// run scope on the same session — reopening and rebinding the page on a crash (§3.6) — until it succeeds, exhausts, or
+/// hits a terminal failure. Config's launch/context/route blocks are accepted but not acted on (later phases).
 /// </summary>
 internal sealed class RunInterpreter
 {
-    private readonly JsonElement _payload;
-    private readonly RunScope _scope;
-    private readonly IBrowserBackendRegistry _registry;
-    private readonly TimeProvider _clock;
+    private static readonly IReadOnlySet<string> _defaultRetryOn =
+        new HashSet<string>(StringComparer.Ordinal) { "timeout", "pageCrashed" };
 
+    private readonly JsonElement _payload;
+    private readonly IReadOnlyDictionary<string, object?> _input;
+    private readonly IBrowserBackendRegistry _registry;
+    private readonly IDownloadSinkRegistry _sinks;
+    private readonly TimeProvider _clock;
+    private readonly List<object> _events = [];
+    private readonly Dictionary<string, Func<JsonElement, CancellationToken, ValueTask<Flow>>> _dispatch;
+
+    private RunScope _scope;
+    private IPageHandle _page = null!;
     private int _steps;
     private int _requests;
+    private int _downloads;
     private int _defaultTimeoutMs = 120000;
     private int _currentStepIndex;
     private string _currentKind = "config";
 
-    public RunInterpreter(JsonElement payload, IReadOnlyDictionary<string, object?> input, IBrowserBackendRegistry registry, TimeProvider clock)
+    public RunInterpreter(
+        JsonElement payload,
+        IReadOnlyDictionary<string, object?> input,
+        IBrowserBackendRegistry registry,
+        IDownloadSinkRegistry sinks,
+        TimeProvider clock)
     {
         _payload = payload;
-        _scope = new RunScope(input);
+        _input = input;
         _registry = registry;
+        _sinks = sinks;
         _clock = clock;
+        _scope = new RunScope(input); // an input-only scope for backend resolution; execution rebuilds it per attempt
+        _dispatch = BuildDispatch();
     }
 
     /// <summary>Runs the payload to a success or a typed failure (never throws for a modelled failure).</summary>
     /// <param name="ct">Cancels the run.</param>
-    /// <returns>The run outcome (result or failure + stats).</returns>
+    /// <returns>The run outcome (result or failure + stats + trace events).</returns>
     public async Task<RunOutcome> RunAsync(CancellationToken ct)
     {
         var startedAt = _clock.GetUtcNow();
-        RunOutcome succeeded;
+        RunOutcome outcome;
         try
         {
+            ValidateProgram(); // §Deliverable 4: reject unknown head keys / missing maxIterations before any side effect
+            var policy = ParseRetryPolicy();
+
             var binding = await ResolveBackendAsync(ct);
             if (!_registry.TryResolve(binding.Adapter, out var backend))
             {
@@ -62,16 +87,12 @@ internal sealed class RunInterpreter
             }
 
             await using var session = await backend.ConnectAsync(binding, ct);
-            _scope.Bind(await session.NewPageAsync(ct));
-
+            _page = await session.NewPageAsync(ct);
             _defaultTimeoutMs = ReadDefaultTimeout();
-            await EvaluateVarsAsync(ct);
-            await ExecuteStepsAsync(ct);
 
-            // Assign (don't return) inside the try so result serialisation still catches handle_in_result, while the
-            // success path falls through to the return below (keeping the whole method exercised).
-            var result = JsonValues.ToJson(await EvaluateResultAsync(ct));
-            succeeded = new RunOutcome(RunStatus.Succeeded, result, null, Stats(startedAt));
+            // Assign (don't return) inside the try so the setup catches below still apply, while the happy path falls
+            // through to the return below — keeping the try's fall-through exercised.
+            outcome = await ExecuteWithRetryAsync(session, policy, startedAt, ct);
         }
         catch (InterpreterException ex)
         {
@@ -85,17 +106,187 @@ internal sealed class RunInterpreter
         {
             return Failed("terminal", ex.Code, ex.Message, startedAt);
         }
-        catch (BrowserTimeoutException ex)
-        {
-            // One attempt in P1 ⇒ a retryable condition is already exhausted (§8.3); the retry loop is Phase 2.
-            return Failed("retryable-exhausted", "timeout", ex.Message, startedAt);
-        }
         catch (FakeBackendException ex)
         {
             return Failed("terminal", "backend_unavailable", ex.Message, startedAt);
         }
 
-        return succeeded;
+        return outcome;
+    }
+
+    // ----- retry/resilience layer (§8.3) -------------------------------------
+
+    private async Task<RunOutcome> ExecuteWithRetryAsync(IBrowserSession session, RetryPolicy policy, DateTimeOffset startedAt, CancellationToken ct)
+    {
+        var exhaustedCode = "";
+        var exhaustedMessage = "";
+        for (var attempt = 1; attempt <= policy.MaxAttempts; attempt++)
+        {
+            try
+            {
+                _scope = new RunScope(_input); // FRESH scope per attempt — re-evaluate vars, same session
+                _scope.Bind(_page);
+                await EvaluateVarsAsync(ct);
+                await ExecuteStepsAsync(ct);
+
+                var result = JsonValues.ToJson(await EvaluateResultAsync(ct));
+                return new RunOutcome(RunStatus.Succeeded, result, null, Stats(startedAt), _events);
+            }
+            catch (Exception ex) when (ex is BrowserException or CrawldadFailureException or InterpreterException or ExpressionEvaluationException or ExpressionParseException)
+            {
+                var (code, isRetryableClass, eligibleForRetry) = Classify(ex, policy);
+                if (!eligibleForRetry)
+                {
+                    return Failed(isRetryableClass ? "retryable-exhausted" : "terminal", code, ex.Message, startedAt);
+                }
+
+                // Retryable and permitted: record the attempt, reopen the page on a crash (§3.6), delay, then let the
+                // loop re-run the whole program. The last attempt falls through to the exhaustion return below.
+                exhaustedCode = code;
+                exhaustedMessage = ex.Message;
+                if (attempt < policy.MaxAttempts)
+                {
+                    _events.Add(new RunAttemptFailed(attempt, code, _clock.GetUtcNow()));
+                    if (ex is BrowserPageCrashedException)
+                    {
+                        await ReopenPageAsync(session, ct); // reopen on the SAME context and rebind
+                    }
+
+                    if (policy.DelayMs > 0)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(policy.DelayMs), _clock, ct);
+                    }
+                }
+            }
+        }
+
+        return Failed("retryable-exhausted", exhaustedCode, exhaustedMessage, startedAt);
+    }
+
+    // isRetryableClass: the failure is retryable-class (→ "retryable-exhausted" if not retried). eligibleForRetry:
+    // policy permits retrying it (a browser condition listed in retryOn, or any retryable `fail`).
+    private static (string Code, bool IsRetryableClass, bool EligibleForRetry) Classify(Exception ex, RetryPolicy policy) => ex switch
+    {
+        BrowserTimeoutException => ("timeout", true, policy.RetryOn.Contains("timeout")),
+        BrowserPageCrashedException => ("pageCrashed", true, policy.RetryOn.Contains("pageCrashed")),
+        CrawldadFailureException f => (f.Code, f.IsRetryable, f.IsRetryable),
+        InterpreterException i => (i.Code, false, false),
+        ExpressionEvaluationException e => (e.Code, false, false),
+        _ => (((ExpressionParseException)ex).Code, false, false),
+    };
+
+    private async ValueTask ReopenPageAsync(IBrowserSession session, CancellationToken ct)
+    {
+        await CloseQuietlyAsync(_page, ct);
+        _page = await session.NewPageAsync(ct); // SAME session/context, rebound into the next attempt's scope
+    }
+
+    /// <summary>Closes a page best-effort, tolerating a crashed page's close failure (§3.6). Internal for direct testing.</summary>
+    /// <param name="page">The page to close.</param>
+    /// <param name="ct">Cancels the close.</param>
+    internal static async Task CloseQuietlyAsync(IPageHandle page, CancellationToken ct)
+    {
+        try
+        {
+            await page.CloseAsync(ct);
+        }
+        catch (BrowserException)
+        {
+            // Tolerate — a crashed page may fail to close; we only need a fresh one on the same context.
+        }
+    }
+
+    private RetryPolicy ParseRetryPolicy()
+    {
+        if (!_payload.GetProperty("config").TryGetProperty("retry", out var retry))
+        {
+            return new RetryPolicy(1, 0, _defaultRetryOn); // absent ⇒ a single attempt (P1 behaviour unchanged)
+        }
+
+        var maxAttempts = retry.TryGetProperty("maxAttempts", out var m) ? m.GetInt32() : 1;
+        var delayMs = retry.TryGetProperty("delayMs", out var d) ? d.GetInt32() : 0;
+        var retryOn = retry.TryGetProperty("retryOn", out var r) ? ReadStringSet(r) : _defaultRetryOn;
+        return new RetryPolicy(maxAttempts, delayMs, retryOn);
+    }
+
+    private static HashSet<string> ReadStringSet(JsonElement array)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in array.EnumerateArray())
+        {
+            set.Add(item.GetString()!);
+        }
+
+        return set;
+    }
+
+    private sealed record RetryPolicy(int MaxAttempts, int DelayMs, IReadOnlySet<string> RetryOn);
+
+    // ----- parse-time validation (§Deliverable 4) ----------------------------
+
+    private void ValidateProgram()
+    {
+        var index = 0;
+        foreach (var step in _payload.GetProperty("steps").EnumerateArray())
+        {
+            _currentStepIndex = index;
+            ValidateNode(step);
+            index++;
+        }
+    }
+
+    private void ValidateNode(JsonElement node)
+    {
+        var kind = node.EnumerateObject().First().Name;
+        if (!_dispatch.ContainsKey(kind))
+        {
+            _currentKind = kind;
+            throw new InterpreterException(InterpreterErrorCodes.UnknownNode, $"unknown node '{kind}'");
+        }
+
+        if (string.Equals(kind, "comment", StringComparison.Ordinal))
+        {
+            return; // §6: comment is exempt and its body is a bare string, not a node object
+        }
+
+        var body = node.GetProperty(kind);
+        if (RequiresMaxIterations(kind) && !body.TryGetProperty("maxIterations", out _))
+        {
+            _currentKind = kind;
+            throw new InterpreterException(InterpreterErrorCodes.MissingMaxIterations, $"'{kind}' requires a maxIterations cap (§6)");
+        }
+
+        ValidateChildBlocks(body);
+    }
+
+    private static bool RequiresMaxIterations(string kind) =>
+        string.Equals(kind, "loop", StringComparison.Ordinal) || string.Equals(kind, "forEach", StringComparison.Ordinal);
+
+    private void ValidateChildBlocks(JsonElement body)
+    {
+        ValidateBlock(body, "then");
+        ValidateBlock(body, "else");
+        ValidateBlock(body, "do");
+        ValidateBlock(body, "trigger");
+        ValidateBlock(body, "default");
+        if (body.TryGetProperty("cases", out var cases))
+        {
+            foreach (var branch in cases.EnumerateArray())
+            {
+                ValidateBlock(branch, "do");
+            }
+        }
+    }
+
+    private void ValidateBlock(JsonElement owner, string name)
+    {
+        if (owner.TryGetProperty(name, out var block))
+        {
+            foreach (var node in block.EnumerateArray())
+            {
+                ValidateNode(node);
+            }
+        }
     }
 
     // ----- setup phases ------------------------------------------------------
@@ -153,6 +344,40 @@ internal sealed class RunInterpreter
 
     // ----- node dispatch -----------------------------------------------------
 
+    private Dictionary<string, Func<JsonElement, CancellationToken, ValueTask<Flow>>> BuildDispatch() =>
+        new(StringComparer.Ordinal)
+        {
+            ["comment"] = static (_, _) => new ValueTask<Flow>(Flow.Normal),
+            ["goto"] = Effect(GotoAsync),
+            ["waitForLoadState"] = Effect(WaitForLoadStateAsync),
+            ["waitForRequest"] = Effect(WaitForRequestAsync),
+            ["waitFor"] = Effect(WaitForAsync),
+            ["click"] = Effect(ClickAsync),
+            ["fill"] = Effect(FillAsync),
+            ["clear"] = Effect(ClearAsync),
+            ["locate"] = Effect(LocateAsync),
+            ["download"] = Effect(DownloadAsync),
+            ["set"] = Effect(SetAsync),
+            ["push"] = Effect(PushAsync),
+            ["log"] = Effect(LogAsync),
+            ["guard"] = Effect(GuardAsync),
+            ["fail"] = Effect(FailAsync),
+            ["if"] = IfAsync,
+            ["switch"] = SwitchAsync,
+            ["loop"] = LoopAsync,
+            ["forEach"] = ForEachAsync,
+            ["break"] = (body, ct) => SignalAsync(body, Flow.Break, ct),
+            ["continue"] = (body, ct) => SignalAsync(body, Flow.Continue, ct),
+        };
+
+    // Wraps an effectful node (returns no Flow) as a dispatch entry that always falls through (Flow.Normal).
+    private static Func<JsonElement, CancellationToken, ValueTask<Flow>> Effect(Func<JsonElement, CancellationToken, ValueTask> effect) =>
+        async (body, ct) =>
+        {
+            await effect(body, ct);
+            return Flow.Normal;
+        };
+
     private async ValueTask<Flow> ExecuteBlockAsync(JsonElement block, CancellationToken ct)
     {
         foreach (var node in block.EnumerateArray())
@@ -167,33 +392,12 @@ internal sealed class RunInterpreter
         return Flow.Normal;
     }
 
-    private async ValueTask<Flow> ExecuteNodeAsync(JsonElement node, CancellationToken ct)
+    private ValueTask<Flow> ExecuteNodeAsync(JsonElement node, CancellationToken ct)
     {
         _steps++;
         var head = node.EnumerateObject().First();
-        var body = head.Value;
         _currentKind = head.Name;
-
-        switch (head.Name)
-        {
-            case "comment": return Flow.Normal;
-            case "goto": await GotoAsync(body, ct); return Flow.Normal;
-            case "waitForLoadState": await WaitForLoadStateAsync(body, ct); return Flow.Normal;
-            case "waitForRequest": await WaitForRequestAsync(body, ct); return Flow.Normal;
-            case "waitFor": await WaitForAsync(body, ct); return Flow.Normal;
-            case "click": await ClickAsync(body, ct); return Flow.Normal;
-            case "fill": await FillAsync(body, ct); return Flow.Normal;
-            case "clear": await ClearAsync(body, ct); return Flow.Normal;
-            case "locate": await LocateAsync(body, ct); return Flow.Normal;
-            case "set": await SetAsync(body, ct); return Flow.Normal;
-            case "push": await PushAsync(body, ct); return Flow.Normal;
-            case "if": return await IfAsync(body, ct);
-            case "loop": return await LoopAsync(body, ct);
-            case "forEach": return await ForEachAsync(body, ct);
-            case "break": return await SignalAsync(body, Flow.Break, ct);
-            case "continue": return await SignalAsync(body, Flow.Continue, ct);
-            default: throw new InterpreterException(InterpreterErrorCodes.UnknownNode, $"unknown node '{head.Name}'");
-        }
+        return _dispatch[head.Name](head.Value, ct); // head.Name is a known kind — ValidateProgram guaranteed it
     }
 
     // ----- actions -----------------------------------------------------------
@@ -296,20 +500,131 @@ internal sealed class RunInterpreter
         return await _scope.Sel.ResolveNodeAsync(body.GetProperty("selector"), ct);
     }
 
+    // ----- download (§9.3) ---------------------------------------------------
+
+    // Runs the trigger, drains the download to compute the content identity (§9.3, = AttachmentHashing), and streams it
+    // to the target sink — idempotently: an already-present blob short-circuits to stored:true WITHOUT re-uploading.
+    // Binds dl = { contentId, sha256, sizeBytes, storedAs, stored }; download failure/timeout is retryable (:560).
+    private async ValueTask DownloadAsync(JsonElement body, CancellationToken ct)
+    {
+        var sink = ResolveSink(await ExprAsync(body.GetProperty("to"), ct));
+        var trigger = body.GetProperty("trigger");
+        var download = await _scope.PageHandle.RunAndWaitForDownloadAsync(
+            () => ExecuteBlockAsync(trigger, ct).AsTask(), Timeout(body), ct);
+
+        byte[] data;
+        await using (var content = await download.OpenReadAsync(ct))
+        {
+            using var buffer = new MemoryStream();
+            await content.CopyToAsync(buffer, ct);
+            data = buffer.ToArray();
+        }
+
+        var hash = SHA256.HashData(data);
+        var contentId = AttachmentContentId.FromHash(hash);
+        var sha256 = Convert.ToHexStringLower(hash);
+        var storedAs = AttachmentContentId.BuildStoredName(contentId, download.SuggestedFilename);
+        long sizeBytes = data.Length;
+
+        // exists ⇒ stored:true, no re-upload; else the sink's own success (false ⇒ the reference's handleDownload reject).
+        var stored = await sink.ExistsAsync(contentId, ct)
+            || await sink.StoreAsync(new StoredDownload(contentId, storedAs, sizeBytes, sha256), new MemoryStream(data, writable: false), ct);
+
+        _downloads++;
+        _scope.Set(body.GetProperty("var").GetString()!, new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["contentId"] = contentId.ToString(),
+            ["sha256"] = sha256,
+            ["sizeBytes"] = sizeBytes,
+            ["storedAs"] = storedAs,
+            ["stored"] = stored,
+        });
+    }
+
+    private IDownloadSink ResolveSink(object? target)
+    {
+        if (target is not Dictionary<string, object?> map)
+        {
+            throw new InterpreterException(InterpreterErrorCodes.InvalidDownloadTarget, "download 'to' must resolve to a storageTarget { kind, name } object");
+        }
+
+        var kind = map.GetValueOrDefault("kind") as string
+            ?? throw new InterpreterException(InterpreterErrorCodes.InvalidDownloadTarget, "a storageTarget requires a string 'kind'");
+
+        return _sinks.TryResolve(kind, out var sink)
+            ? sink
+            : throw new InterpreterException(InterpreterErrorCodes.UnknownDownloadSink, $"no download sink is registered for kind '{kind}'");
+    }
+
     // ----- state + control flow ---------------------------------------------
 
     private async ValueTask SetAsync(JsonElement body, CancellationToken ct)
     {
-        if (body.TryGetProperty("path", out _))
+        var value = await ExprAsync(body.GetProperty("value"), ct);
+        if (body.TryGetProperty("path", out var path))
         {
-            throw new InterpreterException(InterpreterErrorCodes.NotSupportedInV0, "computed-key 'set' paths are Phase 2");
+            await SetPathAsync(body.GetProperty("var").GetString()!, path.GetString()!, value, ct);
+            return;
         }
 
-        _scope.Set(body.GetProperty("var").GetString()!, await ExprAsync(body.GetProperty("value"), ct));
+        _scope.Set(body.GetProperty("var").GetString()!, value);
+    }
+
+    // set with a `path` mutates INSIDE an existing map var (§7.4). The var and every intermediate segment must be a
+    // map (else terminal type_error); the leaf key is upserted (add-or-overwrite — the documented B.2 micro-divergence
+    // from Dictionary.Add).
+    private async ValueTask SetPathAsync(string varName, string path, object? value, CancellationToken ct)
+    {
+        if (!_scope.TryResolve(varName, out var target) || target is not Dictionary<string, object?> cursor)
+        {
+            throw ExpressionValues.TypeError($"set path target '{varName}' is not a map");
+        }
+
+        var segments = SetPath.Parse(path);
+        for (var i = 0; i < segments.Count - 1; i++)
+        {
+            var key = await segments[i].KeyAsync(_scope, ct);
+            if (!cursor.TryGetValue(key, out var next) || next is not Dictionary<string, object?> childMap)
+            {
+                throw ExpressionValues.TypeError($"set path cannot traverse '{key}' — it is not a map");
+            }
+
+            cursor = childMap;
+        }
+
+        cursor[await segments[^1].KeyAsync(_scope, ct)] = value;
     }
 
     private async ValueTask PushAsync(JsonElement body, CancellationToken ct) =>
         _scope.Push(body.GetProperty("into").GetString()!, await ExprAsync(body.GetProperty("value"), ct));
+
+    private async ValueTask LogAsync(JsonElement body, CancellationToken ct)
+    {
+        var level = body.GetProperty("level").GetString()!;
+        var message = await CrawldadTemplate.Parse(body.GetProperty("message").GetString()!).RenderAsync(_scope, ct);
+        _events.Add(new LogEmitted(level, message, _clock.GetUtcNow()));
+    }
+
+    private async ValueTask GuardAsync(JsonElement body, CancellationToken ct)
+    {
+        if (ExpressionValues.RequireBool(await ExprAsync(body.GetProperty("cond"), ct)))
+        {
+            return; // the condition held — nothing to do
+        }
+
+        await RaiseFailureAsync(body.GetProperty("elseFail"), ct);
+    }
+
+    private ValueTask FailAsync(JsonElement body, CancellationToken ct) => RaiseFailureAsync(body, ct);
+
+    // Builds and throws the typed failure from a §4 Failure payload, rendering its message template at raise time.
+    private async ValueTask RaiseFailureAsync(JsonElement failure, CancellationToken ct)
+    {
+        var failureClass = failure.GetProperty("class").GetString()!;
+        var code = failure.GetProperty("code").GetString()!;
+        var message = await CrawldadTemplate.Parse(failure.GetProperty("message").GetString()!).RenderAsync(_scope, ct);
+        throw new CrawldadFailureException(failureClass, code, message);
+    }
 
     private async ValueTask<Flow> IfAsync(JsonElement body, CancellationToken ct)
     {
@@ -323,9 +638,30 @@ internal sealed class RunInterpreter
             : Flow.Normal;
     }
 
-    private async ValueTask<Flow> LoopAsync(JsonElement body, CancellationToken ct)
+    // switch: first true `when` wins; its Flow (a break/continue) propagates like `if`. No default + no match = no-op.
+    private async ValueTask<Flow> SwitchAsync(JsonElement body, CancellationToken ct)
     {
-        var max = RequireMaxIterations(body);
+        foreach (var branch in body.GetProperty("cases").EnumerateArray())
+        {
+            if (ExpressionValues.RequireBool(await ExprAsync(branch.GetProperty("when"), ct)))
+            {
+                return await ExecuteBlockAsync(branch.GetProperty("do"), ct);
+            }
+        }
+
+        return body.TryGetProperty("default", out var def)
+            ? await ExecuteBlockAsync(def, ct)
+            : Flow.Normal;
+    }
+
+    private ValueTask<Flow> LoopAsync(JsonElement body, CancellationToken ct) =>
+        body.TryGetProperty("while", out var whileExpr)
+            ? WhileLoopAsync(body, whileExpr, ct)
+            : ForLoopAsync(body, ct);
+
+    private async ValueTask<Flow> ForLoopAsync(JsonElement body, CancellationToken ct)
+    {
+        var max = ReadMaxIterations(body);
         var forSpec = body.GetProperty("for");
         var varName = forSpec.GetProperty("var").GetString()!;
         var toExpr = forSpec.GetProperty("to");
@@ -346,9 +682,9 @@ internal sealed class RunInterpreter
                 break;
             }
 
-            if (++iterations > max)
+            if (++iterations > max && StopAtCap(body))
             {
-                throw MaxIterationsExceeded();
+                break;
             }
 
             if (await ExecuteBlockAsync(doBlock, ct) == Flow.Break)
@@ -362,9 +698,36 @@ internal sealed class RunInterpreter
         return Flow.Normal;
     }
 
+    // while: do-while — BODY FIRST, then test (§6, matching the reference's do…while).
+    private async ValueTask<Flow> WhileLoopAsync(JsonElement body, JsonElement whileExpr, CancellationToken ct)
+    {
+        var max = ReadMaxIterations(body);
+        var doBlock = body.GetProperty("do");
+        var iterations = 0L;
+
+        while (true)
+        {
+            if (++iterations > max && StopAtCap(body))
+            {
+                break;
+            }
+
+            if (await ExecuteBlockAsync(doBlock, ct) == Flow.Break)
+            {
+                break;
+            }
+
+            if (!ExpressionValues.RequireBool(await ExprAsync(whileExpr, ct)))
+            {
+                break;
+            }
+        }
+
+        return Flow.Normal;
+    }
+
     private async ValueTask<Flow> ForEachAsync(JsonElement body, CancellationToken ct)
     {
-        var max = RequireMaxIterations(body);
         var asName = body.GetProperty("as").GetString()!;
         var indexName = body.TryGetProperty("index", out var idx) ? idx.GetString() : null;
         var doBlock = body.GetProperty("do");
@@ -372,21 +735,22 @@ internal sealed class RunInterpreter
 
         if (source is List<object?> list)
         {
-            return await IterateAsync(list.Count, i => list[i], asName, indexName, max, doBlock, ct);
+            return await IterateAsync(list.Count, i => list[i], asName, indexName, body, doBlock, ct);
         }
 
         if (source is ILocatorHandle handle)
         {
             var count = await handle.CountAsync(ct);
-            return await IterateAsync(count, handle.Nth, asName, indexName, max, doBlock, ct);
+            return await IterateAsync(count, handle.Nth, asName, indexName, body, doBlock, ct);
         }
 
         throw new InterpreterException(InterpreterErrorCodes.MalformedNode, "forEach 'in' must be an array or a bound locator");
     }
 
     private async ValueTask<Flow> IterateAsync(
-        int count, Func<int, object?> itemAt, string asName, string? indexName, long max, JsonElement doBlock, CancellationToken ct)
+        int count, Func<int, object?> itemAt, string asName, string? indexName, JsonElement body, JsonElement doBlock, CancellationToken ct)
     {
+        var max = ReadMaxIterations(body);
         using var shadow = indexName is null
             ? _scope.Shadow((asName, null))
             : _scope.Shadow((asName, null), (indexName, null));
@@ -394,9 +758,9 @@ internal sealed class RunInterpreter
         var iterations = 0L;
         for (var i = 0; i < count; i++)
         {
-            if (++iterations > max)
+            if (++iterations > max && StopAtCap(body))
             {
-                throw MaxIterationsExceeded();
+                break;
             }
 
             _scope.Set(asName, itemAt(i));
@@ -426,6 +790,19 @@ internal sealed class RunInterpreter
 
     // ----- helpers -----------------------------------------------------------
 
+    // Handles a loop hitting its maxIterations cap: onMaxIterations "warn" logs and exits the loop normally (returns
+    // true to break); anything else (the "fail" default) is terminal max_iterations_exceeded.
+    private bool StopAtCap(JsonElement loopBody)
+    {
+        if (string.Equals(OptString(loopBody, "onMaxIterations"), "warn", StringComparison.Ordinal))
+        {
+            _events.Add(new LogEmitted("warning", $"loop stopped at its maxIterations cap ({ReadMaxIterations(loopBody)})", _clock.GetUtcNow()));
+            return true;
+        }
+
+        throw new InterpreterException(InterpreterErrorCodes.MaxIterationsExceeded, "loop exceeded its maxIterations cap");
+    }
+
     private async ValueTask<ILocatorHandle> ResolveSelectorAsync(JsonElement body, CancellationToken ct)
     {
         if (body.TryGetProperty("in", out _))
@@ -439,13 +816,7 @@ internal sealed class RunInterpreter
     private ValueTask<object?> ExprAsync(JsonElement expr, CancellationToken ct) =>
         CrawldadExpression.Parse(expr.GetString()!).EvaluateAsync(_scope, ct);
 
-    private long RequireMaxIterations(JsonElement body) =>
-        body.TryGetProperty("maxIterations", out var max)
-            ? max.GetInt64()
-            : throw new InterpreterException(InterpreterErrorCodes.MissingMaxIterations, $"'{_currentKind}' requires a maxIterations cap (§6)");
-
-    private static InterpreterException MaxIterationsExceeded() =>
-        new(InterpreterErrorCodes.MaxIterationsExceeded, "loop exceeded its maxIterations cap");
+    private static long ReadMaxIterations(JsonElement body) => body.GetProperty("maxIterations").GetInt64();
 
     private static string? OptString(JsonElement body, string field) =>
         body.TryGetProperty(field, out var value) ? value.GetString() : null;
@@ -454,8 +825,8 @@ internal sealed class RunInterpreter
         body.TryGetProperty("timeoutMs", out var t) ? t.GetInt32() : _defaultTimeoutMs;
 
     private RunStats Stats(DateTimeOffset startedAt) =>
-        new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, 0, 0);
+        new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, 0, _downloads);
 
     private RunOutcome Failed(string failureClass, string code, string message, DateTimeOffset startedAt) =>
-        new(RunStatus.Failed, null, new RunFailureDetail(failureClass, code, message, new RunStepRef(_currentStepIndex, _currentKind)), Stats(startedAt));
+        new(RunStatus.Failed, null, new RunFailureDetail(failureClass, code, message, new RunStepRef(_currentStepIndex, _currentKind)), Stats(startedAt), _events);
 }

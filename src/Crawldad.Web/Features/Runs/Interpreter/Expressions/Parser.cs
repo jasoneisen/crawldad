@@ -283,9 +283,13 @@ internal sealed class Parser
         }
     }
 
-    private CallNode ParseCall(Token name)
+    private ExpressionNode ParseCall(Token name)
     {
-        if (!BuiltinRegistry.TryGet(name.Text, out var builtin))
+        // A name is in exactly one registry (binding names are disjoint from ordinary ones); unknown in both is the
+        // static safety-boundary rejection (eval/require/fs/… never resolve here).
+        var isBinding = BuiltinRegistry.TryGetBinding(name.Text, out var bindingBuiltin);
+        var isOrdinary = BuiltinRegistry.TryGet(name.Text, out var builtin);
+        if (!isBinding && !isOrdinary)
         {
             throw new ExpressionParseException(
                 ExpressionErrorCodes.UnknownFunction, $"unknown function '{name.Text}'", name.Position);
@@ -304,6 +308,11 @@ internal sealed class Parser
 
         Expect(TokenType.RParen, $"expected ')' to close the call to '{name.Text}'");
 
+        return isBinding ? BuildBindingCall(name, bindingBuiltin, args) : BuildCall(name, builtin, args);
+    }
+
+    private static CallNode BuildCall(Token name, Builtin builtin, List<ExpressionNode> args)
+    {
         if (args.Count < builtin.MinArity || args.Count > builtin.MaxArity)
         {
             throw new ExpressionParseException(
@@ -311,6 +320,27 @@ internal sealed class Parser
         }
 
         return new CallNode(builtin.Invoke, args);
+    }
+
+    // Binding builtins are the fixed fn(source, v, body) form: exactly three arguments, the middle one a bare binding
+    // identifier that names the per-element variable. A non-identifier binding slot (e.g. filter(xs, 1+1, …)) is a
+    // syntax error — no expression can smuggle a computation into the binding position.
+    private static BindingCallNode BuildBindingCall(Token name, BindingBuiltin builtin, List<ExpressionNode> args)
+    {
+        if (args.Count != 3)
+        {
+            throw new ExpressionParseException(
+                ExpressionErrorCodes.WrongArity, $"'{name.Text}' expects 3 argument(s) but got {args.Count}", name.Position);
+        }
+
+        if (args[1] is not IdentifierNode identifier)
+        {
+            throw new ExpressionParseException(
+                ExpressionErrorCodes.SyntaxError,
+                $"the second argument to '{name.Text}' must be a bare binding identifier", name.Position);
+        }
+
+        return new BindingCallNode(builtin.Invoke, args[0], identifier.Name, args[2]);
     }
 
     private ArrayNode ParseArray()

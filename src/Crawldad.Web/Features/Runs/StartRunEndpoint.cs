@@ -4,6 +4,7 @@ using System.Text.Json;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Infrastructure.Browser;
+using Crawldad.Web.Infrastructure.Storage;
 using Marten;
 using Wolverine.Http;
 
@@ -22,6 +23,7 @@ public static class StartRunEndpoint
     /// <param name="request">The inline payload + inputs.</param>
     /// <param name="session">The request-scoped Marten session (Wolverine tracked-session compatible).</param>
     /// <param name="registry">Resolves the backend adapter named by the payload's <c>config.backend</c>.</param>
+    /// <param name="sinks">Resolves the download sink named by a <c>download.to</c> target's <c>kind</c> (§9.3).</param>
     /// <param name="clock">The time seam for event timestamps and duration.</param>
     /// <param name="ct">Cancels the run.</param>
     /// <returns>The §10 run response.</returns>
@@ -30,6 +32,7 @@ public static class StartRunEndpoint
         StartRunRequest request,
         IDocumentSession session,
         IBrowserBackendRegistry registry,
+        IDownloadSinkRegistry sinks,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -41,7 +44,14 @@ public static class StartRunEndpoint
             runId,
             new RunStarted(payloadName, ComputeScriptHash(request.Payload), clock.GetUtcNow(), [.. input.Keys]));
 
-        var outcome = await new RunInterpreter(request.Payload, input, registry, clock).RunAsync(ct);
+        var outcome = await new RunInterpreter(request.Payload, input, registry, sinks, clock).RunAsync(ct);
+
+        // The interpreter's trace events (LogEmitted/RunAttemptFailed) land between RunStarted and the terminal event,
+        // in occurrence order — part of the run's observable trace whether it ultimately succeeds or fails (§13).
+        foreach (var traceEvent in outcome.Events)
+        {
+            session.Events.Append(runId, traceEvent);
+        }
 
         object finished = outcome.Status == RunStatus.Succeeded
             ? new RunSucceeded(outcome.Stats, clock.GetUtcNow())

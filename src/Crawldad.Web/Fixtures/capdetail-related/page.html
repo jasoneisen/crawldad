@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) CapDetail RELATED RECORDS region — LJCMGClient.cs:625-697.
+     #tableCapTreeList > tbody > tr:not(:first-child) yields 7 related rows (the first tr is the header).
+     Each row's td:first-child holds an inner table: td:first-child = the indent spacer (width="Npx"), and
+     td:last-child = the record number. The outer > td:nth-child(2..4) are type/name/date, > td:last-child a is the
+     RELATIVE link. Indent tree (width px -> indent):
+        R1 REC-ROOT  0   Normal     parent ""       (no shallower indent)
+        R2 REC-A     25  Normal     parent REC-ROOT
+        R3 REC-B     50  HIGHLIGHT  parentRecordNumber = REC-A   (greatest indent < 50 is 25 -> REC-A)
+        R4 REC-C     25  Normal     parent REC-ROOT (sibling back at 25; OVERWRITES parents[25]=REC-C)
+        R5 REC-D     50  Normal     parent REC-C    (greatest indent < 50 is now 25 -> REC-C, NOT REC-A!)
+        R6 REC-E     foo Normal     parent ""       (garbled width -> ERROR log, indent 0 fallback)
+        R7 REC-F     75  (neither)  ERROR log (unknown class); not added to relatedRecords
+     R3 and R5 both sit at indent 50 yet resolve to different ancestors because R4 rewrote parents[25] between
+     them — that is the multi-level tree walk the acceptance gate names. The '> td:nth-child(N)' direct-child reads
+     depend on the leading-combinator scoping fix in FakeLocatorHandle (else AngleSharp reads the nested cell). -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <table id="tableCapTreeList">
+    <tbody>
+      <tr class="ACA_RelatedCap_Header"><td colspan="5">Related Records</td></tr>
+
+      <tr class="ACA_RelatedCap_Normal">
+        <td><table><tbody><tr><td width="0px">&nbsp;</td><td>REC-ROOT</td></tr></tbody></table></td>
+        <td>Root Type</td><td>Root Project</td><td>2025-01-01</td>
+        <td><a href="CapDetail.aspx?x=root">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Normal">
+        <td><table><tbody><tr><td width="25px">&nbsp;</td><td>REC-A</td></tr></tbody></table></td>
+        <td>Child A Type</td><td>Child A Project</td><td>2025-02-01</td>
+        <td><a href="CapDetail.aspx?x=a">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Highlight">
+        <td><table><tbody><tr><td width="50px">&nbsp;</td><td>REC-B</td></tr></tbody></table></td>
+        <td>Highlighted Type</td><td>Highlighted Project</td><td>2025-03-01</td>
+        <td><a href="CapDetail.aspx?x=b">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Normal">
+        <td><table><tbody><tr><td width="25px">&nbsp;</td><td>REC-C</td></tr></tbody></table></td>
+        <td>Child C Type</td><td>Child C Project</td><td>2025-04-01</td>
+        <td><a href="CapDetail.aspx?x=c">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Normal">
+        <td><table><tbody><tr><td width="50px">&nbsp;</td><td>REC-D</td></tr></tbody></table></td>
+        <td>Grandchild D Type</td><td>Grandchild D Project</td><td>2025-05-01</td>
+        <td><a href="CapDetail.aspx?x=d">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Normal">
+        <td><table><tbody><tr><td width="foo">&nbsp;</td><td>REC-E</td></tr></tbody></table></td>
+        <td>Broken Type</td><td>Broken Project</td><td>2025-06-01</td>
+        <td><a href="CapDetail.aspx?x=e">open</a></td>
+      </tr>
+
+      <tr class="ACA_RelatedCap_Section">
+        <td><table><tbody><tr><td width="75px">&nbsp;</td><td>REC-F</td></tr></tbody></table></td>
+        <td>Section Type</td><td>Section Project</td><td>2025-07-01</td>
+        <td><a href="CapDetail.aspx?x=f">open</a></td>
+      </tr>
+
+    </tbody>
+  </table>
+</body>
+</html>

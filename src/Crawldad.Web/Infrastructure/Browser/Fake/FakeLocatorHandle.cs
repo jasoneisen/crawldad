@@ -1,5 +1,5 @@
-using System.Text.RegularExpressions;
 using AngleSharp.Dom;
+using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Web.Infrastructure.Browser.Fake;
 
@@ -48,8 +48,9 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
 
     public ILocatorHandle Filter(string hasTextRegex)
     {
-        // Time-guarded per §7 (no catastrophic backtracking); built once here and captured by the resolver.
-        var regex = new Regex(hasTextRegex, RegexOptions.None, TimeSpan.FromSeconds(1));
+        // Size- and time-guarded through the shared GuardedRegex factory (§7.2), same as the matches/replaceRegex
+        // builtins; built once here and captured by the resolver.
+        var regex = GuardedRegex.Compile(hasTextRegex);
         return new FakeLocatorHandle(_page, () => _resolve().Where(e => regex.IsMatch(e.TextContent)).ToList());
     }
 
@@ -57,9 +58,14 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
 
     public Task<string?> TextContentAsync(CancellationToken ct) => Task.FromResult(First0()?.TextContent);
 
-    // AngleSharp does no layout, so it has no rendered innerText; P1 approximates it as textContent (documented).
-    // True whitespace-collapsed innerText arrives with real Chromium in Phase 4.
-    public Task<string> InnerTextAsync(CancellationToken ct) => Task.FromResult(First0()?.TextContent ?? string.Empty);
+    // AngleSharp does no layout, so it has no rendered innerText. FakeInnerText approximates Chromium's rendering
+    // (<br>/block boundaries → newline, inline whitespace collapse) so the processing-status region's
+    // split(innerText(...), '\n') dissects the lines a browser would produce; re-gated against real Chromium in P4.
+    public Task<string> InnerTextAsync(CancellationToken ct)
+    {
+        var element = First0();
+        return Task.FromResult(element is null ? string.Empty : FakeInnerText.Render(element));
+    }
 
     public Task<string> InnerHTMLAsync(CancellationToken ct) => Task.FromResult(First0()?.InnerHtml ?? string.Empty);
 
@@ -112,11 +118,12 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
 
     private static List<IElement> ChildQuery(IReadOnlyList<IElement> parents, string selector)
     {
+        var scoped = ScopeRelative(selector);
         var seen = new HashSet<IElement>();
         var result = new List<IElement>();
         foreach (var parent in parents)
         {
-            foreach (var element in parent.QuerySelectorAll(selector))
+            foreach (var element in parent.QuerySelectorAll(scoped))
             {
                 if (seen.Add(element))
                 {
@@ -126,5 +133,17 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
         }
 
         return result;
+    }
+
+    // Playwright scopes a relative selector that begins with a child combinator ('>') to the locator's own element
+    // (e.g. the related-records `> td:nth-child(2)` reads a DIRECT child cell). AngleSharp's element.QuerySelectorAll
+    // ignores a leading '>' and scans descendants instead — so `> td:nth-child(2)` would match a deeply nested cell,
+    // diverging from Chromium. Anchor it with ':scope' to recover Playwright's semantics. Selectors without a leading
+    // combinator are already a descendant match in both engines and pass through unchanged. Only '>' is handled — the
+    // one leading combinator the reference uses (:662-665).
+    private static string ScopeRelative(string selector)
+    {
+        var trimmed = selector.TrimStart();
+        return trimmed.StartsWith('>') ? ":scope " + trimmed : selector;
     }
 }

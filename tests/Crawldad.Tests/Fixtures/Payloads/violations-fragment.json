@@ -1,0 +1,58 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.scrape.violations",
+  "inputs": {
+    "backend": { "type": "backend", "required": true },
+    "link":    { "type": "string",  "required": true }
+  },
+  "config": { "backend": "input.backend", "defaultTimeoutMs": 120000 },
+  "vars": { "violations": [] },
+  "steps": [
+    { "goto": { "url": "${input.link}" } },
+    { "waitForLoadState": { "state": "load" } },
+    { "guard": { "cond": "contains(lower(pageUrl()), 'capdetail.aspx')",
+        "elseFail": { "class": "terminal", "code": "record_not_accessible",
+                      "message": "Record not accessible (redirected to ${urlPath(pageUrl())}): ${input.link}" } } },
+
+    { "comment": "===== APPLICATION INFORMATION TABLE (:359-425) =====" },
+    { "if": { "cond": "count('#trASITList > td > table') > 0", "then": [
+      { "loop": { "maxIterations": 100000,
+        "for": { "var": "i", "from": "1", "to": "count('#trASITList > td > table')", "inclusiveTo": true },
+        "do": [
+          { "set": { "var": "asitHeading", "value": "trim(coalesce(text('#trASITList > td > table:nth-child(' + i + ') tbody > tr:first-child'),''))" } },
+          { "switch": { "cases": [
+            { "when": "equalsIgnoreCase(asitHeading, 'VIOLATIONS')", "do": [
+              { "loop": { "maxIterations": 100000,
+                "for": { "var": "j", "from": "2", "to": "count('#trASITList > td > table:nth-child(' + i + ') tbody > tr')", "inclusiveTo": true },
+                "do": [
+                  { "set": { "var": "v", "value": "{ title:'', status:'', code:'', dueDate:'', inspectorComment:'', referralType:'', referralDate:'', workOrderType:'', referralResult:'' }" } },
+                  { "loop": { "maxIterations": 100000,
+                    "for": { "var": "k", "from": "0", "to": "count('#trASITList > td > table:nth-child(' + i + ') tbody > tr:nth-child(' + j + ') > td > div > div.MoreDetail_ItemCol1')", "exclusiveTo": true },
+                    "do": [
+                      { "set": { "var": "key",   "value": "trim(coalesce(text('#trASITList > td > table:nth-child(' + i + ') tbody > tr:nth-child(' + j + ') > td > div > div:nth-child(' + (k*2+1) + ')'),''))" } },
+                      { "set": { "var": "value", "value": "trim(coalesce(text('#trASITList > td > table:nth-child(' + i + ') tbody > tr:nth-child(' + j + ') > td > div > div:nth-child(' + (k*2+2) + ')'),''))" } },
+                      { "switch": { "cases": [
+                        { "when": "startsWith(lower(key),'violation')",    "do": [ { "set": { "var": "v", "path": "title",            "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'status')",       "do": [ { "set": { "var": "v", "path": "status",           "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'code')",         "do": [ { "set": { "var": "v", "path": "code",             "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'due date')",     "do": [ { "set": { "var": "v", "path": "dueDate",          "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'inspector co')", "do": [ { "set": { "var": "v", "path": "inspectorComment", "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'referral typ')", "do": [ { "set": { "var": "v", "path": "referralType",     "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'referral dat')", "do": [ { "set": { "var": "v", "path": "referralDate",     "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'work order t')", "do": [ { "set": { "var": "v", "path": "workOrderType",    "value": "value" } } ] },
+                        { "when": "startsWith(lower(key),'referral res')", "do": [ { "set": { "var": "v", "path": "referralResult",   "value": "value" } } ] }
+                      ] } }
+                    ] } },
+                  { "push": { "into": "violations", "value": "v" } }
+                ] } }
+            ] },
+            { "when": "equalsIgnoreCase(asitHeading, 'CODE ENFORCEMENT BOARD')", "do": [
+              { "comment": "ignored in the reference (:414-417)" } ] }
+          ], "default": [
+            { "log": { "level": "warning", "message": "Unknown heading in application information table" } }
+          ] } }
+        ] } }
+    ] } }
+  ],
+  "result": "{ violations: violations }"
+}

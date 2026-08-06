@@ -106,3 +106,20 @@ internal static class Xp
     public static ExpressionParseException ParseError(string source) =>
         Should.Throw<ExpressionParseException>(() => CrawldadExpression.Parse(source));
 }
+
+/// <summary>Value-model constructors so tests can seed arrays/maps into a <see cref="FakeScope"/> concisely.</summary>
+internal static class Val
+{
+    public static List<object?> List(params object?[] items) => [.. items];
+
+    public static Dictionary<string, object?> Map(params (string Key, object? Value)[] entries)
+    {
+        var map = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (key, value) in entries)
+        {
+            map[key] = value;
+        }
+
+        return map;
+    }
+}

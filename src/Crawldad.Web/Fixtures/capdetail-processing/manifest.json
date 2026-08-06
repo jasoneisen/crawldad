@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "Single-state CapDetail PROCESSING STATUS region (LJCMGClient.cs:455-529). Serves #divProcessingTable at a CapDetail.aspx URL. Detail rows are already present (the fake click that 'expands' is a no-op). Phase 2 WP3 acceptance fixture — no Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00003&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00003&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

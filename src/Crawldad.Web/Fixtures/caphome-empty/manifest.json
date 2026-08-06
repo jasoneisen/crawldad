@@ -1,0 +1,24 @@
+{
+  "manifest": "1",
+  "description": "Record/replay script for an LJCMG CapHome enforcement search that returns ZERO records (LJCMGClient.cs:75-175 + HistoricalCrawler :81-105). form → results (single page, no data rows, no pagination anchor). Proves the empty-results stop: the callback sets crawledToEnd = true (last page) and then returns false on Results.Count == 0, so newLinks is empty, crawledToEnd is true, and pages is empty. No Chromium, no live traffic.",
+  "initialState": "form",
+  "states": {
+    "form": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "form.html"
+    },
+    "results": {
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "empty.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "form",
+      "on": { "click": "#ctl00_PlaceHolderMain_btnNewSearch" },
+      "to": "results",
+      "emit": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST" }
+    }
+  ]
+}

@@ -26,11 +26,14 @@ internal sealed class LiteralNode(object? value) : ExpressionNode
 /// <summary>A bare identifier resolved through scope; unbound at eval time is a terminal <c>unknown_identifier</c>.</summary>
 internal sealed class IdentifierNode(string name) : ExpressionNode
 {
+    /// <summary>The identifier text — read by the parser when this node fills a binding builtin's binding slot.</summary>
+    public string Name { get; } = name;
+
     public override ValueTask<object?> EvaluateAsync(EvalContext ctx) =>
-        ctx.Scope.TryResolve(name, out var value)
+        ctx.Scope.TryResolve(Name, out var value)
             ? new ValueTask<object?>(value)
             : throw new ExpressionEvaluationException(
-                ExpressionErrorCodes.UnknownIdentifier, $"unknown identifier '{name}'");
+                ExpressionErrorCodes.UnknownIdentifier, $"unknown identifier '{Name}'");
 }
 
 /// <summary>An array literal <c>[…]</c> → a fresh <see cref="List{T}"/> of the evaluated elements.</summary>
@@ -194,4 +197,20 @@ internal sealed class IndexNode(ExpressionNode target, ExpressionNode index) : E
 internal sealed class CallNode(BuiltinInvoker invoke, IReadOnlyList<ExpressionNode> args) : ExpressionNode
 {
     public override ValueTask<object?> EvaluateAsync(EvalContext ctx) => invoke(args, ctx);
+}
+
+/// <summary>
+/// A binding builtin invocation (<c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c>, §7.2). Distinct from
+/// <see cref="CallNode"/> because its middle argument is a <em>binding identifier</em>, not a value: the parser has
+/// already validated the <c>(source, binding, body)</c> shape and captured the binding name, so this node runs the
+/// pre-bound <see cref="BindingBuiltinInvoker"/> over the source list, the binding name, and the body node.
+/// </summary>
+/// <param name="invoke">The binding builtin's evaluator.</param>
+/// <param name="source">The node producing the list to iterate.</param>
+/// <param name="binding">The per-element variable name introduced for <paramref name="body"/>.</param>
+/// <param name="body">The predicate / projection / key node evaluated once per element in a <see cref="BindingScope"/>.</param>
+internal sealed class BindingCallNode(
+    BindingBuiltinInvoker invoke, ExpressionNode source, string binding, ExpressionNode body) : ExpressionNode
+{
+    public override ValueTask<object?> EvaluateAsync(EvalContext ctx) => invoke(source, binding, body, ctx);
 }

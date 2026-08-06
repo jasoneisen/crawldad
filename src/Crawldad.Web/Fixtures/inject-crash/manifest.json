@@ -1,0 +1,25 @@
+{
+  "manifest": "1",
+  "description": "Scripted-fault fixture (§ Deliverable 3) for the page-crash reopen path (§3.6). The form→results click crashes the page on its first trigger, then succeeds. A payload with retry.onPageCrashed:\"reopenPage\" closes the crashed page, opens a fresh one on the SAME session, rebinds it, and re-runs from the top — the goto re-navigates the new page to the form, and the second trigger succeeds. The per-transition attempt count lives on the session so it survives the reopen.",
+  "initialState": "form",
+  "states": {
+    "form": {
+      "gotoUrl": "https://fixture.test/form",
+      "url": "https://fixture.test/form",
+      "html": "form.html"
+    },
+    "results": {
+      "url": "https://fixture.test/results",
+      "html": "results.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "form",
+      "on": { "click": "#go" },
+      "to": "results",
+      "emit": { "url": "https://fixture.test/postback", "method": "POST" },
+      "inject": { "type": "pageCrashed", "failAttempts": 1 }
+    }
+  ]
+}

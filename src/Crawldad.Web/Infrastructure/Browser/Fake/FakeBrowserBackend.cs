@@ -28,18 +28,42 @@ internal sealed class FakeBrowserBackend(string fixturesRoot) : IBrowserBackend
     }
 }
 
-/// <summary>One connected fake session (§9). Owns nothing external, so disposal is a no-op; it exists so the
-/// interpreter's teardown path (<c>await using</c>) is exercised identically to a real backend.</summary>
+/// <summary>
+/// One connected fake session (§9). Owns nothing external, so disposal is a no-op; it exists so the interpreter's
+/// teardown path (<c>await using</c>) is exercised identically to a real backend. It also holds the per-transition
+/// scripted-fault attempt counters (§ Deliverable 3): keyed on the session (not the page), they persist across a
+/// <see cref="NewPageAsync"/> reopen — which is what makes the pageCrashed-then-succeed scenario work — and reset only
+/// when a fresh session is connected (a new run).
+/// </summary>
 internal sealed class FakeBrowserSession(FakeManifest manifest) : IBrowserSession
 {
+    private readonly Dictionary<FakeTransition, int> _injectAttempts = new();
+    private readonly List<FakePageHandle> _pages = [];
+
+    /// <summary>The manifest driving this session's pages.</summary>
+    internal FakeManifest Manifest => manifest;
+
+    /// <summary>Every page opened on this session, in order — a white-box hook to assert the crashed page was closed.</summary>
+    internal IReadOnlyList<FakePageHandle> Pages => _pages;
+
     /// <summary>The most recently opened page — a white-box hook for tests to read the (mutated) final DOM.</summary>
     internal FakePageHandle? LastPage { get; private set; }
 
     public Task<IPageHandle> NewPageAsync(CancellationToken ct)
     {
-        var page = new FakePageHandle(manifest);
+        var page = new FakePageHandle(this);
+        _pages.Add(page);
         LastPage = page;
         return Task.FromResult<IPageHandle>(page);
+    }
+
+    /// <summary>Records one trigger of <paramref name="transition"/> and returns its 1-based attempt number this session.</summary>
+    /// <param name="transition">The transition whose scripted fault is being evaluated.</param>
+    internal int NextInjectAttempt(FakeTransition transition)
+    {
+        var next = _injectAttempts.GetValueOrDefault(transition) + 1;
+        _injectAttempts[transition] = next;
+        return next;
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

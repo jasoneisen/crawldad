@@ -1,6 +1,6 @@
 {
   "manifest": "1",
-  "description": "Record/replay script for the LJCMG Accela CapHome enforcement search (LJCMGClient.cs:75-175). Drives FakeBrowserBackend deterministically with no Chromium and no live traffic. Phase 1 uses only 'states'/'transitions'; the shape is intentionally open for Phase 2 to add per-transition 'delayMs'/'fail' and per-state 'inject' (timeout/pageCrashed) blocks without restructuring.",
+  "description": "Record/replay script for the LJCMG Accela CapHome enforcement search (LJCMGClient.cs:75-175). Drives FakeBrowserBackend deterministically with no Chromium and no live traffic. A transition may carry an optional 'inject': { 'type': 'timeout'|'pageCrashed', 'failAttempts'?: N } scripted fault (Phase 2 § Deliverable 3) — its click throws that retryable condition for the first N triggers this session (omit failAttempts to fail every trigger); the inject-timeout/inject-crash fixtures use it. This fixture has none.",
   "initialState": "form",
   "states": {
     "form": {

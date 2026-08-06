@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "Single-state CapDetail APPLICATION INFORMATION region (LJCMGClient.cs:359-425). Serves the #trASITList tables at a CapDetail.aspx URL. Phase 2 WP3 acceptance fixture — no Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00002&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00002&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

@@ -12,4 +12,7 @@ namespace Crawldad.Web.Features.Runs.Interpreter;
 /// <param name="Result">The evaluated <c>result</c> JSON on success; null on failure.</param>
 /// <param name="Failure">The typed failure on failure; null on success.</param>
 /// <param name="Stats">The run counters.</param>
-internal sealed record RunOutcome(RunStatus Status, JsonElement? Result, RunFailureDetail? Failure, RunStats Stats);
+/// <param name="Events">The interpreter's trace events (<c>LogEmitted</c>/<c>RunAttemptFailed</c>) in occurrence order,
+/// which the endpoint appends to the run stream between <c>RunStarted</c> and the terminal event — accumulated across
+/// retry attempts and returned on both success and failure (§13).</param>
+internal sealed record RunOutcome(RunStatus Status, JsonElement? Result, RunFailureDetail? Failure, RunStats Stats, IReadOnlyList<object> Events);

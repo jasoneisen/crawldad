@@ -1,0 +1,45 @@
+{
+  "parentRecordNumber": "REC-A",
+  "relatedRecords": [
+    {
+      "recordNumber": "REC-ROOT",
+      "parentRecordNumber": "",
+      "recordType": "Root Type",
+      "projectName": "Root Project",
+      "date": "2025-01-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=root"
+    },
+    {
+      "recordNumber": "REC-A",
+      "parentRecordNumber": "REC-ROOT",
+      "recordType": "Child A Type",
+      "projectName": "Child A Project",
+      "date": "2025-02-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=a"
+    },
+    {
+      "recordNumber": "REC-C",
+      "parentRecordNumber": "REC-ROOT",
+      "recordType": "Child C Type",
+      "projectName": "Child C Project",
+      "date": "2025-04-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=c"
+    },
+    {
+      "recordNumber": "REC-D",
+      "parentRecordNumber": "REC-C",
+      "recordType": "Grandchild D Type",
+      "projectName": "Grandchild D Project",
+      "date": "2025-05-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=d"
+    },
+    {
+      "recordNumber": "REC-E",
+      "parentRecordNumber": "",
+      "recordType": "Broken Type",
+      "projectName": "Broken Project",
+      "date": "2025-06-01",
+      "link": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?x=e"
+    }
+  ]
+}

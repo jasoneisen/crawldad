@@ -1,0 +1,48 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.scrape.related",
+  "inputs": {
+    "backend": { "type": "backend", "required": true },
+    "link":    { "type": "string",  "required": true }
+  },
+  "config": { "backend": "input.backend", "defaultTimeoutMs": 120000 },
+  "vars": { "relatedRecords": [], "parentRecordNumber": "''" },
+  "steps": [
+    { "goto": { "url": "${input.link}" } },
+    { "waitForLoadState": { "state": "load" } },
+    { "guard": { "cond": "contains(lower(pageUrl()), 'capdetail.aspx')",
+        "elseFail": { "class": "terminal", "code": "record_not_accessible",
+                      "message": "Record not accessible (redirected to ${urlPath(pageUrl())}): ${input.link}" } } },
+
+    { "comment": "===== RELATED RECORDS (:625-697) — indentation-based parent resolution =====" },
+    { "locate": { "var": "relatedBlocks", "selector": "#tableCapTreeList > tbody > tr:not(:first-child)" } },
+    { "if": { "cond": "count(relatedBlocks) > 1", "then": [
+      { "set": { "var": "parents", "value": "{}" } },
+      { "forEach": { "in": "relatedBlocks", "as": "rb", "maxIterations": 100000, "do": [
+        { "set": { "var": "relNum",     "value": "trim(coalesce(text(rb,'td:first-child td:last-child'),''))" } },
+        { "set": { "var": "indentStr",  "value": "trim(replace(coalesce(attr(rb,'td:first-child td:first-child','width'),''), 'px', ''))" } },
+        { "if": { "cond": "!isNullOrWhitespace(indentStr) && isInt(indentStr)",
+            "then": [ { "set": { "var": "parents", "path": "[${toInt(indentStr)}]", "value": "relNum" } } ],
+            "else": [ { "log": { "level": "error", "message": "Could not determine indentation of related record: ${input.link}" } } ] } },
+        { "set": { "var": "tdClass", "value": "trim(coalesce(attr(rb,'class'),''))" } },
+        { "set": { "var": "indent",  "value": "isInt(indentStr) ? toInt(indentStr) : 0" } },
+        { "set": { "var": "cand",    "value": "filter(map(keys(parents), k, toInt(k)), n, n < indent)" } },
+        { "switch": { "cases": [
+          { "when": "contains(tdClass, 'ACA_RelatedCap_Highlight')", "do": [
+              { "set": { "var": "parentRecordNumber", "value": "count(cand) > 0 ? get(parents, string(max(cand))) : ''" } } ] },
+          { "when": "contains(tdClass, 'ACA_RelatedCap_Normal')", "do": [
+              { "set": { "var": "relType", "value": "trim(coalesce(text(rb,'> td:nth-child(2)'),''))" } },
+              { "set": { "var": "relName", "value": "trim(coalesce(text(rb,'> td:nth-child(3)'),''))" } },
+              { "set": { "var": "relDate", "value": "trim(coalesce(text(rb,'> td:nth-child(4)'),''))" } },
+              { "set": { "var": "relLink", "value": "count({ base:'rb', css:'> td:last-child a' }) > 0 && !isNullOrWhitespace(trim(coalesce(attr(rb,'> td:last-child a','href'),''))) ? resolveUrl(input.link, trim(attr(rb,'> td:last-child a','href'))) : ''" } },
+              { "set": { "var": "relParent", "value": "count(cand) > 0 ? get(parents, string(max(cand))) : ''" } },
+              { "push": { "into": "relatedRecords", "value":
+                "{ recordNumber: relNum, parentRecordNumber: relParent, recordType: relType, projectName: relName, date: relDate, link: relLink }" } } ] }
+        ], "default": [
+          { "log": { "level": "error", "message": "Could not determine class of related record: ${input.link}" } }
+        ] } }
+      ] } }
+    ] } }
+  ],
+  "result": "{ parentRecordNumber: parentRecordNumber, relatedRecords: relatedRecords }"
+}

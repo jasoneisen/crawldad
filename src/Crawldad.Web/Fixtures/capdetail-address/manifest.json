@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "Single-state CapDetail LOCATION region (LJCMGClient.cs:229-268). Serves the #tbl_worklocation DOM at a CapDetail.aspx URL so the guard passes; the address-fragment payload reads it with no transitions. Phase 2 WP3 acceptance fixture — no Chromium, no live traffic.",
+  "initialState": "detail",
+  "states": {
+    "detail": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00001&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00001&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}

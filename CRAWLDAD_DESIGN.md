@@ -937,7 +937,7 @@ return (`hitKnown ? !crawledToEnd : hasMorePages`).
   },
   "vars": {
     "violations": [], "parcels": [], "locations": [], "owners": [], "processingStatus": [],
-    "attachments": [], "relatedRecords": [], "description": "", "parentRecordNumber": "",
+    "attachments": [], "relatedRecords": [], "description": "''", "parentRecordNumber": "''",
     "hasMoreAttachmentPages": false
   },
   "steps": [

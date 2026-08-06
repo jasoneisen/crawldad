@@ -32,6 +32,10 @@ public static class ExpressionErrorCodes
     public const string InvalidUrl = "invalid_url";
     /// <summary>A bare identifier was not bound in scope at evaluation time.</summary>
     public const string UnknownIdentifier = "unknown_identifier";
+    /// <summary>A regex pattern exceeded the size cap (§7.2 "size-limited") — rejected before matching to bound compile cost.</summary>
+    public const string RegexTooLarge = "regex_too_large";
+    /// <summary>A regex match exceeded the time budget (§7.2 "timeout-guarded") — reproduces a catastrophic-backtracking abort as terminal, never a hang.</summary>
+    public const string RegexTimeout = "regex_timeout";
 }
 
 /// <summary>

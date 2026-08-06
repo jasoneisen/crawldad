@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) CapDetail APPLICATION INFORMATION region — LJCMGClient.cs:359-425.
+     #trASITList > td holds THREE tables (nth-child 1..2..3): VIOLATIONS, CODE ENFORCEMENT BOARD (ignored),
+     and an unknown heading (→ warning). Each VIOLATIONS row's container div holds alternating
+     MoreDetail_ItemCol1 (key) / MoreDetail_ItemCol2 (value) divs; the k*2+1 (key) / k*2+2 (value) arithmetic
+     reads div:nth-child(N), 1-based. Values are DISTINCT PER POSITION so any off-by-one lands the wrong string.
+     Row 1 and row 2 carry all NINE key ladders plus a 10th unmatched "Notes" pair (silently ignored — the C#
+     switch has no default). :nth-child ignores text nodes, so this markup is formatted for readability. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Record Detail - LJCMG</title></head>
+<body>
+  <table id="asit-outer">
+    <tbody>
+      <tr id="trASITList">
+        <td>
+
+          <table>
+            <tbody>
+              <tr><td>VIOLATIONS</td></tr>
+              <tr>
+                <td>
+                  <div>
+                    <div class="MoreDetail_ItemCol1">Violation</div><div class="MoreDetail_ItemCol2">Illegal Dumping</div>
+                    <div class="MoreDetail_ItemCol1">Status</div><div class="MoreDetail_ItemCol2">Open</div>
+                    <div class="MoreDetail_ItemCol1">Code</div><div class="MoreDetail_ItemCol2">CODE-101</div>
+                    <div class="MoreDetail_ItemCol1">Due Date</div><div class="MoreDetail_ItemCol2">2025-03-01</div>
+                    <div class="MoreDetail_ItemCol1">Inspector Comments</div><div class="MoreDetail_ItemCol2">Needs cleanup</div>
+                    <div class="MoreDetail_ItemCol1">Referral Type</div><div class="MoreDetail_ItemCol2">Internal</div>
+                    <div class="MoreDetail_ItemCol1">Referral Date</div><div class="MoreDetail_ItemCol2">2025-03-05</div>
+                    <div class="MoreDetail_ItemCol1">Work Order Type</div><div class="MoreDetail_ItemCol2">Standard</div>
+                    <div class="MoreDetail_ItemCol1">Referral Result</div><div class="MoreDetail_ItemCol2">Pending</div>
+                    <div class="MoreDetail_ItemCol1">Notes</div><div class="MoreDetail_ItemCol2">Ignore me one</div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div>
+                    <div class="MoreDetail_ItemCol1">Violation</div><div class="MoreDetail_ItemCol2">Overgrown Lot</div>
+                    <div class="MoreDetail_ItemCol1">Status</div><div class="MoreDetail_ItemCol2">Closed</div>
+                    <div class="MoreDetail_ItemCol1">Code</div><div class="MoreDetail_ItemCol2">CODE-202</div>
+                    <div class="MoreDetail_ItemCol1">Due Date</div><div class="MoreDetail_ItemCol2">2025-04-01</div>
+                    <div class="MoreDetail_ItemCol1">Inspector Comments</div><div class="MoreDetail_ItemCol2">Resolved</div>
+                    <div class="MoreDetail_ItemCol1">Referral Type</div><div class="MoreDetail_ItemCol2">External</div>
+                    <div class="MoreDetail_ItemCol1">Referral Date</div><div class="MoreDetail_ItemCol2">2025-04-05</div>
+                    <div class="MoreDetail_ItemCol1">Work Order Type</div><div class="MoreDetail_ItemCol2">Priority</div>
+                    <div class="MoreDetail_ItemCol1">Referral Result</div><div class="MoreDetail_ItemCol2">Complete</div>
+                    <div class="MoreDetail_ItemCol1">Notes</div><div class="MoreDetail_ItemCol2">Ignore me two</div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table>
+            <tbody>
+              <tr><td>CODE ENFORCEMENT BOARD</td></tr>
+              <tr><td>Board content ignored by the reference (:414-417)</td></tr>
+            </tbody>
+          </table>
+
+          <table>
+            <tbody>
+              <tr><td>CONTACTS</td></tr>
+              <tr><td>Unknown-heading table triggers a warning (:420)</td></tr>
+            </tbody>
+          </table>
+
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

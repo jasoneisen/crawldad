@@ -12,17 +12,26 @@ internal sealed class FakePageHandle : IPageHandle
 {
     private static readonly HtmlParser _parser = new();
 
+    private readonly FakeBrowserSession _session;
     private readonly FakeManifest _manifest;
     private readonly Dictionary<string, IDocument> _documents = new(StringComparer.Ordinal);
     private readonly List<FakeEmit> _recentRequests = [];
 
     private FakeState _state;
+    private IDownloadHandle? _pendingDownload;
 
-    internal FakePageHandle(FakeManifest manifest)
+    internal FakePageHandle(FakeBrowserSession session)
     {
-        _manifest = manifest;
-        _state = manifest.InitialState;
+        _session = session;
+        _manifest = session.Manifest;
+        _state = _manifest.InitialState;
     }
+
+    /// <summary>Whether <see cref="CloseAsync"/> was called on this page — asserts the crashed page was torn down on reopen.</summary>
+    internal bool CloseAttempted { get; private set; }
+
+    /// <summary>Whether this page has been closed.</summary>
+    internal bool Closed { get; private set; }
 
     public string Url => _state.Url;
 
@@ -48,6 +57,13 @@ internal sealed class FakePageHandle : IPageHandle
 
     public ILocatorHandle GetByTitle(string title) => FakeLocatorHandle.Title(this, title);
 
+    public Task CloseAsync(CancellationToken ct)
+    {
+        CloseAttempted = true;
+        Closed = true;
+        return Task.CompletedTask;
+    }
+
     public async Task RunAndWaitForRequestAsync(Func<Task> trigger, string urlPrefix, string? method, int? timeoutMs, CancellationToken ct)
     {
         _recentRequests.Clear();
@@ -61,6 +77,17 @@ internal sealed class FakePageHandle : IPageHandle
         {
             throw new BrowserTimeoutException($"no request matching '{method ?? "*"} {urlPrefix}' was observed during the trigger");
         }
+    }
+
+    public async Task<IDownloadHandle> RunAndWaitForDownloadAsync(Func<Task> trigger, int? timeoutMs, CancellationToken ct)
+    {
+        // Arm the wait BEFORE the trigger (Playwright semantics): a download-carrying click sets _pendingDownload inside
+        // HandleClick, and we hand it back. A trigger that starts no download is a retryable timeout (the 180 s wait).
+        _pendingDownload = null;
+        await trigger();
+
+        return _pendingDownload
+            ?? throw new BrowserTimeoutException("no download was started during the trigger");
     }
 
     /// <summary>
@@ -84,11 +111,50 @@ internal sealed class FakePageHandle : IPageHandle
 
             if (ReferenceEquals(CurrentDocument.QuerySelector(transition.ClickSelector), element))
             {
-                _recentRequests.Add(transition.Emit);
+                MaybeInject(transition); // a scripted fault (§ Deliverable 3) throws here for its leading attempts
+
+                if (transition.Download is { } download)
+                {
+                    _pendingDownload = new FakeDownloadHandle(_manifest.ReadFile(download.File), download.SuggestedFilename);
+                }
+
+                if (transition.Emit is { } emit)
+                {
+                    _recentRequests.Add(emit);
+                }
+
                 _state = _manifest.State(transition.To);
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Fires the transition's scripted fault if it should fail this attempt (§ Deliverable 3). The attempt count is
+    /// per-transition on the session, so it advances once per whole-program run and survives a page reopen.
+    /// </summary>
+    /// <param name="transition">The transition whose click just matched.</param>
+    /// <exception cref="BrowserPageCrashedException">On a <c>pageCrashed</c> fault this attempt.</exception>
+    /// <exception cref="BrowserTimeoutException">On a <c>timeout</c> fault this attempt.</exception>
+    private void MaybeInject(FakeTransition transition)
+    {
+        if (transition.Inject is not { } inject)
+        {
+            return;
+        }
+
+        var attempt = _session.NextInjectAttempt(transition);
+        if (attempt > inject.FailAttempts)
+        {
+            return; // the scripted failures are used up — this attempt succeeds
+        }
+
+        if (string.Equals(inject.Type, "pageCrashed", StringComparison.Ordinal))
+        {
+            throw new BrowserPageCrashedException($"Page crashed (scripted fault, attempt {attempt})");
+        }
+
+        throw new BrowserTimeoutException($"scripted timeout (attempt {attempt})");
     }
 
     private IDocument DocumentFor(FakeState state)

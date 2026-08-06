@@ -73,4 +73,43 @@ public interface IPageHandle
     /// <param name="timeoutMs">Per-call timeout override in milliseconds, or null for the default.</param>
     /// <param name="ct">Cancels the trigger-and-wait.</param>
     Task RunAndWaitForRequestAsync(Func<Task> trigger, string urlPrefix, string? method, int? timeoutMs, CancellationToken ct);
+
+    /// <summary>
+    /// Runs <paramref name="trigger"/> and waits for the download it provokes (<c>page.RunAndWaitForDownloadAsync</c>) —
+    /// the download analogue of <see cref="RunAndWaitForRequestAsync"/>: the wait is armed before the trigger click
+    /// fires, so the download event is never missed. Backs the <c>download</c> node (§9.3). A trigger that starts no
+    /// download within the timeout is a retryable <see cref="BrowserTimeoutException"/> (the reference's 180 s
+    /// <c>WaitForDownloadAsync</c> timeout).
+    /// </summary>
+    /// <param name="trigger">The action that starts the download (typically a click), awaited inside the wait window.</param>
+    /// <param name="timeoutMs">Per-call timeout override in milliseconds, or null for the default (the node sets 180000).</param>
+    /// <param name="ct">Cancels the trigger-and-wait.</param>
+    /// <returns>A handle to the downloaded bytes and their suggested filename.</returns>
+    Task<IDownloadHandle> RunAndWaitForDownloadAsync(Func<Task> trigger, int? timeoutMs, CancellationToken ct);
+
+    /// <summary>
+    /// Closes this page (<c>page.CloseAsync</c>). Used by the §3.6 page-crash reopen path: the crashed page is closed
+    /// before a fresh one is opened on the same session/context. A crashed page may itself fail to close — real
+    /// adapters surface that as a <see cref="BrowserException"/>, which the reopen path tolerates — so this is a
+    /// best-effort teardown, not a guaranteed clean close.
+    /// </summary>
+    /// <param name="ct">Cancels the close.</param>
+    Task CloseAsync(CancellationToken ct);
+}
+
+/// <summary>
+/// A handle to one completed download (a Playwright <c>IDownload</c>). The engine reads the bytes to compute the
+/// content identity (§9.3) and streams them to the sink; it never round-trips through the caller. The temp-file
+/// lifecycle the reference manages by hand (<c>PathAsync</c>/<c>DeleteAsync</c>) is an adapter-internal concern in
+/// Phase 2 — the fake serves bytes from memory.
+/// </summary>
+public interface IDownloadHandle
+{
+    /// <summary>The download's HTTP-suggested filename (<c>download.SuggestedFilename</c>) — the source of the engine's stored-blob extension (§9.3).</summary>
+    string SuggestedFilename { get; }
+
+    /// <summary>Opens a fresh readable stream over the downloaded bytes (positioned at the start). The caller disposes it.</summary>
+    /// <param name="ct">Cancels opening the stream.</param>
+    /// <returns>A readable stream over the bytes.</returns>
+    Task<Stream> OpenReadAsync(CancellationToken ct);
 }

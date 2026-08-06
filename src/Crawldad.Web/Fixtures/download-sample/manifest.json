@@ -1,0 +1,20 @@
+{
+  "manifest": "1",
+  "description": "Single-state CapDetail attachment row with a downloadable file link (§ Deliverable 2). Clicking the anchor yields sample.bin's bytes as a browser download (suggestedFilename 'report.pdf'), captured by RunAndWaitForDownloadAsync. The transition is a self-loop (to == from) with NO emit — a pure download click fires no navigation postback — so the same link can be clicked twice to prove content-addressed idempotency. No Chromium, no live traffic.",
+  "initialState": "page",
+  "states": {
+    "page": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-DL001&agencyCode=LJCMG",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-DL001&agencyCode=LJCMG",
+      "html": "page.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "page",
+      "on": { "click": "#attachmentList td:first-child a" },
+      "to": "page",
+      "download": { "file": "sample.bin", "suggestedFilename": "report.pdf" }
+    }
+  ]
+}

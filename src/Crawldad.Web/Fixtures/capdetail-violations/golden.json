@@ -1,0 +1,26 @@
+{
+  "violations": [
+    {
+      "title": "Illegal Dumping",
+      "status": "Open",
+      "code": "CODE-101",
+      "dueDate": "2025-03-01",
+      "inspectorComment": "Needs cleanup",
+      "referralType": "Internal",
+      "referralDate": "2025-03-05",
+      "workOrderType": "Standard",
+      "referralResult": "Pending"
+    },
+    {
+      "title": "Overgrown Lot",
+      "status": "Closed",
+      "code": "CODE-202",
+      "dueDate": "2025-04-01",
+      "inspectorComment": "Resolved",
+      "referralType": "External",
+      "referralDate": "2025-04-05",
+      "workOrderType": "Priority",
+      "referralResult": "Complete"
+    }
+  ]
+}

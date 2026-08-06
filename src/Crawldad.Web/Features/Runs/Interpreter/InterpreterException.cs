@@ -19,7 +19,7 @@ internal static class InterpreterErrorCodes
     /// <summary>A <c>push</c> target is undefined or is not an array.</summary>
     public const string UndefinedPushTarget = "undefined_push_target";
 
-    /// <summary>A feature parsed but is not implemented in v0 (frames/<c>in</c>, <c>set.path</c>).</summary>
+    /// <summary>A feature parsed but is not implemented yet (frames/<c>in</c> — a later phase).</summary>
     public const string NotSupportedInV0 = "not_supported_in_v0";
 
     /// <summary>The result tree contained an opaque handle (§10 — handles never serialise).</summary>
@@ -33,6 +33,12 @@ internal static class InterpreterErrorCodes
 
     /// <summary>A node was structurally malformed (missing/mistyped required field) — a stand-in for Phase 3 save-time validation.</summary>
     public const string MalformedNode = "malformed_node";
+
+    /// <summary>A <c>download.to</c> did not resolve to a <c>storageTarget</c> object with a string <c>kind</c>.</summary>
+    public const string InvalidDownloadTarget = "invalid_download_target";
+
+    /// <summary>A <c>download.to</c>'s <c>kind</c> has no registered <see cref="Crawldad.Web.Infrastructure.Storage.IDownloadSink"/>.</summary>
+    public const string UnknownDownloadSink = "unknown_download_sink";
 }
 
 /// <summary>

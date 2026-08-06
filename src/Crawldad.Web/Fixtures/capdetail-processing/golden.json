@@ -1,0 +1,22 @@
+{
+  "processingStatus": [
+    {
+      "category": "Violation Notice",
+      "dueDate": "04/15/2025",
+      "assignedTo": "John Smith",
+      "status": "Completed",
+      "statusDate": "04/20/2025",
+      "statusBy": "Jane Doe",
+      "lines": { "Comment": "Follow-up scheduled" }
+    },
+    {
+      "category": "Inspection",
+      "dueDate": "05/01/2025",
+      "assignedTo": "Bob Jones",
+      "status": "Pending",
+      "statusDate": "05/02/2025",
+      "statusBy": "Alice Lee",
+      "lines": {}
+    }
+  ]
+}

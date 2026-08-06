@@ -1,6 +1,7 @@
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
+using Crawldad.Web.Infrastructure.Storage;
 using FluentValidation;
 using JasperFx.Events.Projections;
 using Marten;
@@ -18,10 +19,16 @@ public static class RunsModule
     /// <summary>Registers the <see cref="Run"/> snapshot on the shared <paramref name="lifecycle"/> (Inline under the test switch, Async in production).</summary>
     /// <param name="options">The Marten store options.</param>
     /// <param name="lifecycle">The shared projection lifecycle.</param>
-    public static void ConfigureMarten(StoreOptions options, ProjectionLifecycle lifecycle) =>
+    public static void ConfigureMarten(StoreOptions options, ProjectionLifecycle lifecycle)
+    {
         // Both enums declare Inline=0, Async=1 (SnapshotLifecycle has no Live, which P1 never selects), so the
         // ordinal cast is a branch-free, faithful mapping from the config-driven ProjectionLifecycle.
         options.Projections.Snapshot<Run>((SnapshotLifecycle)(int)lifecycle);
+
+        // The pure trace events (§13) carry no aggregate Apply, so Marten does not discover them from the Run
+        // snapshot — register them explicitly so the schema knows the types and old streams stay readable.
+        options.Events.AddEventTypes([typeof(LogEmitted), typeof(RunAttemptFailed)]);
+    }
 
     /// <summary>Registers the slice's services: the request validator and the browser-backend registry + P1 fake.</summary>
     /// <param name="services">The DI container.</param>
@@ -35,5 +42,11 @@ public static class RunsModule
         services.AddKeyedSingleton<IBrowserBackend>(
             "fake",
             static (_, _) => new FakeBrowserBackend(Path.Combine(AppContext.BaseDirectory, "Fixtures")));
+
+        // The download-sink seam (§9.3): a registry over keyed sinks. Phase 2 registers only the in-memory fake;
+        // Phase 4 adds presigned-URL / blob-store kinds. Content-addressed idempotency lives in the engine, so every
+        // sink kind inherits the exists-then-store short-circuit for free.
+        services.AddSingleton<IDownloadSinkRegistry, KeyedDownloadSinkRegistry>();
+        services.AddKeyedSingleton<IDownloadSink>("fake", static (_, _) => new FakeDownloadSink());
     }
 }
