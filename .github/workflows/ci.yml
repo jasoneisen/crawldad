@@ -1,0 +1,81 @@
+name: CI
+
+# The fast loop: build (warnings-as-errors), format-verify, and the full test suite under the 100% line+branch
+# coverage gate. Runs on every push/PR to main. It explicitly filters OUT the live canary (Category=LiveCanary) as
+# defense in depth — the canary already self-skips without CRAWLDAD_LIVE_CANARY=1 + CRAWLDAD_CANARY_LINK, so this loop
+# NEVER sends live third-party traffic. The canary lives in its own scheduled/manual workflow (canary.yml).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# One in-flight run per ref; a newer push cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    # Marten needs Postgres. Mapped to localhost:5432 on the runner VM; the connection string below points at it,
+    # overriding appsettings.json's devcontainer "Host=db".
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # ConnectionStrings__marten → ConnectionStrings:marten (read by GetConnectionString("marten")).
+      ConnectionStrings__marten: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
+      DOTNET_NOLOGO: "true"
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET (from global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore Crawldad.slnx
+
+      # Everything runs in DEBUG on purpose: the coverlet 100% line+branch gate is calibrated to Debug. Release IL
+      # optimizations reshape a couple of branches (e.g. in PayloadSemanticWalker) into forms coverlet cannot see as
+      # hit, so a Release coverage run reports a spurious < 100% even though every path is tested. Do not "upgrade"
+      # this to Release without also re-baselining the gate. warnings-as-errors + analyzers are config-agnostic, so
+      # Debug is a faithful compile gate too.
+
+      # Gate 1: compile with warnings-as-errors (analyzers + code style are errors via Directory.Build.props). 0/0.
+      # Also produces the test output the browser-install step needs.
+      - name: Build (warnings-as-errors)
+        run: dotnet build Crawldad.slnx -c Debug --no-restore -warnaserror
+
+      # Gate 3: formatting/style is clean.
+      - name: Format verify
+        run: dotnet format Crawldad.slnx --verify-no-changes --no-restore
+
+      # The real-browser tests in the fast loop (parity, local-adapter, leak) need Chromium. pwsh-free install via
+      # the vendored Playwright node driver in the just-built test output.
+      - name: Install Playwright Chromium
+        run: eng/install-browsers.sh Debug
+
+      # Gate 2: the full suite under the coverlet 100% line+branch gate (enforced by Crawldad.Tests.csproj). No
+      # --no-build: coverlet.msbuild instruments during the test build, so it must run the build. The --filter is
+      # belt-and-suspenders — the canary self-skips, and here it is not even collected.
+      - name: Test (100% coverage gate)
+        run: dotnet test Crawldad.slnx -c Debug --filter "Category!=LiveCanary"

@@ -25,10 +25,43 @@
     },
     "config": {
       "type": "object",
-      "description": "Session config (§8.1). Only `backend` (the adapter-resolution Expr) is required here; the launch/context/route/retry blocks are accepted as-is.",
+      "description": "Session config (§8.1). Only `backend` (the adapter-resolution Expr) is required; every other block is optional and defaults per §8.1. The launch/context/route blocks become the SessionPolicy a real adapter applies (§9.2); `retry` drives the resilience layer (§8.3).",
       "required": ["backend"],
+      "additionalProperties": false,
       "properties": {
-        "backend": { "type": "string", "description": "Expr resolving to the { adapter, options } backend binding (§9)." }
+        "backend": { "type": "string", "description": "Expr resolving to the { adapter, options } backend binding (§9)." },
+        "defaultTimeoutMs": { "type": "integer", "minimum": 0, "description": "Context default timeout and the interpreter's timeout-hierarchy floor (§8.4); 120000 when absent." },
+        "launch": {
+          "type": "object", "additionalProperties": false, "description": "Browser launch options passed to a launching backend (§9.2).",
+          "properties": { "args": { "type": "array", "items": { "type": "string" }, "description": "Chromium launch args (e.g. --disable-web-security)." } }
+        },
+        "context": {
+          "type": "object", "additionalProperties": false, "description": "Browser context options applied at connect (§9.2).",
+          "properties": { "bypassCsp": { "type": "boolean", "description": "Bypass Content-Security-Policy (BypassCSP)." } }
+        },
+        "route": {
+          "type": "object", "additionalProperties": false, "description": "Request-interception policy applied per page (§8.1): abort by host/resource type, else cache, else throttle.",
+          "properties": {
+            "blockHosts": { "type": "array", "items": { "type": "string" }, "description": "Hosts whose requests are aborted." },
+            "blockResourceTypes": { "type": "array", "items": { "type": "string" }, "description": "Playwright resource types aborted wholesale (image/media/font)." },
+            "cacheResourceTypes": { "type": "array", "items": { "type": "string" }, "description": "Resource types served from the cross-run asset cache (stylesheet/script)." },
+            "cacheUrlSuffixes": { "type": "array", "items": { "type": "string" }, "description": "URL suffixes served from the cache (.html/.js)." },
+            "throttle": {
+              "type": "object", "additionalProperties": false, "description": "Global serialized throttle for non-cached requests.",
+              "properties": { "minIntervalMs": { "type": "integer", "minimum": 0, "description": "Minimum spacing between non-cached requests; 0 disables throttling." } }
+            }
+          }
+        },
+        "retry": {
+          "type": "object", "additionalProperties": false, "description": "Operation-level resilience (§8.3), wrapping the whole program.",
+          "properties": {
+            "maxAttempts": { "type": "integer", "minimum": 1, "description": "Maximum attempts (Polly-style)." },
+            "delayMs": { "type": "integer", "minimum": 0, "description": "Delay between attempts." },
+            "backoff": { "type": "string", "description": "Backoff strategy (e.g. constant)." },
+            "retryOn": { "type": "array", "items": { "type": "string" }, "description": "The only retryable conditions (timeout/pageCrashed); everything else is terminal." },
+            "onPageCrashed": { "type": "string", "description": "Page-crash handling (reopenPage → close+reopen on the same context, §3.6)." }
+          }
+        }
       }
     },
     "vars": {

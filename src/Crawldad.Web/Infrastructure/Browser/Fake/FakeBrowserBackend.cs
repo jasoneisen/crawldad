@@ -11,10 +11,13 @@ internal sealed class FakeBrowserBackend(string fixturesRoot) : IBrowserBackend
     /// <summary>The most recently connected session — a white-box hook for tests to inspect the final DOM.</summary>
     internal FakeBrowserSession? LastSession { get; private set; }
 
-    public Task<IBrowserSession> ConnectAsync(BackendBinding binding, CancellationToken ct)
+    public Task<IBrowserSession> ConnectAsync(BackendBinding binding, SessionPolicy policy, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(binding);
 
+        // The record/replay fake ignores the §8.1 policy: it does no launching, no context options, and no request
+        // interception (there is no network). The interpreter still reads policy.DefaultTimeoutMs itself for the fake
+        // path, and the fake models no per-page timeouts, so there is nothing here to honour.
         var fixtureName = binding.Options?.GetValueOrDefault("fixture") as string;
         if (fixtureName is null)
         {
@@ -39,6 +42,12 @@ internal sealed class FakeBrowserSession(FakeManifest manifest) : IBrowserSessio
 {
     private readonly Dictionary<FakeTransition, int> _injectAttempts = new();
     private readonly List<FakePageHandle> _pages = [];
+
+    /// <summary>The fake's region tag — a constant, since the fake serves fixtures with no real backend region (§9.1).</summary>
+    public string Region => "fake";
+
+    /// <summary>Always 0 — the fake does no request interception, so there are no route-cache hits to report (§10).</summary>
+    public int CacheHits => 0;
 
     /// <summary>The manifest driving this session's pages.</summary>
     internal FakeManifest Manifest => manifest;

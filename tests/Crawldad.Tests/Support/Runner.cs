@@ -71,7 +71,7 @@ internal static class Runner
     public static async Task<FakePageHandle> FakePageAsync(string fixture = "caphome-search")
     {
         var backend = new FakeBrowserBackend(FixturesRoot);
-        var session = await backend.ConnectAsync(FakeBinding(fixture), CancellationToken.None);
+        var session = await backend.ConnectAsync(FakeBinding(fixture), SessionPolicy.Default, CancellationToken.None);
         return (FakePageHandle)await session.NewPageAsync(CancellationToken.None);
     }
 

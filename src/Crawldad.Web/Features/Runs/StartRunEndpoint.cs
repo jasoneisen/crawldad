@@ -4,6 +4,7 @@ using System.Text.Json;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Infrastructure.Browser;
+using Crawldad.Web.Infrastructure.Security;
 using Crawldad.Web.Infrastructure.Storage;
 using Marten;
 using Wolverine.Http;
@@ -24,6 +25,8 @@ public static class StartRunEndpoint
     /// <param name="session">The request-scoped Marten session (Wolverine tracked-session compatible).</param>
     /// <param name="registry">Resolves the backend adapter named by the payload's <c>config.backend</c>.</param>
     /// <param name="sinks">Resolves the download sink named by a <c>download.to</c> target's <c>kind</c> (§9.3).</param>
+    /// <param name="scrubber">Redacts credentials from every persisted event and the response (§12).</param>
+    /// <param name="secretScope">The per-run secret registry the backend adapter registers the resolved credential into (§12).</param>
     /// <param name="clock">The time seam for event timestamps and duration.</param>
     /// <param name="ct">Cancels the run.</param>
     /// <returns>The §10 run response.</returns>
@@ -33,6 +36,8 @@ public static class StartRunEndpoint
         IDocumentSession session,
         IBrowserBackendRegistry registry,
         IDownloadSinkRegistry sinks,
+        CredentialScrubber scrubber,
+        IRunSecretScope secretScope,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -40,27 +45,35 @@ public static class StartRunEndpoint
         var input = JsonValues.FromJson(request.Inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
         var payloadName = request.Payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
 
+        // Open the per-run secret scope for the whole run: the backend adapter registers the resolved credential into it
+        // at connect (§12), so the sinks below scrub even free-form text that echoes the raw secret. Disposal clears it,
+        // so no secret outlives the run.
+        using var runSecrets = secretScope.Begin();
+
         session.Events.StartStream<Run>(
             runId,
-            new RunStarted(payloadName, ComputeScriptHash(request.Payload), clock.GetUtcNow(), [.. input.Keys]));
+            RunEventScrubber.Scrub(new RunStarted(payloadName, ComputeScriptHash(request.Payload), clock.GetUtcNow(), [.. input.Keys]), scrubber));
 
         var outcome = await new RunInterpreter(request.Payload, input, registry, sinks, clock).RunAsync(ct);
 
         // The interpreter's trace events (LogEmitted/RunAttemptFailed) land between RunStarted and the terminal event,
-        // in occurrence order — part of the run's observable trace whether it ultimately succeeds or fails (§13).
+        // in occurrence order — part of the run's observable trace whether it ultimately succeeds or fails (§13). Each is
+        // scrubbed at this single append chokepoint, so nothing credential-bearing is persisted.
         foreach (var traceEvent in outcome.Events)
         {
-            session.Events.Append(runId, traceEvent);
+            session.Events.Append(runId, RunEventScrubber.Scrub(traceEvent, scrubber));
         }
 
+        // Scrub the failure once, then use the same value for the persisted event and the §10 response.
+        var failure = outcome.Failure is null ? null : RunEventScrubber.ScrubFailure(outcome.Failure, scrubber);
         object finished = outcome.Status == RunStatus.Succeeded
             ? new RunSucceeded(outcome.Stats, clock.GetUtcNow())
-            : new RunFailed(outcome.Failure!, outcome.Stats, clock.GetUtcNow());
+            : new RunFailed(failure!, outcome.Stats, clock.GetUtcNow());
         session.Events.Append(runId, finished);
 
         await session.SaveChangesAsync(ct);
 
-        return new RunResponse(runId, outcome.Status, outcome.Result, outcome.Failure, outcome.Stats);
+        return new RunResponse(runId, outcome.Status, scrubber.ScrubJson(outcome.Result), failure, outcome.Stats);
     }
 
     private static string ComputeScriptHash(JsonElement payload) =>

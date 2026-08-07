@@ -1,10 +1,15 @@
 using Crawldad.Contracts;
 using Crawldad.Web.Features.Payloads;
 using Crawldad.Web.Features.Runs;
+using Crawldad.Web.Infrastructure.Security;
 using JasperFx;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Marten;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Wolverine;
 using Wolverine.FluentValidation;
 using Wolverine.Http;
@@ -78,13 +83,26 @@ public static class HostConfiguration
         builder.Services.AddProblemDetails();
 
         // Per-slice service registration (validators + infrastructure seams). Each slice owns its DI, mirroring the
-        // foundation; the Runs slice registers the POST /runs validator and the browser-backend seam, and the
-        // Payloads slice registers the POST /payloads boundary validator.
+        // foundation; the Runs slice registers the POST /runs validator and the browser-backend seam (including the
+        // credential scrubber + per-run secret scope, §12), and the Payloads slice registers the POST /payloads validator.
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
-
+        ScrubAllLogOutput(builder.Services);
         return builder;
     }
+
+    // Route ALL log output through the credential scrubber (§12): decorate the host's ILoggerFactory so every category's
+    // logger — application, Wolverine, Marten, ASP.NET — scrubs its rendered message before any sink writes it. Wrapping
+    // the factory (the single point every ILogger/ILogger<T> is created from) is the central chokepoint, not per-call-site
+    // discipline; the inner factory is built from the resolved provider set at first use, so providers registered after
+    // this point are wrapped too. CredentialScrubber is registered by RunsModule.AddRunsServices above.
+    private static void ScrubAllLogOutput(IServiceCollection services) =>
+        services.Replace(ServiceDescriptor.Singleton<ILoggerFactory>(sp => new ScrubbingLoggerFactory(
+            new LoggerFactory(
+                sp.GetServices<ILoggerProvider>(),
+                sp.GetRequiredService<IOptionsMonitor<LoggerFilterOptions>>(),
+                sp.GetService<IOptions<LoggerFactoryOptions>>()),
+            sp.GetRequiredService<CredentialScrubber>())));
 
     public static WebApplication MapCrawldadPlatform(this WebApplication app)
     {

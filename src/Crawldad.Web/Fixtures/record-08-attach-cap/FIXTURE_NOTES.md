@@ -19,7 +19,10 @@ The `do…while` therefore advances every iteration: `attachmentPagesVisited` = 
 `Attachment pagination hit safety cap (50 pages) for {link}` (`:616-618`) and the loop exits. The run
 **succeeds** with a complete `RecordScrapedV1` (attachments empty). The loop's generic `maxIterations`
 (100000) is never the limiter — the domain cap (`< 50`) stops it first. The page-number `waitFor` is a
-no-op "visible" wait in the fake, so the SelectedPageButton text is irrelevant.
+no-op "visible" wait in the fake, so the SelectedPageButton text is irrelevant to the fake run. Under
+**real Chromium** (Phase 4 WP2 parity) that `waitFor` genuinely waits, so the fixture site renders the
+SelectedPageButton to the real pagination position (+1 per in-frame nav) — the static `1` here is
+untouched (it feeds only the fake); see `tests/Crawldad.Tests/ACCEPTANCE.md` § Phase 4 WP2.
 
 ## Other regions
 3-branch address `900 TENANT WAY / "" / LOUISVILLE, KY 40215`; one 3-line owner `OCCUPANCY HOLDINGS`;

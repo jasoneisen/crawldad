@@ -11,8 +11,11 @@ public interface IBrowserBackend
 {
     /// <summary>Establishes a live connection for the binding and returns a session to open pages on.</summary>
     /// <param name="binding">Adapter id + credential reference + provider options (§9.1).</param>
+    /// <param name="policy">The §8.1 launch/context/route policy applied on top of the backend context (§9.2). A real
+    /// adapter applies the launch/context options at connect and the route policy per new page; the record/replay fake
+    /// ignores it (the interpreter still reads <see cref="SessionPolicy.DefaultTimeoutMs"/> itself for the fake path).</param>
     /// <param name="ct">Cancels the connect attempt.</param>
-    Task<IBrowserSession> ConnectAsync(BackendBinding binding, CancellationToken ct);
+    Task<IBrowserSession> ConnectAsync(BackendBinding binding, SessionPolicy policy, CancellationToken ct);
 }
 
 /// <summary>
@@ -22,6 +25,20 @@ public interface IBrowserBackend
 /// </summary>
 public interface IBrowserSession : IAsyncDisposable
 {
+    /// <summary>
+    /// The backend region this session runs in (a binding option or the provider's session-create response, §9.1).
+    /// Recorded for the cache-locality telemetry (the asset cache is keyed within region) and surfaced for later run
+    /// stats; the fake reports <c>"fake"</c>.
+    /// </summary>
+    string Region { get; }
+
+    /// <summary>
+    /// The number of §8.1 route-cache <b>hits</b> served to this session's pages so far (a request whose asset was
+    /// already in the cross-run cache, so no origin fetch occurred). Backs <c>stats.cacheHits</c> (§10); always 0 for
+    /// the fake and for backends without the route policy applied.
+    /// </summary>
+    int CacheHits { get; }
+
     /// <summary>Opens a fresh page/tab in this session.</summary>
     /// <param name="ct">Cancels opening the page.</param>
     Task<IPageHandle> NewPageAsync(CancellationToken ct);

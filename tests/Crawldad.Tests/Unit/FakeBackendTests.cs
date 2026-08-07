@@ -181,7 +181,7 @@ public class FakeBackendTests
         // read via `table tr td`, so without the ':scope' anchoring the leftmost `table` would match the base table and
         // read its own wrapper row. This pins the fix that keeps the owner-region reads faithful to the reference.
         var backend = new FakeBrowserBackend(Runner.FixturesRoot);
-        await using var session = await backend.ConnectAsync(Runner.FakeBinding("record-01-full-suburban"), CapHome.Ct);
+        await using var session = await backend.ConnectAsync(Runner.FakeBinding("record-01-full-suburban"), SessionPolicy.Default, CapHome.Ct);
         var page = await session.NewPageAsync(CapHome.Ct);
 
         var ownerBlock = page.Locator(
@@ -274,10 +274,10 @@ public class FakeBackendTests
         var backend = new FakeBrowserBackend(Runner.FixturesRoot);
 
         await Should.ThrowAsync<FakeBackendException>(async () =>
-            await backend.ConnectAsync(new BackendBinding("fake"), CapHome.Ct)); // no Options ⇒ no fixture
+            await backend.ConnectAsync(new BackendBinding("fake"), SessionPolicy.Default, CapHome.Ct)); // no Options ⇒ no fixture
 
         await Should.ThrowAsync<FakeBackendException>(async () =>
-            await backend.ConnectAsync(Runner.FakeBinding("no-such-fixture"), CapHome.Ct)); // fixture dir missing
+            await backend.ConnectAsync(Runner.FakeBinding("no-such-fixture"), SessionPolicy.Default, CapHome.Ct)); // fixture dir missing
     }
 
     [Fact]
@@ -296,7 +296,9 @@ public class FakeBackendTests
     public async Task Session_disposes_cleanly()
     {
         var backend = new FakeBrowserBackend(Runner.FixturesRoot);
-        var session = await backend.ConnectAsync(Runner.FakeBinding("caphome-search"), CapHome.Ct);
+        var session = await backend.ConnectAsync(Runner.FakeBinding("caphome-search"), SessionPolicy.Default, CapHome.Ct);
+        session.Region.ShouldBe("fake"); // constant region tag; no route cache ⇒ no hits (§9.1/§10)
+        session.CacheHits.ShouldBe(0);
         await Should.NotThrowAsync(async () => await session.DisposeAsync());
     }
 }

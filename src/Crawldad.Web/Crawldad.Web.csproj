@@ -10,6 +10,8 @@
     <PackageReference Include="WolverineFx.RuntimeCompilation" />
     <!-- Record/replay fake backend + the read-only DOM builtins parse captured HTML with AngleSharp. -->
     <PackageReference Include="AngleSharp" />
+    <!-- Phase 4 real backend adapters (local/browserless/browserbase) wrap Playwright for .NET. -->
+    <PackageReference Include="Microsoft.Playwright" />
     <!-- Payload validation-at-save (§12): enforces schema/crawldad-1.schema.json against saved payloads. -->
     <PackageReference Include="JsonSchema.Net" />
   </ItemGroup>

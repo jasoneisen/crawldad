@@ -22,9 +22,13 @@
   </ItemGroup>
 
   <ItemGroup Label="Browser / DOM">
-    <!-- Pre-declared for a later work package: the expression evaluator's read-only DOM builtins and the
-         record/replay fake backend parse captured HTML with AngleSharp. Not referenced by any project yet. -->
+    <!-- The expression evaluator's read-only DOM builtins and the record/replay fake backend parse captured HTML
+         with AngleSharp. -->
     <PackageVersion Include="AngleSharp" Version="1.7.1" />
+    <!-- Phase 4 real backend adapters wrap Playwright for .NET 1:1 (the shared PlaywrightBrowserSession and the
+         local/browserless/browserbase adapters). Pinned to 1.61.0 — the Chromium headless-shell/full v1228 build
+         (Chrome 149) is pre-installed under ~/.cache/ms-playwright for this line. -->
+    <PackageVersion Include="Microsoft.Playwright" Version="1.61.0" />
   </ItemGroup>
 
   <ItemGroup Label="Validation">

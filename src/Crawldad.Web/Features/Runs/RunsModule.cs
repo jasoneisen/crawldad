@@ -1,10 +1,13 @@
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
+using Crawldad.Web.Infrastructure.Browser.Real;
+using Crawldad.Web.Infrastructure.Security;
 using Crawldad.Web.Infrastructure.Storage;
 using FluentValidation;
 using JasperFx.Events.Projections;
 using Marten;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Web.Features.Runs;
@@ -36,17 +39,65 @@ public static class RunsModule
     {
         services.AddScoped<IValidator<StartRunRequest>, StartRunRequestValidator>();
 
-        // The backend seam: a registry over keyed adapters. Phase 1 registers only the record/replay fake, reading
-        // shipped fixtures from the app's output directory; Phase 4 adds real adapters with more AddKeyedSingleton lines.
+        // The backend seam: a registry over keyed adapters. Phase 1 registered only the record/replay fake, reading
+        // shipped fixtures from the app's output directory; Phase 4 adds the three real adapters beside it.
         services.AddSingleton<IBrowserBackendRegistry, KeyedBrowserBackendRegistry>();
         services.AddKeyedSingleton<IBrowserBackend>(
             "fake",
             static (_, _) => new FakeBrowserBackend(Path.Combine(AppContext.BaseDirectory, "Fixtures")));
+
+        AddRealBrowserBackends(services);
 
         // The download-sink seam (§9.3): a registry over keyed sinks. Phase 2 registers only the in-memory fake;
         // Phase 4 adds presigned-URL / blob-store kinds. Content-addressed idempotency lives in the engine, so every
         // sink kind inherits the exists-then-store short-circuit for free.
         services.AddSingleton<IDownloadSinkRegistry, KeyedDownloadSinkRegistry>();
         services.AddKeyedSingleton<IDownloadSink>("fake", static (_, _) => new FakeDownloadSink());
+    }
+
+    // The Phase 4 real backend adapters (§9) and the shared policy-layer singletons they compose. The credential-free
+    // "local" adapter, the native "browserless" adapter, and the CDP "browserbase" adapter register beside the fake;
+    // the Playwright driver, the cross-run asset cache, and the global throttle are process-wide singletons shared by
+    // all three. Endpoint/API bases default to production and are overridable via configuration (tests point them at a
+    // local Playwright server / a local session-create stub, so no live third-party traffic is ever made).
+    private static void AddRealBrowserBackends(IServiceCollection services)
+    {
+        services.AddHttpClient(); // IHttpClientFactory for the browserbase session-create call
+        services.AddSingleton<ISecretStore, ConfigurationSecretStore>();
+
+        // The credential-scrubbing boundary (§12, WP3): the per-run secret registry the adapters register the resolved
+        // credential into, and the single scrubber every sink (events, response, logs) consults. Registered here so any
+        // container that wires the adapters (the host, the DI-registration unit test) also has the scope they resolve.
+        services.AddSingleton<IRunSecretScope, AmbientRunSecretScope>();
+        services.AddSingleton<CredentialScrubber>();
+
+        services.AddSingleton<IPlaywrightProvider, PlaywrightProvider>();
+        services.AddSingleton<IAssetCache, InMemoryAssetCache>();
+        // Throttling is inherently wall-clock — pin the system clock so a frozen test TimeProvider never freezes it.
+        services.AddSingleton<IThrottleGate>(static _ => new ThrottleGate(TimeProvider.System));
+
+        services.AddKeyedSingleton<IBrowserBackend>("local", static (sp, _) => new LocalChromiumBackend(
+            sp.GetRequiredService<IPlaywrightProvider>(),
+            sp.GetRequiredService<IAssetCache>(),
+            sp.GetRequiredService<IThrottleGate>()));
+
+        services.AddKeyedSingleton<IBrowserBackend>("browserless", static (sp, _) => new BrowserlessBackend(
+            sp.GetRequiredService<IPlaywrightProvider>(),
+            sp.GetRequiredService<ISecretStore>(),
+            sp.GetRequiredService<IRunSecretScope>(),
+            sp.GetRequiredService<IAssetCache>(),
+            sp.GetRequiredService<IThrottleGate>(),
+            sp.GetRequiredService<IConfiguration>()["Crawldad:Browserless:EndpointTemplate"]
+                ?? BrowserlessBackend.DefaultEndpointTemplate));
+
+        services.AddKeyedSingleton<IBrowserBackend>("browserbase", static (sp, _) => new BrowserbaseBackend(
+            sp.GetRequiredService<IPlaywrightProvider>(),
+            sp.GetRequiredService<ISecretStore>(),
+            sp.GetRequiredService<IRunSecretScope>(),
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<IAssetCache>(),
+            sp.GetRequiredService<IThrottleGate>(),
+            sp.GetRequiredService<IConfiguration>()["Crawldad:Browserbase:ApiBaseUrl"]
+                ?? BrowserbaseBackend.DefaultApiBaseUrl));
     }
 }

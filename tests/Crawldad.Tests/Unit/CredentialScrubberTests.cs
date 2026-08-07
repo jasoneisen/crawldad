@@ -1,0 +1,178 @@
+using System.Text.Json;
+using Crawldad.Tests.Support;
+using Crawldad.Web.Infrastructure.Security;
+
+namespace Crawldad.Tests.Unit;
+
+/// <summary>
+/// Negative-space tests for the <see cref="CredentialScrubber"/> primitive (§12, WP3): the known-param rule across
+/// name/case/encoding variants and wss URLs, the exact live-secret rule, the no-false-positive guarantee on ordinary
+/// text (so the acceptance goldens are untouched), and idempotence.
+/// </summary>
+public class CredentialScrubberTests
+{
+    private const string _redacted = CredentialScrubber.Redaction;
+
+    private static CredentialScrubber Scrubber(params string[] liveSecrets) => new(new StubSecretScope(liveSecrets));
+
+    // ----- known credential params -------------------------------------------
+
+    [Theory]
+    [InlineData("token")]
+    [InlineData("apiKey")]
+    [InlineData("signingKey")]
+    public void Redacts_each_known_param_value(string param)
+    {
+        var scrubbed = Scrubber().Scrub($"prefix {param}=bb_live_SECRETvalue123 suffix");
+
+        scrubbed.ShouldBe($"prefix {param}={_redacted} suffix");
+    }
+
+    [Fact]
+    public void Redacts_a_token_in_a_wss_connect_url_but_keeps_the_rest()
+    {
+        var scrubbed = Scrubber().Scrub(
+            "connecting wss://production-lon.browserless.io/chromium/playwright?token=tok_SECRET_123&blockAds=true");
+
+        // scheme/host/path and the non-secret blockAds param survive; only the token value is gone.
+        scrubbed.ShouldBe(
+            $"connecting wss://production-lon.browserless.io/chromium/playwright?token={_redacted}&blockAds=true");
+        scrubbed.ShouldNotContain("tok_SECRET_123");
+    }
+
+    [Fact]
+    public void Redacts_the_apiKey_embedded_in_a_browserbase_connect_url_and_keeps_the_session_id()
+    {
+        // The verified ship-blocker shape: connectUrl embeds the account apiKey; sessionId is ephemeral, not a secret.
+        var scrubbed = Scrubber().Scrub("wss://connect.browserbase.com?apiKey=bb_live_ACCOUNTKEY&sessionId=ses_abc123");
+
+        scrubbed.ShouldBe($"wss://connect.browserbase.com?apiKey={_redacted}&sessionId=ses_abc123");
+        scrubbed.ShouldNotContain("bb_live_ACCOUNTKEY");
+    }
+
+    [Theory]
+    [InlineData("?APIKEY=SECRET", "?APIKEY=")]        // upper-case name
+    [InlineData("&Token=SECRET", "&Token=")]          // mixed-case name
+    [InlineData("token=bb%2Flive%2FSECRET", "token=")] // url-encoded value
+    public void Param_matching_is_case_insensitive_and_encoding_agnostic(string input, string keptPrefix)
+    {
+        var scrubbed = Scrubber().Scrub(input);
+
+        scrubbed.ShouldBe(keptPrefix + _redacted);
+        scrubbed.ShouldNotContain("SECRET");
+    }
+
+    [Fact]
+    public void Redacts_a_param_embedded_in_json_text()
+    {
+        var scrubbed = Scrubber().Scrub("""{"connectUrl":"wss://h/x?apiKey=bb_live_INJSON"}""");
+
+        scrubbed.ShouldContain($"apiKey={_redacted}");
+        scrubbed.ShouldNotContain("bb_live_INJSON");
+    }
+
+    // ----- no false positives (goldens must be untouched) --------------------
+
+    [Theory]
+    [InlineData("the token was rotated at midnight")]  // the word "token" without =value
+    [InlineData("apiKeys are configured per tenant")]   // "apiKey" as a plain word
+    [InlineData("token=")]                               // a bare param with no value
+    [InlineData("https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00001")]
+    public void Leaves_ordinary_text_unchanged(string text)
+    {
+        var scrubbed = Scrubber().Scrub(text);
+
+        scrubbed.ShouldBe(text);
+        scrubbed.ShouldNotContain(_redacted);
+    }
+
+    // ----- exact live-secret rule --------------------------------------------
+
+    [Fact]
+    public void Redacts_a_live_run_secret_wherever_it_appears()
+    {
+        const string Secret = "bb_live_LEAKCANARY_exactmatch_0123456789";
+
+        var scrubbed = Scrubber(Secret).Scrub($"the scraped page echoed {Secret} in its body");
+
+        scrubbed.ShouldBe($"the scraped page echoed {_redacted} in its body");
+    }
+
+    [Fact]
+    public void Does_not_exact_scrub_a_secret_below_the_length_floor()
+    {
+        // A pathologically short "secret" must not mangle every occurrence of a common substring.
+        var shortSecret = new string('a', CredentialScrubber.MinExactScrubLength - 1);
+
+        var scrubbed = Scrubber(shortSecret).Scrub($"value {shortSecret} here");
+
+        scrubbed.ShouldBe($"value {shortSecret} here");
+    }
+
+    [Fact]
+    public void Exact_secret_in_a_param_position_is_redacted_once_not_doubly()
+    {
+        const string Secret = "tok_LEAKCANARY_longenough_123456";
+
+        var scrubbed = Scrubber(Secret).Scrub($"token={Secret}");
+
+        scrubbed.ShouldBe($"token={_redacted}");
+    }
+
+    // ----- idempotence -------------------------------------------------------
+
+    [Theory]
+    [InlineData("wss://h/x?apiKey=bb_live_abc&sessionId=ses_1")]
+    [InlineData("token=tok_abc123&next=1")]
+    public void Param_scrub_is_idempotent(string input)
+    {
+        var scrubber = Scrubber();
+        var once = scrubber.Scrub(input);
+        var twice = scrubber.Scrub(once);
+
+        twice.ShouldBe(once);
+    }
+
+    [Fact]
+    public void Exact_scrub_is_idempotent()
+    {
+        const string Secret = "bb_live_LEAKCANARY_idempotent_0123456789";
+        var scrubber = Scrubber(Secret);
+
+        var once = scrubber.Scrub($"echo {Secret} and token={Secret}");
+        var twice = scrubber.Scrub(once);
+
+        twice.ShouldBe(once);
+        twice.ShouldNotContain(Secret);
+    }
+
+    // ----- JSON result scrubbing ---------------------------------------------
+
+    [Fact]
+    public void ScrubJson_returns_null_for_a_null_element() =>
+        Scrubber().ScrubJson(null).ShouldBeNull();
+
+    [Fact]
+    public void ScrubJson_is_a_no_op_on_credential_free_json()
+    {
+        using var doc = JsonDocument.Parse("""{"newLinks":["/a","/b"],"crawledToEnd":true}""");
+        var raw = doc.RootElement.GetRawText();
+
+        var scrubbed = Scrubber().ScrubJson(doc.RootElement);
+
+        scrubbed.ShouldNotBeNull();
+        scrubbed.Value.GetRawText().ShouldBe(raw); // byte-identical → goldens never change
+    }
+
+    [Fact]
+    public void ScrubJson_redacts_a_live_secret_echoed_into_a_result()
+    {
+        const string Secret = "bb_live_LEAKCANARY_inresult_0123456789";
+        using var doc = JsonDocument.Parse($$"""{"scraped":"{{Secret}}"}""");
+
+        var scrubbed = Scrubber(Secret).ScrubJson(doc.RootElement);
+
+        scrubbed.ShouldNotBeNull();
+        scrubbed.Value.GetProperty("scraped").GetString().ShouldBe(_redacted);
+    }
+}

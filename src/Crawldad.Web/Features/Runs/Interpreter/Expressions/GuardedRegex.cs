@@ -39,14 +39,37 @@ internal static class GuardedRegex
     /// <exception cref="ExpressionEvaluationException">When <paramref name="pattern"/> exceeds <see cref="MaxPatternLength"/> (<c>regex_too_large</c>).</exception>
     public static Regex Compile(string pattern)
     {
+        EnsureWithinSizeLimit(pattern);
+        return new Regex(pattern, RegexOptions.CultureInvariant, MatchTimeout);
+    }
+
+    /// <summary>
+    /// Size-guards <paramref name="pattern"/> (same <see cref="MaxPatternLength"/> cap) and returns a <see cref="Regex"/>
+    /// carrying <b>no .NET-specific options</b>, suitable for handing to an out-of-process matcher such as Playwright's
+    /// browser-side <c>filter.hasTextRegex</c> — which rejects options like <see cref="RegexOptions.CultureInvariant"/>.
+    /// The match-time guard is intentionally omitted (matching happens in the browser, not this process), so the size
+    /// cap remains the language-boundary guarantee (§7.2).
+    /// </summary>
+    /// <param name="pattern">The user-supplied pattern.</param>
+    /// <returns>A size-guarded, option-free regex the browser engine can serialize.</returns>
+    /// <exception cref="ExpressionEvaluationException">When <paramref name="pattern"/> exceeds <see cref="MaxPatternLength"/> (<c>regex_too_large</c>).</exception>
+    public static Regex CompileForBrowser(string pattern)
+    {
+        EnsureWithinSizeLimit(pattern);
+        // No options flags (Playwright serializes RegexOptions to browser-side inline flags and rejects the ones the JS
+        // engine has no equivalent for, such as CultureInvariant); the match timeout is retained for the analyzer and is
+        // harmless — Playwright ignores it, matching in the browser.
+        return new Regex(pattern, RegexOptions.None, MatchTimeout);
+    }
+
+    private static void EnsureWithinSizeLimit(string pattern)
+    {
         if (pattern.Length > MaxPatternLength)
         {
             throw new ExpressionEvaluationException(
                 ExpressionErrorCodes.RegexTooLarge,
                 $"regex pattern is {pattern.Length} chars, exceeding the {MaxPatternLength}-char limit");
         }
-
-        return new Regex(pattern, RegexOptions.CultureInvariant, MatchTimeout);
     }
 
     /// <summary>Guarded <see cref="Regex.IsMatch(string)"/>: a match-time blow-up surfaces as terminal <c>regex_timeout</c>.</summary>

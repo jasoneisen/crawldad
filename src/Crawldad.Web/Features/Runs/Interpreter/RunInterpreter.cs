@@ -28,7 +28,8 @@ internal enum Flow
 /// construction (<c>comment</c> is a no-op). The whole program is wrapped in the retry/resilience layer (§8.3): a
 /// retryable failure (<c>timeout</c>/<c>pageCrashed</c>, or a retryable <c>fail</c>) re-runs the program with a fresh
 /// run scope on the same session — reopening and rebinding the page on a crash (§3.6) — until it succeeds, exhausts, or
-/// hits a terminal failure. Config's launch/context/route blocks are accepted but not acted on (later phases).
+/// hits a terminal failure. Config's §8.1 launch/context/route block is parsed into a <see cref="SessionPolicy"/> and
+/// handed to the backend at connect (§9.2); the record/replay fake ignores it, a real adapter applies it.
 /// </summary>
 internal sealed class RunInterpreter
 {
@@ -45,6 +46,7 @@ internal sealed class RunInterpreter
 
     private RunScope _scope;
     private IPageHandle _page = null!;
+    private IBrowserSession? _session;
     private int _steps;
     private int _requests;
     private int _downloads;
@@ -78,7 +80,9 @@ internal sealed class RunInterpreter
         try
         {
             ValidateProgram(); // §Deliverable 4: reject unknown head keys / missing maxIterations before any side effect
-            var policy = ParseRetryPolicy();
+            var retryPolicy = ParseRetryPolicy();
+            var sessionPolicy = SessionPolicy.FromConfig(_payload.GetProperty("config")); // §8.1 launch/context/route
+            _defaultTimeoutMs = sessionPolicy.DefaultTimeoutMs;
 
             var binding = await ResolveBackendAsync(ct);
             if (!_registry.TryResolve(binding.Adapter, out var backend))
@@ -86,13 +90,13 @@ internal sealed class RunInterpreter
                 throw new InterpreterException(InterpreterErrorCodes.UnknownBackendAdapter, $"no backend is registered for adapter '{binding.Adapter}'");
             }
 
-            await using var session = await backend.ConnectAsync(binding, ct);
+            await using var session = await backend.ConnectAsync(binding, sessionPolicy, ct);
+            _session = session; // surfaced for stats (region/cacheHits, §10)
             _page = await session.NewPageAsync(ct);
-            _defaultTimeoutMs = ReadDefaultTimeout();
 
             // Assign (don't return) inside the try so the setup catches below still apply, while the happy path falls
             // through to the return below — keeping the try's fall-through exercised.
-            outcome = await ExecuteWithRetryAsync(session, policy, startedAt, ct);
+            outcome = await ExecuteWithRetryAsync(session, retryPolicy, startedAt, ct);
         }
         catch (InterpreterException ex)
         {
@@ -108,6 +112,12 @@ internal sealed class RunInterpreter
         }
         catch (FakeBackendException ex)
         {
+            return Failed("terminal", "backend_unavailable", ex.Message, startedAt);
+        }
+        catch (BrowserConnectException ex)
+        {
+            // A real adapter could not connect (bad/absent credential, connect failure). Terminal, like the fake's
+            // setup fault. The message is already secret-free by construction (§12).
             return Failed("terminal", "backend_unavailable", ex.Message, startedAt);
         }
 
@@ -259,9 +269,6 @@ internal sealed class RunInterpreter
         var credentialRef = map.GetValueOrDefault("credentialRef") as string;
         return new BackendBinding(adapter, credentialRef, options);
     }
-
-    private int ReadDefaultTimeout() =>
-        _payload.GetProperty("config").TryGetProperty("defaultTimeoutMs", out var t) ? t.GetInt32() : 120000;
 
     private async ValueTask EvaluateVarsAsync(CancellationToken ct)
     {
@@ -791,7 +798,7 @@ internal sealed class RunInterpreter
         body.TryGetProperty("timeoutMs", out var t) ? t.GetInt32() : _defaultTimeoutMs;
 
     private RunStats Stats(DateTimeOffset startedAt) =>
-        new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, 0, _downloads);
+        new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, _session?.CacheHits ?? 0, _downloads);
 
     private RunOutcome Failed(string failureClass, string code, string message, DateTimeOffset startedAt) =>
         new(RunStatus.Failed, null, new RunFailureDetail(failureClass, code, message, new RunStepRef(_currentStepIndex, _currentKind)), Stats(startedAt), _events);

@@ -1,0 +1,92 @@
+name: Live canary
+
+# The nightly/manual drift signal (CRAWLDAD_PLAN.md Phase 4 + Testing strategy): scrape ONE real enforcement record
+# from the LIVE Accela portal and validate the RecordScrapedV1 shape. This is the ONLY workflow that sends live
+# third-party traffic, and it is NEVER triggered by push or pull_request — only the nightly schedule and manual
+# dispatch. A failed run (status != succeeded, or a broken shape) fails the job → that red check is the drift alert.
+on:
+  schedule:
+    # Nightly at 07:17 UTC. Off-peak, once a day — gentle by design (the payload also enforces the §8.1 2 s throttle).
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      link:
+        description: "Record link (a CapDetail.aspx URL). Overrides the CRAWLDAD_CANARY_LINK repo variable."
+        required: false
+        type: string
+      publishDate:
+        description: "Optional publish date bound to the record (YYYY-MM-DD)."
+        required: false
+        type: string
+      region:
+        description: "Optional region tag recorded on the run."
+        required: false
+        type: string
+
+# Concurrency 1 against the live site: a second canary (e.g. a manual run overlapping the nightly) queues behind the
+# running one instead of hitting the portal in parallel.
+concurrency:
+  group: live-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The hard opt-in the LiveCanaryFact gate checks. Present only in THIS workflow.
+      CRAWLDAD_LIVE_CANARY: "1"
+      # Dispatch inputs win; otherwise fall back to repo variables (Settings → Secrets and variables → Actions →
+      # Variables). The link is a public URL, so a repo variable is appropriate; use a secret if you prefer.
+      CRAWLDAD_CANARY_LINK: ${{ github.event.inputs.link || vars.CRAWLDAD_CANARY_LINK }}
+      CRAWLDAD_CANARY_PUBLISH_DATE: ${{ github.event.inputs.publishDate || vars.CRAWLDAD_CANARY_PUBLISH_DATE }}
+      CRAWLDAD_CANARY_REGION: ${{ github.event.inputs.region || vars.CRAWLDAD_CANARY_REGION }}
+      ConnectionStrings__marten: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
+      DOTNET_NOLOGO: "true"
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Surface a misconfigured canary (no link) as a warning rather than a silent forever-skip. Without a link the
+      # LiveCanaryFact self-skips, so the job still passes safely — but the maintainer should know it is not watching.
+      - name: Check configuration
+        run: |
+          if [ -z "${CRAWLDAD_CANARY_LINK}" ]; then
+            echo "::warning::CRAWLDAD_CANARY_LINK is not set (no dispatch input, no repo variable) — the live canary will SELF-SKIP and watch nothing. Set the CRAWLDAD_CANARY_LINK repo variable or pass the 'link' dispatch input."
+          else
+            echo "Live canary target configured."
+          fi
+
+      - name: Set up .NET (from global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Debug to match ci.yml (config is immaterial here — coverage is off — and it keeps one mental model).
+      - name: Build
+        run: dotnet build Crawldad.slnx -c Debug
+
+      - name: Install Playwright Chromium
+        run: eng/install-browsers.sh Debug
+
+      # Run ONLY the live canary. Coverage is off — a single-test run cannot meet the 100% gate (that gate is CI's).
+      # This is the real live hit: real Chromium, real network, §8.1 policy for real, concurrency 1. If
+      # CRAWLDAD_CANARY_LINK is unset the test self-skips and the job passes green (safe no-op).
+      - name: Live canary
+        run: dotnet test Crawldad.slnx -c Debug --filter "Category=LiveCanary" /p:CollectCoverage=false

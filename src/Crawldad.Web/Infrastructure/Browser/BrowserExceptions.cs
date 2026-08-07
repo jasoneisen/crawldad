@@ -44,6 +44,28 @@ public sealed class BrowserTimeoutException : BrowserException
 }
 
 /// <summary>
+/// A real adapter could not establish its backend session — a missing/unresolvable credential, or the underlying
+/// <c>connect</c>/<c>connectOverCDP</c> failing. Deliberately <b>not</b> a <see cref="BrowserException"/> (those are
+/// retryable page conditions): a connect failure is terminal (<c>backend_unavailable</c>, §8.3), classified by the
+/// interpreter's setup catch like the fake's <c>FakeBackendException</c>. Its message is <b>always</b> hand-written and
+/// carries <b>no</b> connect URL, token, or resolved secret (§12) — the raw provider fault (which can embed the
+/// credential in a <c>wss://…?token=</c> URL) is never wrapped into it.
+/// </summary>
+[SuppressMessage("Design", "CA1032:Implement standard exception constructors",
+    Justification = "A message is mandatory so run-failure surfacing (§10) always has one; a parameterless constructor would allow messageless connect faults.")]
+[SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
+    Justification = "See CA1032 justification.")]
+public sealed class BrowserConnectException : Exception
+{
+    /// <summary>Creates a connect failure carrying a mandatory, secret-free description.</summary>
+    /// <param name="message">A hand-written description with no credential material.</param>
+    public BrowserConnectException(string message)
+        : base(message)
+    {
+    }
+}
+
+/// <summary>
 /// The page crashed (the reference's <c>PlaywrightException</c> whose message starts <c>"Page crashed"</c>, §3.6). The
 /// retryable <c>pageCrashed</c> condition in the §8.3 taxonomy: when retried with <c>onPageCrashed: "reopenPage"</c>
 /// the interpreter closes the crashed page, opens a fresh one on the <b>same</b> session/context, and rebinds it
