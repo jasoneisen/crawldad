@@ -58,6 +58,10 @@ internal sealed class FakeBrowserSession(FakeManifest manifest) : IBrowserSessio
     /// <summary>The most recently opened page — a white-box hook for tests to read the (mutated) final DOM.</summary>
     internal FakePageHandle? LastPage { get; private set; }
 
+    /// <summary>Whether this session was torn down (<see cref="DisposeAsync"/>). A real adapter's dispose closes the remote
+    /// backend session, so the cancellation gate asserts this to prove a cancelled run left <b>no orphaned session</b> (§11).</summary>
+    internal bool Disposed { get; private set; }
+
     public Task<IPageHandle> NewPageAsync(CancellationToken ct)
     {
         var page = new FakePageHandle(this);
@@ -75,5 +79,9 @@ internal sealed class FakeBrowserSession(FakeManifest manifest) : IBrowserSessio
         return next;
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        Disposed = true;
+        return ValueTask.CompletedTask;
+    }
 }

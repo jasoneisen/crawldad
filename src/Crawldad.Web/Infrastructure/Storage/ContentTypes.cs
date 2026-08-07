@@ -1,0 +1,25 @@
+namespace Crawldad.Web.Infrastructure.Storage;
+
+/// <summary>
+/// Guesses a content type from a stored-blob name's extension, for the <c>Downloaded</c> trace event's
+/// <c>contentType</c> (§13). A best-effort observability hint over the engine's content-addressed stored name (whose
+/// extension comes from the download's suggested filename, §9.3) — not authoritative sniffing. Unknown extensions fall back
+/// to <c>application/octet-stream</c>.
+/// </summary>
+internal static class ContentTypes
+{
+    /// <summary>Maps a file name's extension to a content type (defaulting to <c>application/octet-stream</c>).</summary>
+    /// <param name="fileName">The stored-blob or suggested file name.</param>
+    /// <returns>The guessed content type.</returns>
+    public static string ForFile(string fileName) => Path.GetExtension(fileName).ToUpperInvariant() switch
+    {
+        ".PDF" => "application/pdf",
+        ".JPG" or ".JPEG" => "image/jpeg",
+        ".PNG" => "image/png",
+        ".HTML" or ".HTM" => "text/html",
+        ".CSV" => "text/csv",
+        ".JSON" => "application/json",
+        ".TXT" => "text/plain",
+        _ => "application/octet-stream",
+    };
+}

@@ -58,4 +58,10 @@
     <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Cap parallelism: the integration/parity/leak/durable collections each build an Alba host at fixture init, and 16-way
+       parallelism makes their schema migrations contend. A modest cap keeps the suite fast while the host builds don't race. -->
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

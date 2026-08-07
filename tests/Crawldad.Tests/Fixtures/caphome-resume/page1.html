@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<!-- Synthesized CapHome results grid — PAGE 1 of 3. See FIXTURE_NOTES.md.
+     Grid = 3 header + 4 data (indices 3..6) + 2 footer = 9 <tr>. Clean cells (no whitespace/entity
+     edge cases — those are covered by caphome-search); this fixture proves pagination + early-stop.
+     table.aca_pagination td:last-child HAS an <a>, so hasMorePages is true → click advances to page2. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Enforcement Search Results (1) - LJCMG</title></head>
+<body>
+  <div id="divGlobalLoading" style="display:none">Loading...</div>
+  <div id="ctl00_PlaceHolderMain_dgvPermitList">
+    <table id="ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList" class="ACA_GridView">
+      <tbody>
+        <tr class="ACA_GridHeader"><td colspan="7">Search Results</td></tr>
+        <tr class="ACA_GridHeader_Sort"><td colspan="7">Sort</td></tr>
+        <tr class="ACA_TabRow_Header">
+          <th></th><th>Date</th><th>Record Number</th><th>Record Type</th><th>Address</th><th>Status</th><th>Short Notes</th>
+        </tr>
+
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/01/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=p1-1">ENF-24-00101</a></td>
+          <td>Enforcement</td>
+          <td>101 A St</td>
+          <td>Open</td>
+          <td>note 1</td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>01/02/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=p1-2">ENF-24-00102</a></td>
+          <td>Enforcement</td>
+          <td>102 A St</td>
+          <td>Open</td>
+          <td>note 2</td>
+        </tr>
+        <tr class="ACA_TabRow_Odd">
+          <td><input type="checkbox" /></td>
+          <td>01/03/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=p1-3">ENF-24-00103</a></td>
+          <td>Enforcement</td>
+          <td>103 A St</td>
+          <td>Open</td>
+          <td>note 3</td>
+        </tr>
+        <tr class="ACA_TabRow_Even">
+          <td><input type="checkbox" /></td>
+          <td>01/04/2024</td>
+          <td><a href="/LJCMG/Cap/CapDetail.aspx?id=p1-4">ENF-24-00104</a></td>
+          <td>Enforcement</td>
+          <td>104 A St</td>
+          <td>Open</td>
+          <td>note 4</td>
+        </tr>
+
+        <tr class="ACA_GridFooter"><td colspan="7">Showing 1-4</td></tr>
+        <tr class="ACA_GridPagerRow"><td colspan="7">&nbsp;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Not the last page: td:last-child HAS an <a>, so hasMorePages is true. -->
+  <table class="aca_pagination">
+    <tbody>
+      <tr>
+        <td><span class="SelectedPageButton">1</span></td>
+        <td><a href="#page2">Next</a></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

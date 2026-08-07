@@ -225,6 +225,26 @@
     { "frame": { "var": "attFrame", "selector": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList" } },
     { "set": { "var": "attPagesVisited", "value": "0" } },
     { "loop": { "maxIterations": 100000, "while": "hasMoreAttachmentPages", "do": [
+      { "comment": "CHECKPOINT (§11) — the attachment page cursor. On resume the fresh session re-opens the record's attachments tab, re-binds the iframe (the pre-loop frame node is skipped), and fast-forwards to the checkpointed page with clicks only; already-hashed downloads short-circuit (§9.3), so no bytes re-transfer." },
+      { "checkpoint": { "name": "attachmentPage",
+          "cursor": "{ page: attPagesVisited }",
+          "resume": [
+            { "goto": { "url": "${input.link}" } },
+            { "waitForLoadState": { "state": "load" } },
+            { "addStyleTag": { "content": ".record-detail .record-main-section .record-tab-content { display: block !important; }" } },
+            { "click": { "selector": "#imgMoreDetail" } },
+            { "click": { "selector": { "title": "Record Info menu, press tab to expand" } } },
+            { "click": { "selector": { "title": "Attachments" } } },
+            { "waitForLoadState": { "state": "networkidle", "timeoutMs": 360000 } },
+            { "frame": { "var": "attFrame", "selector": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList" } },
+            { "loop": { "maxIterations": 100000,
+                "for": { "var": "fwd", "from": "0", "to": "checkpoint.page", "exclusiveTo": true },
+                "do": [
+                  { "locate": { "var": "fwdNext", "in": "attFrame", "selector": "#attachmentList_gdvAttachmentList > tbody > tr.ACA_Table_Pages table.aca_pagination > tbody > tr > td:last-child > a" } },
+                  { "click": { "selector": "fwdNext" } },
+                  { "waitFor": { "in": "attFrame", "selector": { "css": "table.aca_pagination span.SelectedPageButton", "filter": { "hasTextRegex": "^${fwd + 2}$" } }, "timeoutMs": 360000 } }
+                ] } }
+          ] } },
       { "locate": { "var": "attRows", "in": "attFrame", "selector": "#attachmentList_gdvAttachmentList > tbody > tr:not(.ACA_Table_Pages)" } },
       { "if": { "cond": "count(attRows) > 1", "then": [
         { "loop": { "maxIterations": 100000,

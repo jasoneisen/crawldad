@@ -166,5 +166,7 @@ public class RetryTests
         public Task<IDownloadHandle> RunAndWaitForDownloadAsync(Func<Task> trigger, int? timeoutMs, CancellationToken ct) => throw new NotSupportedException();
 
         public Task CloseAsync(CancellationToken ct) => throw new BrowserPageCrashedException("cannot close a crashed page");
+
+        public Task<byte[]> ScreenshotAsync(CancellationToken ct) => throw new NotSupportedException();
     }
 }

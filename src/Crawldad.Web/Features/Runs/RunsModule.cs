@@ -29,8 +29,29 @@ public static class RunsModule
         options.Projections.Snapshot<Run>((SnapshotLifecycle)(int)lifecycle);
 
         // The pure trace events (§13) carry no aggregate Apply, so Marten does not discover them from the Run
-        // snapshot — register them explicitly so the schema knows the types and old streams stay readable.
-        options.Events.AddEventTypes([typeof(LogEmitted), typeof(RunAttemptFailed)]);
+        // snapshot — register them explicitly so the schema knows the types and old streams stay readable. The P5
+        // checkpoint/resume/cancellation-request markers (§11) join them; RunCancelled has a Run Apply but is listed for
+        // parity so the whole terminal set is explicit.
+        options.Events.AddEventTypes([
+            typeof(LogEmitted), typeof(RunAttemptFailed),
+            typeof(RunCheckpointReached), typeof(RunResumed), typeof(RunCancellationRequested), typeof(RunCancelled),
+        ]);
+
+        // The WP3 semantic step-trace events (§13): appended only on the executor path, consumed by the SSE tail and the
+        // RunTimeline projection. Registered explicitly for the same reason (no aggregate Apply on the Run snapshot) so the
+        // schema knows the types and old runs stay readable (§14.3 event-schema versioning).
+        options.Events.AddEventTypes([
+            typeof(RunSessionOpened), typeof(StepStarted), typeof(Navigated), typeof(Clicked),
+            typeof(Waited), typeof(Extracted), typeof(Downloaded), typeof(StepFailed),
+        ]);
+
+        // The RunTimeline observability read model (§13): the ordered step list + durations + refs + region, folded from the
+        // step trace on the shared lifecycle (async in production — the lag-tolerant dashboard view, §11; inline under the test switch).
+        options.Projections.Add<RunTimelineProjection>(lifecycle);
+
+        // The executor-owned run-progress read model (§11): the pollable state + the durable resume cursor. A plain Marten
+        // document (not a projection) written solely by the executor's own sessions.
+        options.Schema.For<RunProgress>();
     }
 
     /// <summary>Registers the slice's services: the request validator and the browser-backend registry + P1 fake.</summary>
@@ -38,6 +59,21 @@ public static class RunsModule
     public static void AddRunsServices(IServiceCollection services)
     {
         services.AddScoped<IValidator<StartRunRequest>, StartRunRequestValidator>();
+
+        // The durable-execution surface (§11/§14.2): the background executor that drives the saga's runs (owning its own
+        // Marten sessions) and the in-process stop-signal registry the cancel endpoint + saga deadline raise. The saga and
+        // its Marten storage are discovered/registered by Wolverine's Marten integration; these are the extra services the
+        // executor handler and the control endpoints resolve.
+        services.AddSingleton<IRunControlRegistry, RunControlRegistry>();
+        services.AddSingleton<RunExecutor>();
+        services.AddHostedService<RunRecoveryService>();
+
+        // The WP3 observability surface (§13): the in-process SSE tail-wakeup hub (shared by the executor's appends and the
+        // GET /runs/{id}/events endpoint) and the failure-screenshot blob store the interpreter captures into. Both are
+        // singletons; the screenshot store's default is the in-memory implementation, with a real blob store slotting in
+        // behind IScreenshotStore exactly as the download sinks do.
+        services.AddSingleton<RunEventSignals>();
+        services.AddSingleton<IScreenshotStore, InMemoryScreenshotStore>();
 
         // The backend seam: a registry over keyed adapters. Phase 1 registered only the record/replay fake, reading
         // shipped fixtures from the app's output directory; Phase 4 adds the three real adapters beside it.

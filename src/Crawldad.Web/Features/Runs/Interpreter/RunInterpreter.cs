@@ -33,6 +33,10 @@ internal enum Flow
 /// </summary>
 internal sealed class RunInterpreter
 {
+    /// <summary>The run-scope var name the restored checkpoint cursor is bound to on resume, so a <c>checkpoint</c>
+    /// node's <c>resume</c> sub-program can re-navigate to it (§11). Shared with the semantic walker's scope rule.</summary>
+    public const string CheckpointCursorVar = "checkpoint";
+
     private static readonly IReadOnlySet<string> _defaultRetryOn =
         new HashSet<string>(StringComparer.Ordinal) { "timeout", "pageCrashed" };
 
@@ -41,6 +45,9 @@ internal sealed class RunInterpreter
     private readonly IBrowserBackendRegistry _registry;
     private readonly IDownloadSinkRegistry _sinks;
     private readonly TimeProvider _clock;
+    private readonly IRunObserver? _observer;
+    private readonly ResumeState? _resume;
+    private readonly IScreenshotStore? _screenshots;
     private readonly List<object> _events = [];
     private readonly Dictionary<string, Func<JsonElement, CancellationToken, ValueTask<Flow>>> _dispatch;
 
@@ -50,22 +57,44 @@ internal sealed class RunInterpreter
     private int _steps;
     private int _requests;
     private int _downloads;
+    private int _checkpointSeq;
+    private bool _resumePending;
     private int _defaultTimeoutMs = 120000;
+    private bool _screenshotOnFailure = true;
     private int _currentStepIndex;
     private string _currentKind = "config";
 
+    /// <summary>Creates an interpreter for one run (or one resume).</summary>
+    /// <param name="payload">The payload document to execute.</param>
+    /// <param name="input">The run's input bindings.</param>
+    /// <param name="registry">Resolves the backend adapter named by <c>config.backend</c>.</param>
+    /// <param name="sinks">Resolves the download sink named by a <c>download.to</c> target.</param>
+    /// <param name="clock">The time seam for stats/trace timestamps.</param>
+    /// <param name="observer">The durable-execution seam (§11): null on the synchronous path (a <c>checkpoint</c> is then
+    /// inert, cancellation is never signalled, and no step-trace events are emitted — behaviour and goldens unchanged); the
+    /// executor supplies one for the async saga path.</param>
+    /// <param name="resume">The checkpoint to resume from (§11), or null for a fresh run from the top.</param>
+    /// <param name="screenshots">The failure-screenshot blob store (§13): the executor supplies one; null on the synchronous
+    /// path (no observer ⇒ no screenshot-on-failure). Capture is gated on <c>config.screenshotOnFailure</c> and best-effort.</param>
     public RunInterpreter(
         JsonElement payload,
         IReadOnlyDictionary<string, object?> input,
         IBrowserBackendRegistry registry,
         IDownloadSinkRegistry sinks,
-        TimeProvider clock)
+        TimeProvider clock,
+        IRunObserver? observer = null,
+        ResumeState? resume = null,
+        IScreenshotStore? screenshots = null)
     {
         _payload = payload;
         _input = input;
         _registry = registry;
         _sinks = sinks;
         _clock = clock;
+        _observer = observer;
+        _resume = resume;
+        _screenshots = screenshots;
+        _checkpointSeq = resume?.Sequence ?? 0; // keep checkpoint sequence monotonic across a resume
         _scope = new RunScope(input); // an input-only scope for backend resolution; execution rebuilds it per attempt
         _dispatch = BuildDispatch();
     }
@@ -83,6 +112,7 @@ internal sealed class RunInterpreter
             var retryPolicy = ParseRetryPolicy();
             var sessionPolicy = SessionPolicy.FromConfig(_payload.GetProperty("config")); // §8.1 launch/context/route
             _defaultTimeoutMs = sessionPolicy.DefaultTimeoutMs;
+            _screenshotOnFailure = ReadScreenshotOnFailure(_payload.GetProperty("config")); // §13 screenshot-on-failure toggle
 
             var binding = await ResolveBackendAsync(ct);
             if (!_registry.TryResolve(binding.Adapter, out var backend))
@@ -91,8 +121,9 @@ internal sealed class RunInterpreter
             }
 
             await using var session = await backend.ConnectAsync(binding, sessionPolicy, ct);
-            _session = session; // surfaced for stats (region/cacheHits, §10)
+            _session = session; // surfaced for stats (region/cacheHits, §10) and the RunTimeline region (§13)
             _page = await session.NewPageAsync(ct);
+            await StepAsync(new RunSessionOpened(session.Region, _clock.GetUtcNow()), ct); // §13: carries region to the timeline
 
             // Assign (don't return) inside the try so the setup catches below still apply, while the happy path falls
             // through to the return below — keeping the try's fall-through exercised.
@@ -100,25 +131,25 @@ internal sealed class RunInterpreter
         }
         catch (InterpreterException ex)
         {
-            return Failed("terminal", ex.Code, ex.Message, startedAt);
+            return await ReportFailedAsync("terminal", ex.Code, ex.Message, startedAt, screenshot: false, ct);
         }
         catch (ExpressionEvaluationException ex)
         {
-            return Failed("terminal", ex.Code, ex.Message, startedAt);
+            return await ReportFailedAsync("terminal", ex.Code, ex.Message, startedAt, screenshot: false, ct);
         }
         catch (ExpressionParseException ex)
         {
-            return Failed("terminal", ex.Code, ex.Message, startedAt);
+            return await ReportFailedAsync("terminal", ex.Code, ex.Message, startedAt, screenshot: false, ct);
         }
         catch (FakeBackendException ex)
         {
-            return Failed("terminal", "backend_unavailable", ex.Message, startedAt);
+            return await ReportFailedAsync("terminal", "backend_unavailable", ex.Message, startedAt, screenshot: false, ct);
         }
         catch (BrowserConnectException ex)
         {
             // A real adapter could not connect (bad/absent credential, connect failure). Terminal, like the fake's
-            // setup fault. The message is already secret-free by construction (§12).
-            return Failed("terminal", "backend_unavailable", ex.Message, startedAt);
+            // setup fault. The message is already secret-free by construction (§12). No page bound ⇒ no screenshot.
+            return await ReportFailedAsync("terminal", "backend_unavailable", ex.Message, startedAt, screenshot: false, ct);
         }
 
         return outcome;
@@ -136,18 +167,32 @@ internal sealed class RunInterpreter
             {
                 _scope = new RunScope(_input); // FRESH scope per attempt — re-evaluate vars, same session
                 _scope.Bind(_page);
-                await EvaluateVarsAsync(ct);
-                await ExecuteStepsAsync(ct);
+                if (_resume is null)
+                {
+                    await EvaluateVarsAsync(ct);
+                    await ExecuteStepsAsync(ct);
+                }
+                else
+                {
+                    await ResumeAsync(ct); // §11: restore the snapshot + re-enter at the checkpoint — no refetch of earlier work
+                }
 
                 var result = JsonValues.ToJson(await EvaluateResultAsync(ct));
-                return new RunOutcome(RunStatus.Succeeded, result, null, Stats(startedAt), _events);
+                return new RunOutcome(RunStatus.Succeeded, result, null, null, Stats(startedAt), _events);
+            }
+            catch (RunCancelledSignal)
+            {
+                // Cooperative cancel (§11): stop between steps and report a partial. The session tears down cleanly when
+                // RunAsync's `await using` disposes it — no orphaned backend session. Never retried.
+                return await CancelledAsync(startedAt, ct);
             }
             catch (Exception ex) when (ex is BrowserException or CrawldadFailureException or InterpreterException or ExpressionEvaluationException or ExpressionParseException)
             {
                 var (code, isRetryableClass, eligibleForRetry) = Classify(ex, policy);
                 if (!eligibleForRetry)
                 {
-                    return Failed(isRetryableClass ? "retryable-exhausted" : "terminal", code, ex.Message, startedAt);
+                    // A page is bound here, so capture a failure screenshot (§13) before reporting the terminal/exhausted failure.
+                    return await ReportFailedAsync(isRetryableClass ? "retryable-exhausted" : "terminal", code, ex.Message, startedAt, screenshot: true, ct);
                 }
 
                 // Retryable and permitted: record the attempt, reopen the page on a crash (§3.6), delay, then let the
@@ -156,7 +201,7 @@ internal sealed class RunInterpreter
                 exhaustedMessage = ex.Message;
                 if (attempt < policy.MaxAttempts)
                 {
-                    _events.Add(new RunAttemptFailed(attempt, code, _clock.GetUtcNow()));
+                    await EmitAsync(new RunAttemptFailed(attempt, code, _clock.GetUtcNow()), ct);
                     if (ex is BrowserPageCrashedException)
                     {
                         await ReopenPageAsync(session, ct); // reopen on the SAME context and rebind
@@ -170,7 +215,7 @@ internal sealed class RunInterpreter
             }
         }
 
-        return Failed("retryable-exhausted", exhaustedCode, exhaustedMessage, startedAt);
+        return await ReportFailedAsync("retryable-exhausted", exhaustedCode, exhaustedMessage, startedAt, screenshot: true, ct);
     }
 
     // isRetryableClass: the failure is retryable-class (→ "retryable-exhausted" if not retried). eligibleForRetry:
@@ -295,6 +340,7 @@ internal sealed class RunInterpreter
         foreach (var step in _payload.GetProperty("steps").EnumerateArray())
         {
             _currentStepIndex = index;
+            await StepAsync(new StepStarted(index, HeadKind(step), _clock.GetUtcNow()), ct); // §13 top-level step marker
             await ExecuteNodeAsync(step, ct); // top-level break/continue (outside any loop) is a no-op
             index++;
         }
@@ -323,6 +369,7 @@ internal sealed class RunInterpreter
             ["set"] = Effect(SetAsync),
             ["push"] = Effect(PushAsync),
             ["log"] = Effect(LogAsync),
+            ["checkpoint"] = Effect(CheckpointAsync),
             ["guard"] = Effect(GuardAsync),
             ["fail"] = Effect(FailAsync),
             ["if"] = IfAsync,
@@ -357,6 +404,13 @@ internal sealed class RunInterpreter
 
     private ValueTask<Flow> ExecuteNodeAsync(JsonElement node, CancellationToken ct)
     {
+        // Cooperative cancel (§11): honoured BETWEEN steps (at each node boundary), never mid-Playwright-call, so the
+        // session tears down cleanly. Null observer (the synchronous path) never cancels — behaviour unchanged.
+        if (_observer is { CancellationRequested: true })
+        {
+            throw new RunCancelledSignal();
+        }
+
         _steps++;
         var head = node.EnumerateObject().First();
         _currentKind = head.Name;
@@ -370,10 +424,16 @@ internal sealed class RunInterpreter
         var url = await CrawldadTemplate.Parse(body.GetProperty("url").GetString()!).RenderAsync(_scope, ct);
         await _scope.PageHandle.GotoAsync(url, OptString(body, "waitUntil"), Timeout(body), ct);
         _requests++;
+        await StepAsync(new Navigated(url, _clock.GetUtcNow()), ct); // §13 (the URL is scrubbed at the sink)
     }
 
-    private ValueTask WaitForLoadStateAsync(JsonElement body, CancellationToken ct) =>
-        new(_scope.PageHandle.WaitForLoadStateAsync(body.GetProperty("state").GetString()!, Timeout(body), ct));
+    private async ValueTask WaitForLoadStateAsync(JsonElement body, CancellationToken ct)
+    {
+        var state = body.GetProperty("state").GetString()!;
+        var start = _clock.GetUtcNow();
+        await _scope.PageHandle.WaitForLoadStateAsync(state, Timeout(body), ct);
+        await StepAsync(new Waited($"loadState:{state}", ElapsedMs(start), _clock.GetUtcNow()), ct); // §13
+    }
 
     // frame binds a FrameLocator handle to a var (§5.1); `in:` on later nodes/Sels roots resolution inside it. The
     // selector is the iframe element's CSS Tmpl (Playwright FrameLocator takes a string, so a Sel here is its string form).
@@ -394,6 +454,7 @@ internal sealed class RunInterpreter
     {
         var urlPrefix = await CrawldadTemplate.Parse(body.GetProperty("urlPrefix").GetString()!).RenderAsync(_scope, ct);
         var trigger = body.GetProperty("trigger");
+        var start = _clock.GetUtcNow();
         await _scope.PageHandle.RunAndWaitForRequestAsync(
             () => ExecuteBlockAsync(trigger, ct).AsTask(),
             urlPrefix,
@@ -401,6 +462,7 @@ internal sealed class RunInterpreter
             Timeout(body),
             ct);
         _requests++;
+        await StepAsync(new Waited("request", ElapsedMs(start), _clock.GetUtcNow()), ct); // §13
     }
 
     // `state` defaults to "visible" (Playwright's Locator.WaitForAsync default) when omitted — the reference's
@@ -408,13 +470,17 @@ internal sealed class RunInterpreter
     private async ValueTask WaitForAsync(JsonElement body, CancellationToken ct)
     {
         var handle = await ResolveSelectorAsync(body, ct);
-        await handle.WaitForAsync(OptString(body, "state") ?? "visible", Timeout(body), ct);
+        var state = OptString(body, "state") ?? "visible";
+        var start = _clock.GetUtcNow();
+        await handle.WaitForAsync(state, Timeout(body), ct);
+        await StepAsync(new Waited($"selector:{state}", ElapsedMs(start), _clock.GetUtcNow()), ct); // §13
     }
 
     private async ValueTask ClickAsync(JsonElement body, CancellationToken ct)
     {
         var handle = await ResolveSelectorAsync(body, ct);
         await handle.ClickAsync(Timeout(body), ct);
+        await StepAsync(new Clicked(SelectorLabel(body), _clock.GetUtcNow()), ct); // §13 (selector text scrubbed at the sink)
     }
 
     private async ValueTask FillAsync(JsonElement body, CancellationToken ct)
@@ -515,6 +581,9 @@ internal sealed class RunInterpreter
             ["storedAs"] = storedAs,
             ["stored"] = stored,
         });
+
+        // §13 Downloaded: metadata only (blob ref + guessed content type + size + hash) — the bytes streamed to the sink.
+        await StepAsync(new Downloaded(storedAs, ContentTypes.ForFile(storedAs), sizeBytes, sha256, _clock.GetUtcNow()), ct);
     }
 
     private IDownloadSink ResolveSink(object? target)
@@ -536,14 +605,18 @@ internal sealed class RunInterpreter
 
     private async ValueTask SetAsync(JsonElement body, CancellationToken ct)
     {
+        var varName = body.GetProperty("var").GetString()!;
         var value = await ExprAsync(body.GetProperty("value"), ct);
         if (body.TryGetProperty("path", out var path))
         {
-            await SetPathAsync(body.GetProperty("var").GetString()!, path.GetString()!, value, ct);
-            return;
+            await SetPathAsync(varName, path.GetString()!, value, ct);
+        }
+        else
+        {
+            _scope.Set(varName, value);
         }
 
-        _scope.Set(body.GetProperty("var").GetString()!, value);
+        await StepAsync(new Extracted(varName, ValueRef(value), _clock.GetUtcNow()), ct); // §13 (key + shape ref only, never the value)
     }
 
     // set with a `path` mutates INSIDE an existing map var (§7.4). The var and every intermediate segment must be a
@@ -571,14 +644,19 @@ internal sealed class RunInterpreter
         cursor[await segments[^1].KeyAsync(_scope, ct)] = value;
     }
 
-    private async ValueTask PushAsync(JsonElement body, CancellationToken ct) =>
-        _scope.Push(body.GetProperty("into").GetString()!, await ExprAsync(body.GetProperty("value"), ct));
+    private async ValueTask PushAsync(JsonElement body, CancellationToken ct)
+    {
+        var into = body.GetProperty("into").GetString()!;
+        var value = await ExprAsync(body.GetProperty("value"), ct);
+        _scope.Push(into, value);
+        await StepAsync(new Extracted(into, ValueRef(value), _clock.GetUtcNow()), ct); // §13 (list name + pushed-item shape ref)
+    }
 
     private async ValueTask LogAsync(JsonElement body, CancellationToken ct)
     {
         var level = body.GetProperty("level").GetString()!;
         var message = await CrawldadTemplate.Parse(body.GetProperty("message").GetString()!).RenderAsync(_scope, ct);
-        _events.Add(new LogEmitted(level, message, _clock.GetUtcNow()));
+        await EmitAsync(new LogEmitted(level, message, _clock.GetUtcNow()), ct);
     }
 
     private async ValueTask GuardAsync(JsonElement body, CancellationToken ct)
@@ -658,7 +736,7 @@ internal sealed class RunInterpreter
                 break;
             }
 
-            if (++iterations > max && StopAtCap(body))
+            if (++iterations > max && await StopAtCapAsync(body, ct))
             {
                 break;
             }
@@ -683,7 +761,7 @@ internal sealed class RunInterpreter
 
         while (true)
         {
-            if (++iterations > max && StopAtCap(body))
+            if (++iterations > max && await StopAtCapAsync(body, ct))
             {
                 break;
             }
@@ -734,7 +812,7 @@ internal sealed class RunInterpreter
         var iterations = 0L;
         for (var i = 0; i < count; i++)
         {
-            if (++iterations > max && StopAtCap(body))
+            if (++iterations > max && await StopAtCapAsync(body, ct))
             {
                 break;
             }
@@ -768,11 +846,11 @@ internal sealed class RunInterpreter
 
     // Handles a loop hitting its maxIterations cap: onMaxIterations "warn" logs and exits the loop normally (returns
     // true to break); anything else (the "fail" default) is terminal max_iterations_exceeded.
-    private bool StopAtCap(JsonElement loopBody)
+    private async ValueTask<bool> StopAtCapAsync(JsonElement loopBody, CancellationToken ct)
     {
         if (string.Equals(OptString(loopBody, "onMaxIterations"), "warn", StringComparison.Ordinal))
         {
-            _events.Add(new LogEmitted("warning", $"loop stopped at its maxIterations cap ({ReadMaxIterations(loopBody)})", _clock.GetUtcNow()));
+            await EmitAsync(new LogEmitted("warning", $"loop stopped at its maxIterations cap ({ReadMaxIterations(loopBody)})", _clock.GetUtcNow()), ct);
             return true;
         }
 
@@ -801,5 +879,164 @@ internal sealed class RunInterpreter
         new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, _session?.CacheHits ?? 0, _downloads);
 
     private RunOutcome Failed(string failureClass, string code, string message, DateTimeOffset startedAt) =>
-        new(RunStatus.Failed, null, new RunFailureDetail(failureClass, code, message, new RunStepRef(_currentStepIndex, _currentKind)), Stats(startedAt), _events);
+        new(RunStatus.Failed, null, new RunFailureDetail(failureClass, code, message, new RunStepRef(_currentStepIndex, _currentKind)), null, Stats(startedAt), _events);
+
+    // ----- trace emission + screenshot-on-failure (§13) ----------------------
+
+    // Emits a coarse trace event (LogEmitted/RunAttemptFailed): live through the observer on the durable path (in occurrence
+    // order), else accumulated for the synchronous endpoint to append at the end (P1 behaviour + goldens unchanged).
+    private ValueTask EmitAsync(object traceEvent, CancellationToken ct)
+    {
+        if (_observer is not null)
+        {
+            return _observer.EmitAsync(traceEvent, ct);
+        }
+
+        _events.Add(traceEvent);
+        return ValueTask.CompletedTask;
+    }
+
+    // Emits a semantic step-trace event (StepStarted/Navigated/…): ONLY on the durable path (an observer is present). The
+    // synchronous path no-ops, so its stream — and every §10 golden — is byte-identical to before.
+    private ValueTask StepAsync(object traceEvent, CancellationToken ct) =>
+        _observer is null ? ValueTask.CompletedTask : _observer.EmitAsync(traceEvent, ct);
+
+    // Reports a failure (§13): captures a screenshot when asked (a page is bound), emits StepFailed with its ref, then
+    // builds the RunOutcome. On the synchronous path StepAsync no-ops and the screenshot is skipped — Failed() as before.
+    private async Task<RunOutcome> ReportFailedAsync(string failureClass, string code, string message, DateTimeOffset startedAt, bool screenshot, CancellationToken ct)
+    {
+        var screenshotRef = screenshot ? await CaptureFailureScreenshotAsync(ct) : null;
+        await StepAsync(new StepFailed(_currentStepIndex, code, screenshotRef, _clock.GetUtcNow()), ct);
+        return Failed(failureClass, code, message, startedAt);
+    }
+
+    // Captures the failing page to blob storage and returns the ref (§13), or null when unavailable: no observer (sync
+    // path), no store, disabled via config, or no session/page bound. Best-effort — a crashed page's capture failure is
+    // tolerated so a screenshot never masks the run's own failure (§13).
+    private async ValueTask<string?> CaptureFailureScreenshotAsync(CancellationToken ct)
+    {
+        if (_observer is null || _screenshots is null || !_screenshotOnFailure || _session is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _screenshots.SaveAsync(await _scope.PageHandle.ScreenshotAsync(ct), ct);
+        }
+        catch (BrowserException)
+        {
+            return null; // a crashed/torn-down page can fail to screenshot — tolerate it
+        }
+    }
+
+    private static string HeadKind(JsonElement node) => node.EnumerateObject().First().Name;
+
+    private long ElapsedMs(DateTimeOffset start) => (long)(_clock.GetUtcNow() - start).TotalMilliseconds;
+
+    // The click node's declared selector text for the Clicked event (§13): a string selector's raw text, or a structured
+    // Sel's raw JSON. The un-rendered form (never the matched element), scrubbed defensively at the sink.
+    private static string SelectorLabel(JsonElement body)
+    {
+        var selector = body.GetProperty("selector");
+        return selector.ValueKind == JsonValueKind.String ? selector.GetString()! : selector.GetRawText();
+    }
+
+    // A PII-safe shape descriptor of a bound value for the Extracted event (§12/§13): kind + size, NEVER the value.
+    private static string ValueRef(object? value) => value switch
+    {
+        null => "null",
+        string s => $"string({s.Length})",
+        List<object?> list => $"list({list.Count})",
+        IReadOnlyDictionary<string, object?> map => $"map({map.Count})",
+        _ => "scalar", // bool / number
+    };
+
+    // §13 screenshot-on-failure toggle: captured by default, suppressed by config.screenshotOnFailure:false.
+    private static bool ReadScreenshotOnFailure(JsonElement config) =>
+        !config.TryGetProperty("screenshotOnFailure", out var flag) || flag.GetBoolean();
+
+    // A cooperative cancel stopped the run between steps (§11). Salvage a partial result (the payload's `result` over the
+    // accumulated vars) best-effort — a result expression that faults on the partial state yields no partial, not a crash.
+    private async Task<RunOutcome> CancelledAsync(DateTimeOffset startedAt, CancellationToken ct)
+    {
+        JsonElement? partial;
+        try
+        {
+            partial = JsonValues.ToJson(await EvaluateResultAsync(ct));
+        }
+        catch (Exception ex) when (ex is BrowserException or CrawldadFailureException or InterpreterException or ExpressionEvaluationException or ExpressionParseException)
+        {
+            partial = null;
+        }
+
+        return new RunOutcome(RunStatus.Cancelled, null, null, partial, Stats(startedAt), _events);
+    }
+
+    // ----- checkpoint + resume (§11) -----------------------------------------
+
+    // checkpoint records the resumable position durably through the observer. On the synchronous path (no observer) it is
+    // inert, so the acceptance goldens are unchanged. On the FIRST checkpoint of a resumed run it also runs the payload's
+    // `resume` sub-program to re-establish the fresh browser session at the restored cursor before continuing.
+    private async ValueTask CheckpointAsync(JsonElement body, CancellationToken ct)
+    {
+        if (_observer is null)
+        {
+            return;
+        }
+
+        if (_resumePending)
+        {
+            _resumePending = false;
+            await ExecuteBlockAsync(body.GetProperty("resume"), ct); // re-navigate to the restored cursor (bound to `checkpoint`)
+        }
+
+        var name = body.GetProperty("name").GetString()!;
+        var cursor = JsonValues.ToJson(await ExprAsync(body.GetProperty("cursor"), ct));
+        await _observer.CheckpointReachedAsync(new CheckpointSnapshot(name, ++_checkpointSeq, _currentStepIndex, cursor, SnapshotVarsJson()), ct);
+    }
+
+    // The accumulated declared-var state to persist at a checkpoint: everything except `input` (re-supplied on resume) and
+    // opaque locator/frame handles (transient — re-derived by the resumed loop body against the fresh session).
+    private JsonElement SnapshotVarsJson()
+    {
+        var snapshot = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (key, value) in _scope.Vars)
+        {
+            if (!string.Equals(key, "input", StringComparison.Ordinal) && value is not (ILocatorHandle or IFrameHandle))
+            {
+                snapshot[key] = value;
+            }
+        }
+
+        return JsonValues.ToJson(snapshot);
+    }
+
+    // Resumes execution (§11) from the checkpoint the executor restored: re-seed the accumulated vars, bind the cursor to
+    // the `checkpoint` var for the resume sub-program, then re-enter the program at the checkpoint's enclosing top-level
+    // step and run to the end. The first checkpoint node re-navigates (CheckpointAsync's _resumePending path); earlier
+    // top-level steps (the initial navigation/search) are skipped, so completed work is never refetched.
+    private async ValueTask ResumeAsync(CancellationToken ct)
+    {
+        foreach (var declared in _resume!.Vars.EnumerateObject())
+        {
+            _scope.Set(declared.Name, JsonValues.FromJson(declared.Value));
+        }
+
+        _scope.Set(CheckpointCursorVar, JsonValues.FromJson(_resume.Cursor));
+        _resumePending = true;
+
+        var index = 0;
+        foreach (var step in _payload.GetProperty("steps").EnumerateArray())
+        {
+            if (index >= _resume.StepIndex)
+            {
+                _currentStepIndex = index;
+                await StepAsync(new StepStarted(index, HeadKind(step), _clock.GetUtcNow()), ct); // §13 marker for each resumed step
+                await ExecuteNodeAsync(step, ct);
+            }
+
+            index++;
+        }
+    }
 }

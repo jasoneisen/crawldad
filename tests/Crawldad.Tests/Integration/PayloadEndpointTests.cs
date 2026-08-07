@@ -55,7 +55,7 @@ public class PayloadEndpointTests(AppFixture fixture)
 
         var payload = await session.LoadAsync<Payload>(payloadId);
         payload.ShouldNotBeNull();
-        payload.Revision.ShouldBe(1);
+        payload.Head.Revision.ShouldBe(1);
         payload.Name.ShouldBe("ljcmg.enforcement.search");
     }
 

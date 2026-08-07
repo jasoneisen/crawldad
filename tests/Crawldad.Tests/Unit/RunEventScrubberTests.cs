@@ -22,12 +22,15 @@ public class RunEventScrubberTests
     [Fact]
     public void RunStarted_scrubs_the_payload_name_and_input_key_names()
     {
+        var payloadId = Guid.NewGuid();
         var scrubbed = (RunStarted)RunEventScrubber.Scrub(
-            new RunStarted($"name-{_secret}", "hash", _at, [_secret, "startDate"]), Scrubber());
+            new RunStarted($"name-{_secret}", "hash", _at, [_secret, "startDate"], payloadId, 3), Scrubber());
 
         scrubbed.PayloadName.ShouldBe($"name-{_redacted}");
         scrubbed.InputKeys.ShouldBe([_redacted, "startDate"]);
         scrubbed.ScriptHash.ShouldBe("hash"); // untouched
+        scrubbed.PayloadId.ShouldBe(payloadId); // pin preserved through scrub
+        scrubbed.PayloadRevision.ShouldBe(3);
     }
 
     [Fact]
@@ -67,5 +70,69 @@ public class RunEventScrubberTests
         scrubbed.Code.ShouldBe("backend_unavailable");
         scrubbed.Class.ShouldBe("terminal");
         scrubbed.AtStep.Index.ShouldBe(2);
+    }
+
+    // ----- WP3 step-trace events (§13) ---------------------------------------
+
+    [Fact]
+    public void Navigated_scrubs_a_credential_bearing_url()
+    {
+        var scrubbed = (Navigated)RunEventScrubber.Scrub(new Navigated($"wss://host/x?token={_secret}", _at), Scrubber());
+
+        scrubbed.Url.ShouldBe($"wss://host/x?token={_redacted}");
+    }
+
+    [Fact]
+    public void Clicked_scrubs_the_selector_text()
+    {
+        var scrubbed = (Clicked)RunEventScrubber.Scrub(new Clicked($"[data-x='{_secret}']", _at), Scrubber());
+
+        scrubbed.SelectorText.ShouldBe($"[data-x='{_redacted}']");
+    }
+
+    [Fact]
+    public void Extracted_scrubs_the_key_and_value_ref()
+    {
+        var scrubbed = (Extracted)RunEventScrubber.Scrub(new Extracted($"k-{_secret}", "string(3)", _at), Scrubber());
+
+        scrubbed.Key.ShouldBe($"k-{_redacted}");
+        scrubbed.ValueRef.ShouldBe("string(3)"); // a shape ref carries nothing to redact
+    }
+
+    [Fact]
+    public void Downloaded_scrubs_the_blob_ref()
+    {
+        var scrubbed = (Downloaded)RunEventScrubber.Scrub(new Downloaded($"{_secret}.pdf", "application/pdf", 10, "abc", _at), Scrubber());
+
+        scrubbed.BlobRef.ShouldBe($"{_redacted}.pdf");
+        scrubbed.ContentType.ShouldBe("application/pdf");
+    }
+
+    [Fact]
+    public void StepFailed_scrubs_the_error_and_keeps_the_screenshot_ref()
+    {
+        var scrubbed = (StepFailed)RunEventScrubber.Scrub(new StepFailed(3, $"boom-{_secret}", "screenshots/abc.png", _at), Scrubber());
+
+        scrubbed.Error.ShouldBe($"boom-{_redacted}");
+        scrubbed.ScreenshotRef.ShouldBe("screenshots/abc.png"); // content-addressed ref, credential-free
+        scrubbed.Index.ShouldBe(3);
+    }
+
+    [Fact]
+    public void RunSessionOpened_scrubs_the_region()
+    {
+        var scrubbed = (RunSessionOpened)RunEventScrubber.Scrub(new RunSessionOpened($"region-{_secret}", _at), Scrubber());
+
+        scrubbed.Region.ShouldBe($"region-{_redacted}");
+    }
+
+    [Fact]
+    public void StepStarted_and_Waited_pass_through_unchanged()
+    {
+        var stepStarted = new StepStarted(0, "goto", _at);
+        var waited = new Waited("request", 5, _at);
+
+        RunEventScrubber.Scrub(stepStarted, Scrubber()).ShouldBeSameAs(stepStarted);
+        RunEventScrubber.Scrub(waited, Scrubber()).ShouldBeSameAs(waited);
     }
 }

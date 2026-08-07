@@ -1,8 +1,6 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Crawldad.Contracts.Payloads;
-using Crawldad.Web.Features.Runs.Interpreter;
+using Crawldad.Web.Infrastructure.Security;
 using Marten;
 using Microsoft.AspNetCore.Http;
 using Wolverine.Http;
@@ -10,19 +8,21 @@ using Wolverine.Http;
 namespace Crawldad.Web.Features.Payloads;
 
 /// <summary>
-/// <c>POST /payloads</c> (§12/§14.1, Deliverable 2): validates an inline payload and, if it is sound, drafts it as an
-/// event-sourced <see cref="Payload"/> (revision 1) so a malformed payload never becomes executable. Validation runs
-/// both passes — (a) the JSON Schema (structure), then (b) the semantic pass (defined-before-use + expression/template
-/// parse+arity), the same <see cref="PayloadValidator"/> the run-time pre-pass uses (Deliverable 3). Any failure is a
-/// <c>400</c> carrying the full structured error list (path + code + message per error); a valid payload is persisted
-/// (own session, <c>StartStream</c> → <c>SaveChanges</c>, mirroring <c>StartRunEndpoint</c>) and echoed as its pinned
-/// head. A grossly-shaped body (non-object) is a 400 ProblemDetails via <see cref="SavePayloadRequestValidator"/>.
+/// <c>POST /payloads</c> (§12/§14.1, Deliverable 2): scrubs, validates, and drafts an inline payload as revision 1 of an
+/// event-sourced <see cref="Payload"/> — so a malformed or credential-bearing payload never becomes executable. The
+/// script is first scrubbed at the persistence boundary (<see cref="PayloadScript"/>, §12), then the <em>scrubbed</em>
+/// artifact is validated (JSON Schema + semantic pass via <see cref="PayloadValidation"/>, Deliverable 3), name-extracted,
+/// and persisted — one and the same bytes are validated, hashed, stored, and later re-executed. Any validation failure is
+/// a <c>400</c> carrying the full structured error list; a grossly-shaped body (non-object) is a 400 ProblemDetails via
+/// <see cref="SavePayloadRequestValidator"/>. On actor/<c>by</c>: none is recorded — identity comes from the authenticated
+/// principal, never the request body (§12), and is post-MVP (mirrors <c>RunStarted</c>).
 /// </summary>
 public static class DraftPayloadEndpoint
 {
     /// <summary>Handles <c>POST /payloads</c>.</summary>
     /// <param name="request">The inline payload to validate and draft.</param>
     /// <param name="session">The request-scoped Marten session.</param>
+    /// <param name="scrubber">Redacts credential material from the persisted script and name (§12).</param>
     /// <param name="clock">The time seam for the event timestamp.</param>
     /// <param name="ct">Cancels the save.</param>
     /// <returns><c>200</c> with the pinned <see cref="PayloadResponse"/>, or <c>400</c> with a <see cref="PayloadValidationProblem"/>.</returns>
@@ -30,34 +30,26 @@ public static class DraftPayloadEndpoint
     public static async Task<IResult> Handle(
         SavePayloadRequest request,
         IDocumentSession session,
+        CredentialScrubber scrubber,
         TimeProvider clock,
         CancellationToken ct)
     {
-        // Pass (a): JSON Schema. Short-circuit so the semantic pass only ever sees a structurally sound document.
-        var schemaErrors = PayloadSchema.Validate(request.Payload);
-        if (schemaErrors.Count > 0)
+        // §12: scrub first, then validate/name/hash/store exactly the scrubbed bytes (see PayloadScript for the decision).
+        var scrubbed = PayloadScript.Scrub(request.Payload, scrubber);
+        using var document = JsonDocument.Parse(scrubbed.Script);
+        var payload = document.RootElement;
+
+        var problem = PayloadValidation.Validate(payload);
+        if (problem is not null)
         {
-            return Results.BadRequest(new PayloadValidationProblem(schemaErrors));
+            return Results.BadRequest(problem);
         }
 
-        // Pass (b): the shared semantic pass (defined-before-use + expression/template/path parse+arity).
-        var semanticErrors = PayloadValidator.Validate(request.Payload);
-        if (semanticErrors.Count > 0)
-        {
-            return Results.BadRequest(new PayloadValidationProblem([.. semanticErrors.Select(ToError)]));
-        }
-
-        // Valid → draft revision 1. scriptHash uses the same convention as RunStarted (SHA-256 of the payload bytes).
         var payloadId = Guid.NewGuid();
-        var name = request.Payload.GetProperty("name").GetString()!;
-        var script = request.Payload.GetRawText();
-        var scriptHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(script)));
-
-        session.Events.StartStream<Payload>(payloadId, new PayloadDrafted(name, script, scriptHash, clock.GetUtcNow()));
+        var name = payload.GetProperty("name").GetString()!; // from the scrubbed document, so already redacted
+        session.Events.StartStream<Payload>(payloadId, new PayloadDrafted(name, scrubbed.Script, scrubbed.ScriptHash, clock.GetUtcNow()));
         await session.SaveChangesAsync(ct);
 
-        return Results.Ok(new PayloadResponse(payloadId, name, 1, scriptHash, PayloadStatus.Active));
+        return Results.Ok(new PayloadResponse(payloadId, name, 1, scrubbed.ScriptHash, PayloadStatus.Active));
     }
-
-    private static PayloadValidationError ToError(PayloadIssue issue) => new(issue.Path, issue.Code, issue.Message);
 }

@@ -31,6 +31,8 @@
       "properties": {
         "backend": { "type": "string", "description": "Expr resolving to the { adapter, options } backend binding (§9)." },
         "defaultTimeoutMs": { "type": "integer", "minimum": 0, "description": "Context default timeout and the interpreter's timeout-hierarchy floor (§8.4); 120000 when absent." },
+        "deadlineMs": { "type": "integer", "minimum": 1, "description": "Run wall-clock cap for an async run (§8.4/§11), enforced by the executor saga's timeout; a generous default (30 min) when absent." },
+        "screenshotOnFailure": { "type": "boolean", "description": "Whether the executor captures a page screenshot on a step failure (§13), stored in deletable blob storage with only its ref in the trace; true when absent, set false to disable." },
         "launch": {
           "type": "object", "additionalProperties": false, "description": "Browser launch options passed to a launching backend (§9.2).",
           "properties": { "args": { "type": "array", "items": { "type": "string" }, "description": "Chromium launch args (e.g. --disable-web-security)." } }
@@ -220,7 +222,15 @@
           "type": "object", "additionalProperties": false, "properties": { "when": { "type": "string" } } } } },
 
         { "required": ["continue"], "additionalProperties": false, "properties": { "continue": {
-          "type": "object", "additionalProperties": false, "properties": { "when": { "type": "string" } } } } }
+          "type": "object", "additionalProperties": false, "properties": { "when": { "type": "string" } } } } },
+
+        { "required": ["checkpoint"], "additionalProperties": false, "properties": { "checkpoint": {
+          "type": "object", "required": ["name", "cursor"], "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "description": "The checkpoint's stable name — the durable resume anchor (§11)." },
+            "cursor": { "type": "string", "description": "Expr → the resumable cursor value persisted at this savepoint (a page cursor / resume URL)." },
+            "resume": { "$ref": "#/$defs/block", "description": "Nodes run ONLY on resume, before the enclosing loop continues, to re-establish the browser at the cursor; the restored cursor is bound to the `checkpoint` var (§11)." }
+          } } } }
       ]
     }
   }

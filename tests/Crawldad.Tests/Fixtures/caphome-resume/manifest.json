@@ -1,0 +1,47 @@
+{
+  "manifest": "1",
+  "description": "Kill-and-restart resume fixture (§11). The same 3-page CapHome search as caphome-multipage, but each results page carries a DISTINCT, directly-navigable URL (?pg=N) — and a matching gotoUrl — so a resumed run can `goto` straight to the checkpointed page (the checkpoint's resume block navigates to pageUrl()) WITHOUT re-clicking through earlier pages. The row URLs still resolve to https://aca-prod.accela.com/... (scheme+host+href), so the shaped result is byte-identical to caphome-multipage/golden-a-full.json. No Chromium, no live traffic.",
+  "initialState": "form",
+  "states": {
+    "form": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement",
+      "html": "form.html"
+    },
+    "page1": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement&pg=1",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement&pg=1",
+      "html": "page1.html"
+    },
+    "page2": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement&pg=2",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement&pg=2",
+      "html": "page2.html"
+    },
+    "page3": {
+      "gotoUrl": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement&pg=3",
+      "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement&pg=3",
+      "html": "page3.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "form",
+      "on": { "click": "#ctl00_PlaceHolderMain_btnNewSearch" },
+      "to": "page1",
+      "emit": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST" }
+    },
+    {
+      "from": "page1",
+      "on": { "click": "table.aca_pagination td:last-child a" },
+      "to": "page2",
+      "emit": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST" }
+    },
+    {
+      "from": "page2",
+      "on": { "click": "table.aca_pagination td:last-child a" },
+      "to": "page3",
+      "emit": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST" }
+    }
+  ]
+}

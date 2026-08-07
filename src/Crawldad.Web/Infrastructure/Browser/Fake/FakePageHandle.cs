@@ -1,3 +1,4 @@
+using System.Text;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 
@@ -96,6 +97,13 @@ internal sealed class FakePageHandle : IPageHandle
         Closed = true;
         return Task.CompletedTask;
     }
+
+    /// <summary>Serves deterministic fake screenshot bytes (§13): the 8-byte PNG signature followed by the current state's
+    /// name, so a capture is a valid-looking PNG that varies by page yet never carries real bytes/PII (it is a fixture
+    /// identifier, not the credential-bearing DOM).</summary>
+    /// <param name="ct">Unused — the fake captures no real page.</param>
+    public Task<byte[]> ScreenshotAsync(CancellationToken ct) =>
+        Task.FromResult<byte[]>([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. Encoding.UTF8.GetBytes(_state.Name)]);
 
     public async Task RunAndWaitForRequestAsync(Func<Task> trigger, string urlPrefix, string? method, int? timeoutMs, CancellationToken ct)
     {

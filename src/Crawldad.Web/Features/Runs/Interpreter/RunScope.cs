@@ -28,6 +28,10 @@ internal sealed class RunScope : IEvalScope, IDomAccess
     /// <summary>The shared selector resolver over this scope (node selectors and structured Sel maps).</summary>
     internal SelResolver Sel => _sel;
 
+    /// <summary>The current variable bindings (including <c>input</c>), for snapshotting the accumulated state at a
+    /// checkpoint (§11). A read-only view — mutation stays structural (<see cref="Set"/>/<see cref="Push"/>).</summary>
+    internal IReadOnlyDictionary<string, object?> Vars => _vars;
+
     /// <summary>Binds the live page once the backend has connected.</summary>
     /// <param name="page">The connected page.</param>
     internal void Bind(IPageHandle page) => _page = page;

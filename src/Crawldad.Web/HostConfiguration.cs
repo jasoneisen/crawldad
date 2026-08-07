@@ -41,9 +41,9 @@ public static class HostConfiguration
                 // Schema isolation so Crawldad coexists with other apps on the shared devcontainer Postgres.
                 options.DatabaseSchemaName = "crawldad";
 
-                // Each vertical slice self-registers its events/projections on the shared lifecycle. Both are stubs
-                // today (Payloads → Phase 5; Runs → a later work package); the seam is wired so those packages just
-                // fill their module in place, exactly as IncidentModule does in the foundation.
+                // Each vertical slice self-registers its events/projections on the shared lifecycle: the Payloads
+                // aggregate + summary read model (§14.1) and the Run aggregate + step-trace/timeline read models
+                // (§14.2), each filling its module in place exactly as IncidentModule does in the foundation.
                 PayloadsModule.ConfigureMarten(options, projectionLifecycle);
                 RunsModule.ConfigureMarten(options, projectionLifecycle);
             })
@@ -57,16 +57,7 @@ public static class HostConfiguration
             marten.ApplyAllDatabaseChangesOnStartup();
         }
 
-        builder.Host.UseWolverine(options =>
-        {
-            options.Policies.AutoApplyTransactions();
-            options.Policies.UseDurableLocalQueues();
-            // Validate on the bus too (only for message types that HAVE a validator), so in-process callers get
-            // the same guards as the HTTP API — not just its endpoints. ExplicitRegistration: validators are
-            // AddScoped in their slice modules; letting Wolverine re-discover them would double-register each one
-            // and force the multi-validator resolution path.
-            options.UseFluentValidation(RegistrationBehavior.ExplicitRegistration);
-        });
+        builder.Host.UseWolverine(ConfigureWolverine);
 
         builder.Services.AddWolverineHttp();
 
@@ -89,6 +80,19 @@ public static class HostConfiguration
         PayloadsModule.AddPayloadsServices(builder.Services);
         ScrubAllLogOutput(builder.Services);
         return builder;
+    }
+
+    // The Wolverine message pipeline (§14): transactional outbox, durable local queues (so the executor saga's messages
+    // survive restarts, §11), bus-side validation, and the resume-not-dead-letter policy for an interrupted run.
+    private static void ConfigureWolverine(WolverineOptions options)
+    {
+        options.Policies.AutoApplyTransactions();
+        options.Policies.UseDurableLocalQueues();
+
+        // Validate on the bus too (only for message types that HAVE a validator), so in-process callers get the same
+        // guards as the HTTP API — not just its endpoints. ExplicitRegistration: validators are AddScoped in their slice
+        // modules; letting Wolverine re-discover them would double-register each one and force the multi-validator path.
+        options.UseFluentValidation(RegistrationBehavior.ExplicitRegistration);
     }
 
     // Route ALL log output through the credential scrubber (§12): decorate the host's ILoggerFactory so every category's

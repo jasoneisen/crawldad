@@ -8,6 +8,7 @@ using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Browser.Real;
 using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Web.Infrastructure.Storage;
 using Marten;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,6 +35,20 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         """
         { "name": "leak-{name}", "config": { "backend": "input.backend" }, "vars": {},
           "steps": [ { "log": { "level": "info", "message": "the page echoed ${input.echo}" } } ],
+          "result": "{ scraped: input.echo, echoedUrl: 'wss://x?token=' + input.echo }" }
+        """;
+
+    // The async/checkpoint variant: the secret is snapshotted into a var AND the checkpoint cursor, so the DURABLE state a
+    // resumed run restores from (the RunProgress checkpoint) is exercised at the scrub boundary alongside the trace + result.
+    private const string _asyncCheckpointPayload =
+        """
+        { "name": "leak-async", "config": { "backend": "input.backend" }, "vars": { "leaked": "input.echo" },
+          "steps": [
+            { "loop": { "maxIterations": 2, "while": "false", "do": [
+                { "checkpoint": { "name": "cp", "cursor": "leaked", "resume": [] } },
+                { "log": { "level": "info", "message": "the page echoed ${input.echo}" } }
+            ] } }
+          ],
           "result": "{ scraped: input.echo, echoedUrl: 'wss://x?token=' + input.echo }" }
         """;
 
@@ -66,6 +81,78 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         var result = root.GetProperty("result");
         result.GetProperty("scraped").GetString().ShouldBe(CredentialScrubber.Redaction);
         result.GetProperty("echoedUrl").GetString().ShouldBe($"wss://x?token={CredentialScrubber.Redaction}");
+
+        await AssertRunLeaksNothingAsync(host, root, LeakHost.TokenSentinel);
+    }
+
+    [Fact]
+    public async Task Browserless_async_run_with_a_checkpoint_leaks_the_token_into_no_sink()
+    {
+        var host = await leak.EnsureAsync(chromium);
+        leak.Capturer.Clear();
+
+        var inputs = new JsonObject
+        {
+            ["backend"] = Backend("browserless", LeakHost.BrowserlessRef, new JsonObject { ["region"] = "lon" }),
+            ["echo"] = LeakHost.TokenSentinel,
+        };
+
+        // Drive the run through the background executor saga (async), so the durable checkpoint + RunProgress result are
+        // written at the scrub boundary too — the state a resumed run would restore from.
+        var body = Body(_asyncCheckpointPayload, inputs);
+        body["async"] = true;
+        var accepted = await host.Scenario(x =>
+        {
+            x.Post.Json(body).ToUrl("/runs");
+            x.StatusCodeShouldBe(202);
+        });
+        var runId = (await accepted.ReadAsJsonAsync<JsonElement>()).GetProperty("runId").GetGuid();
+        var root = await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(30));
+
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+        root.GetProperty("result").GetProperty("scraped").GetString().ShouldBe(CredentialScrubber.Redaction);
+        await AssertRunLeaksNothingAsync(host, root, LeakHost.TokenSentinel);
+    }
+
+    // A failing async run: connect (browserless), then fail with the secret in scope — so the executor captures a real
+    // failure screenshot (§13), exercising the screenshot ref/blob at the scrub boundary (not a vacuously-empty store).
+    private const string _asyncScreenshotFailPayload =
+        """
+        { "name": "leak-shotfail", "config": { "backend": "input.backend" }, "vars": { "leaked": "input.echo" },
+          "steps": [
+            { "goto": { "url": "about:blank" } },
+            { "fail": { "class": "terminal", "code": "boom", "message": "the page held ${input.echo}" } }
+          ],
+          "result": "'x'" }
+        """;
+
+    [Fact]
+    public async Task Browserless_async_failing_run_captures_a_clean_screenshot_and_leaks_nothing()
+    {
+        var host = await leak.EnsureAsync(chromium);
+        leak.Capturer.Clear();
+
+        var inputs = new JsonObject
+        {
+            ["backend"] = Backend("browserless", LeakHost.BrowserlessRef, new JsonObject { ["region"] = "lon" }),
+            ["echo"] = LeakHost.TokenSentinel,
+        };
+        var body = Body(_asyncScreenshotFailPayload, inputs);
+        body["async"] = true;
+        var accepted = await host.Scenario(x =>
+        {
+            x.Post.Json(body).ToUrl("/runs");
+            x.StatusCodeShouldBe(202);
+        });
+        var runId = (await accepted.ReadAsJsonAsync<JsonElement>()).GetProperty("runId").GetGuid();
+        var root = await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(30));
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+
+        // A screenshot WAS captured on the failing step (a real ref, not a vacuously-empty store) — and it leaks nothing:
+        // the ref is content-addressed and the sweep below re-asserts the store's keys + bytes are clean.
+        var screenshots = (InMemoryScreenshotStore)host.Services.GetRequiredService<IScreenshotStore>();
+        screenshots.Blobs.ShouldNotBeEmpty();
 
         await AssertRunLeaksNothingAsync(host, root, LeakHost.TokenSentinel);
     }
@@ -130,6 +217,55 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         lines.ShouldNotContain(line => line.Contains(LeakHost.TokenSentinel, StringComparison.Ordinal));
     }
 
+    // A minimal async run whose backend credential travels ONLY by reference (no input echoes it) — the probe for the
+    // durable orchestration state at rest (the saga document + Wolverine envelopes).
+    private const string _byRefPayload =
+        """
+        { "name": "durable-byref", "config": { "backend": "input.backend" }, "vars": {},
+          "steps": [ { "goto": { "url": "about:blank" } } ],
+          "result": "'ok'" }
+        """;
+
+    [Fact]
+    public async Task An_async_by_reference_run_keeps_the_resolved_secret_out_of_the_saga_and_wolverine_envelopes()
+    {
+        var host = await leak.EnsureAsync(chromium);
+        leak.Capturer.Clear();
+
+        // The credential travels ONLY by reference (DurableRef → DurableSecretSentinel, resolved at connect); no input
+        // echoes the secret, so a hit anywhere at rest is a real by-reference-model breach.
+        var inputs = new JsonObject { ["backend"] = Backend("browserless", LeakHost.DurableRef, new JsonObject { ["region"] = "lon" }) };
+        var body = Body(_byRefPayload, inputs);
+        body["async"] = true;
+
+        var accepted = await host.Scenario(x =>
+        {
+            x.Post.Json(body).ToUrl("/runs");
+            x.StatusCodeShouldBe(202);
+        });
+        var runId = (await accepted.ReadAsJsonAsync<JsonElement>()).GetProperty("runId").GetGuid();
+        var root = await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(30));
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+
+        // The scrubbed sinks (events, projections, run-progress, SSE, timeline, screenshots, logs, response) stay clean too.
+        await AssertRunLeaksNothingAsync(host, root, LeakHost.DurableSecretSentinel);
+
+        // The RunExecutorSaga LINGERS after the run finished — it is never marked complete — and holds the run's
+        // inputs+script at rest, but by reference: the credentialRef IS stored, the resolved secret is NOT (§12).
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        await using (var session = store.LightweightSession())
+        {
+            var saga = await session.LoadAsync<RunExecutorSaga>(runId);
+            saga.ShouldNotBeNull();                                         // still at rest post-completion (the retention finding)
+            saga.Inputs.ShouldContain(LeakHost.DurableRef);                  // the reference is persisted…
+            saga.Inputs.ShouldNotContain(LeakHost.DurableSecretSentinel);    // …the resolved secret is not
+        }
+
+        // The saga document + every Wolverine durable envelope body (StartRun inputs+script, ExecuteRun, the scheduled
+        // RunDeadline, dead-letters) carry no resolved secret — the durable at-rest surfaces the earlier sweep omitted.
+        (await DumpDurableStateAsync(host)).ShouldNotContain(LeakHost.DurableSecretSentinel);
+    }
+
     // ----- the sink sweep -----------------------------------------------------
 
     private async Task AssertRunLeaksNothingAsync(IAlbaHost host, JsonElement responseRoot, string sentinel)
@@ -157,6 +293,23 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
 
         // (c) every captured log line for the run (framework categories included).
         string.Join('\n', leak.Capturer.Lines).ShouldNotContain(sentinel);
+
+        // (e, WP3) the SSE stream: the full backfilled tail carries only scrubbed event data (closes the deferred P4 gap).
+        var frames = await SseReader.ReadToCloseAsync(host, runId, lastEventId: null, TimeSpan.FromSeconds(20));
+        string.Join('\n', frames.Select(f => f.Data)).ShouldNotContain(sentinel);
+
+        // (f, WP3) the RunTimeline projection row (steps, extracted refs, region, failure/screenshot ref).
+        var timeline = await host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{runId}/timeline");
+            x.StatusCodeShouldBe(200);
+        });
+        (await timeline.ReadAsJsonAsync<JsonElement>()).GetRawText().ShouldNotContain(sentinel);
+
+        // (g, WP3) the screenshot blob store: no ref (key) nor captured byte carries the credential (§12/§13).
+        var screenshots = (InMemoryScreenshotStore)host.Services.GetRequiredService<IScreenshotStore>();
+        string.Join('\n', screenshots.Blobs.Keys).ShouldNotContain(sentinel);
+        screenshots.Blobs.Values.ShouldAllBe(bytes => !Encoding.UTF8.GetString(bytes).Contains(sentinel, StringComparison.Ordinal));
     }
 
     private static async Task<JsonElement> PostAsync(IAlbaHost host, JsonObject body)
@@ -178,11 +331,32 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         var dump = new StringBuilder();
         await AppendRowsAsync(connection, "select data::text from crawldad_leak.mt_events", dump);
         await AppendRowsAsync(connection, "select data::text from crawldad_leak.mt_doc_run", dump);
+        // The executor-owned run-progress store holds the durable checkpoint (cursor + var snapshot) and the run result an
+        // async/resumed run persists — swept here too so the §12 no-leak invariant covers the resume path.
+        await AppendRowsAsync(connection, "select data::text from crawldad_leak.mt_doc_runprogress", dump);
+        return dump.ToString();
+    }
+
+    // The durable ORCHESTRATION state a run leaves at rest (distinct from the scrubbed Marten sinks above): the
+    // RunExecutorSaga document (inputs+script, which lingers after completion) and Wolverine's durable envelope tables —
+    // incoming (StartRun's inputs+script, ExecuteRun, the scheduled RunDeadline), outgoing, and dead-letters. Envelope
+    // bodies are bytea; escape-encoded so binary framing is skippable text and an embedded ASCII sentinel is found verbatim.
+    private static async Task<string> DumpDurableStateAsync(IAlbaHost host)
+    {
+        var connectionString = host.Services.GetRequiredService<IConfiguration>().GetConnectionString("marten")!;
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        var dump = new StringBuilder();
+        await AppendRowsAsync(connection, "select data::text from crawldad_leak.mt_doc_runexecutorsaga", dump);
+        await AppendRowsAsync(connection, "select encode(body, 'escape') from crawldad_leak.wolverine_incoming_envelopes", dump);
+        await AppendRowsAsync(connection, "select encode(body, 'escape') from crawldad_leak.wolverine_outgoing_envelopes", dump);
+        await AppendRowsAsync(connection, "select encode(body, 'escape') from crawldad_leak.wolverine_dead_letters", dump);
         return dump.ToString();
     }
 
     [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
-        Justification = "Both SQL strings are compile-time constants scanning fixed Marten tables in the leak-test schema; no user input reaches the command.")]
+        Justification = "All SQL strings are compile-time constants scanning fixed Marten/Wolverine tables in the leak-test schema; no user input reaches the command.")]
     private static async Task AppendRowsAsync(NpgsqlConnection connection, string sql, StringBuilder dump)
     {
         await using var command = new NpgsqlCommand(sql, connection);
@@ -212,9 +386,15 @@ public sealed class LeakHost : IAsyncLifetime
     /// <summary>A distinctive Browserbase apiKey sentinel (the resolved <c>browserbase</c> credential).</summary>
     internal const string ApiKeySentinel = "bb_live_LEAKCANARY_apikey_0123456789abcdefABCDEF";
 
+    /// <summary>A by-reference-<b>only</b> token sentinel: it is the <em>resolved</em> credential for the durable-at-rest
+    /// sweep and is NEVER echoed into an input, so a hit in the saga/envelope tables is a real by-reference-model breach
+    /// (distinct from <see cref="TokenSentinel"/>, which the echo tests deliberately place into a raw input value).</summary>
+    internal const string DurableSecretSentinel = "brwsrless_DURABLEREST_secret_0123456789abcdefABCDEF";
+
     internal const string BrowserlessRef = "browserless-cred";
     internal const string BrowserbaseRef = "browserbase-cred";
     internal const string ConnectUrlRef = "browserbase-connecturl-cred";
+    internal const string DurableRef = "durable-byref-cred";
 
     private RunServerHandle? _runServer;
     private CdpChromium? _cdp;
@@ -247,6 +427,7 @@ public sealed class LeakHost : IAsyncLifetime
             [BrowserbaseRef] = ApiKeySentinel,
             // connectUrl mode: the whole URL is the secret and embeds the apiKey sentinel; a closed port makes it fail.
             [ConnectUrlRef] = $"ws://127.0.0.1:1/?apiKey={ApiKeySentinel}&sessionId=ses_leakcanary",
+            [DurableRef] = DurableSecretSentinel,
         };
 
         _host = await AlbaHost.For<Program>(builder =>

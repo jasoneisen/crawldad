@@ -129,6 +129,16 @@ public interface IPageHandle
     /// </summary>
     /// <param name="ct">Cancels the close.</param>
     Task CloseAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Captures a full-page screenshot as PNG bytes (<c>page.ScreenshotAsync</c>) — the §13 screenshot-on-failure
+    /// capability. The interpreter calls this on a step failure and streams the bytes to blob storage, recording only the
+    /// ref in the trace (§12). Best-effort: a crashed/torn-down page may throw a <see cref="BrowserException"/>, which the
+    /// capture path tolerates (a failed screenshot never masks the run's failure). The fake serves deterministic bytes.
+    /// </summary>
+    /// <param name="ct">Cancels the capture.</param>
+    /// <returns>The screenshot's PNG bytes.</returns>
+    Task<byte[]> ScreenshotAsync(CancellationToken ct);
 }
 
 /// <summary>

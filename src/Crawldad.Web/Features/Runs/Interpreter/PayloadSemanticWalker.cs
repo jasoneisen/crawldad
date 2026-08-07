@@ -100,6 +100,9 @@ internal sealed class SemanticWalker
             case "guard":
                 WalkStateNode(head, body, p);
                 break;
+            case "checkpoint":
+                WalkCheckpoint(body, p);
+                break;
             default:
                 WalkControlNode(head, body, p); // if/switch/loop/forEach/break/continue
                 break;
@@ -289,6 +292,19 @@ internal sealed class SemanticWalker
             // while-form (do-while): the body runs before the test, so the test may read what the body set (§6).
             WalkBlock(body.GetProperty("do"), $"{p}/do");
             CheckExpr(body.GetProperty("while").GetString()!, $"{p}/while");
+        }
+    }
+
+    // checkpoint (§11): the cursor Expr resolves against the current scope; the resume sub-program runs only on resume
+    // with the restored cursor bound to the `checkpoint` var, so that name is in scope for the resume block alone.
+    private void WalkCheckpoint(JsonElement body, string p)
+    {
+        CheckExpr(body.GetProperty("cursor").GetString()!, $"{p}/cursor");
+        if (body.TryGetProperty("resume", out var resume))
+        {
+            var added = EnterScope(RunInterpreter.CheckpointCursorVar);
+            WalkBlock(resume, $"{p}/resume");
+            ExitScope(added);
         }
     }
 

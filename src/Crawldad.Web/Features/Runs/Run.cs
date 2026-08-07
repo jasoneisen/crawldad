@@ -13,22 +13,29 @@ public enum RunLifecycle
 
     /// <summary>Finished with a typed failure.</summary>
     Failed,
+
+    /// <summary>Cancelled between steps (§11) — the backend session was torn down cleanly.</summary>
+    Cancelled,
 }
 
 /// <summary>
 /// The Run aggregate (§14.2): an anemic snapshot folded from the trace events, registered on the shared projection
-/// lifecycle. Phase 1 tracks only identity + disposition; the executor saga, checkpoints, and the RunTimeline read
-/// model arrive later. Decisions live in the endpoint/interpreter, not here.
+/// lifecycle. Tracks identity + disposition + (when pinned) the exact payload revision the run executed, so drift
+/// (pinned-vs-head, §14.1) is a pure read over this snapshot and the payload head. Observability rides the same stream via
+/// the <see cref="RunTimeline"/> read model, distinct from this snapshot. Decisions live in the endpoint/interpreter, not here.
 /// </summary>
 /// <param name="Id">The run id (the event stream id).</param>
 /// <param name="PayloadName">The payload name pinned at start.</param>
 /// <param name="ScriptHash">The script hash pinned at start.</param>
 /// <param name="Status">The current lifecycle state.</param>
-public sealed record Run(Guid Id, string PayloadName, string ScriptHash, RunLifecycle Status)
+/// <param name="PayloadId">The pinned managed payload (§14.2), or null for an inline run.</param>
+/// <param name="PayloadRevision">The pinned payload revision (§14.2), or null for an inline run.</param>
+public sealed record Run(Guid Id, string PayloadName, string ScriptHash, RunLifecycle Status, Guid? PayloadId, int? PayloadRevision)
 {
     /// <summary>Folds the opening event into a fresh aggregate (Marten assigns <see cref="Id"/> from the stream).</summary>
     /// <param name="started">The opening event.</param>
-    public static Run Create(RunStarted started) => new(Guid.Empty, started.PayloadName, started.ScriptHash, RunLifecycle.Running);
+    public static Run Create(RunStarted started) =>
+        new(Guid.Empty, started.PayloadName, started.ScriptHash, RunLifecycle.Running, started.PayloadId, started.PayloadRevision);
 
     /// <summary>Marks the run succeeded.</summary>
     /// <param name="succeeded">The success event.</param>
@@ -37,4 +44,8 @@ public sealed record Run(Guid Id, string PayloadName, string ScriptHash, RunLife
     /// <summary>Marks the run failed.</summary>
     /// <param name="failed">The failure event.</param>
     public Run Apply(RunFailed failed) => this with { Status = RunLifecycle.Failed };
+
+    /// <summary>Marks the run cancelled (§11).</summary>
+    /// <param name="cancelled">The cancellation event.</param>
+    public Run Apply(RunCancelled cancelled) => this with { Status = RunLifecycle.Cancelled };
 }

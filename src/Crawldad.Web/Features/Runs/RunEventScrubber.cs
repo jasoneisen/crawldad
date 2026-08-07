@@ -29,7 +29,18 @@ internal static class RunEventScrubber
         // A log node can interpolate an input/extracted value into its ${…} message — the primary in-event leak vector.
         LogEmitted log => log with { Message = scrubber.Scrub(log.Message) },
 
-        // RunSucceeded (stats only) and RunAttemptFailed (a fixed code slug) carry no credential-prone free text.
+        // The WP3 step-trace events (§13): scrub every credential-prone free-text field defensively. A page can navigate
+        // to a URL bearing a credential param (Navigated), a selector template could interpolate a value (Clicked), and
+        // an extracted key / value-ref, a blob ref, a failure slug, or a region are all scrubbed so no sink can leak.
+        Navigated navigated => navigated with { Url = scrubber.Scrub(navigated.Url) },
+        Clicked clicked => clicked with { SelectorText = scrubber.Scrub(clicked.SelectorText) },
+        Extracted extracted => extracted with { Key = scrubber.Scrub(extracted.Key), ValueRef = scrubber.Scrub(extracted.ValueRef) },
+        Downloaded downloaded => downloaded with { BlobRef = scrubber.Scrub(downloaded.BlobRef) },
+        StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error) },
+        RunSessionOpened opened => opened with { Region = scrubber.Scrub(opened.Region) },
+
+        // RunSucceeded/RunAttemptFailed (stats + fixed slug), and StepStarted/Waited (index/kind/ms only) carry no
+        // credential-prone free text — pass through unchanged (same instance) so nothing new is allocated.
         _ => traceEvent,
     };
 

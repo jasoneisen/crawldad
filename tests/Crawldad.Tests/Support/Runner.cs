@@ -61,6 +61,34 @@ internal static class Runner
     public static async Task<RunOutcome> RunWithSinkAsync(string payloadJson, string inputsJson, FakeDownloadSink sink) =>
         (await RunWithFakeAsync(payloadJson, inputsJson, sinks: new SingleSinkRegistry("fake", sink))).Outcome;
 
+    /// <summary>Drives the interpreter on the durable path (an observer + screenshot store present) so a unit test can
+    /// assert the §13 step-trace events it emits and any failure screenshot it captures — without a database.</summary>
+    /// <param name="payloadJson">The payload document JSON.</param>
+    /// <param name="inputsJson">The inputs JSON.</param>
+    /// <param name="cancelRequested">When true, the observer forces a cooperative cancel (§11).</param>
+    /// <param name="sink">The download sink bound under kind <c>"fake"</c> (defaults to a fresh in-memory fake).</param>
+    /// <param name="backend">The backend bound under adapter <c>"fake"</c> (defaults to the record/replay fake); pass a
+    /// decorator to model a page whose screenshot capture fails.</param>
+    public static async Task<(RunOutcome Outcome, RecordingObserver Observer, InMemoryScreenshotStore Screenshots)> RunWithObserverAsync(
+        string payloadJson, string inputsJson = FakeInputs, bool cancelRequested = false, FakeDownloadSink? sink = null, IBrowserBackend? backend = null)
+    {
+        using var payloadDoc = JsonDocument.Parse(payloadJson);
+        using var inputsDoc = JsonDocument.Parse(inputsJson);
+        var input = JsonValues.FromJson(inputsDoc.RootElement) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
+        var observer = new RecordingObserver { Cancel = cancelRequested };
+        var screenshots = new InMemoryScreenshotStore();
+        var interpreter = new RunInterpreter(
+            payloadDoc.RootElement.Clone(),
+            input,
+            new SingleBackendRegistry("fake", backend ?? new FakeBrowserBackend(FixturesRoot)),
+            new SingleSinkRegistry("fake", sink ?? new FakeDownloadSink()),
+            new FakeClock(),
+            observer,
+            resume: null,
+            screenshots);
+        return (await interpreter.RunAsync(CancellationToken.None), observer, screenshots);
+    }
+
     /// <summary>A registry with only the fake adapter over the test fixtures root.</summary>
     /// <param name="fixturesRoot">Override the fixtures root (defaults to the test output).</param>
     public static IBrowserBackendRegistry FakeRegistry(string? fixturesRoot = null) =>

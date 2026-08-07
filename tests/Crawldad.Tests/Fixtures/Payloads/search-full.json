@@ -48,6 +48,14 @@
 
     { "loop": { "maxIterations": 100000, "while": "hasMorePages", "do": [
 
+        { "comment": "CHECKPOINT (§11) — durably record the page cursor at the top of each page. On resume the fresh session re-navigates to resumeUrl (skipping the initial search + earlier pages), then the loop continues from here." },
+        { "checkpoint": { "name": "searchPage",
+            "cursor": "{ resumeUrl: pageUrl(), page: count(pages) + 1 }",
+            "resume": [
+              { "goto": { "url": "${checkpoint.resumeUrl}" } },
+              { "waitForLoadState": { "state": "networkidle" } }
+            ] } },
+
         { "set": { "var": "pageResults", "value": "[]" } },
         { "locate": { "var": "rows", "selector": "#ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList tr" } },
 

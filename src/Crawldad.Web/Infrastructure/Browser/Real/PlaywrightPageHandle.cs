@@ -48,4 +48,7 @@ internal sealed class PlaywrightPageHandle(IPage page) : IPageHandle
         });
 
     public Task CloseAsync(CancellationToken ct) => PlaywrightFaults.RunAsync(() => page.CloseAsync());
+
+    public Task<byte[]> ScreenshotAsync(CancellationToken ct) =>
+        PlaywrightFaults.RunAsync(() => page.ScreenshotAsync(new PageScreenshotOptions { FullPage = true }));
 }
