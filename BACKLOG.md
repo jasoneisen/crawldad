@@ -83,7 +83,12 @@ SECURITY.md.
 ## Tier 2 — approved engineering follow-ups
 
 ### [#5](https://github.com/jasoneisen/crawldad/issues/5) Complete `RunExecutorSaga` at terminal via the `RunDeadline` handler
-**Status:** approved 2026-08-07. **Ref:** §14.2, SECURITY.md "Durable state at rest".
+**Status:** shipped 2026-08-08 (PR #28, reviewer-approved after a two-round loop — round 1 caught a
+deadline-killed residual linger + SECURITY.md overclaim in the first design). Final design differs
+from the ticket sketch: the saga is deleted atomically in the terminal transaction
+(`RunFinalization.Apply`), `RunDeadline` demoted to a plain durably-delayed run-stopper, and
+saga start made idempotent under redelivery (`StartOrHandle` + `[SagaIdentity]` — the #16-review
+race is fixed, not masked). **Ref:** §14.2, SECURITY.md "Durable state at rest".
 A finished run's script + inputs linger indefinitely in `mt_doc_runexecutorsaga` (the saga is never
 `MarkCompleted()` — the finisher isn't a saga handler). Fix: `Handle(RunDeadline)` checks the run's
 disposition via `RunProgress` and `MarkCompleted()` when terminal — the already-scheduled deadline
