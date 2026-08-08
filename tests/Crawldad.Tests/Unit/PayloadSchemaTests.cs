@@ -44,6 +44,17 @@ public class PayloadSchemaTests
         PayloadSchema.Validate(Parse(Steps("""[ { "screenshot": { "selector": "#x" } } ]"""))).ShouldNotBeEmpty();
 
     [Fact]
+    public void A_download_node_carrying_the_removed_idempotency_key_fails_the_schema()
+    {
+        // CD-11: download.idempotencyKey was accepted-but-ignored, then removed. The download node is
+        // additionalProperties:false, so the field is now rejected at save time exactly like any unknown property —
+        // content addressing already provides the stored:true dedup (§9.3). The reject descends into the download node.
+        var errors = PayloadSchema.Validate(Parse(Steps(
+            """[ { "download": { "trigger": [ { "click": { "selector": "a" } } ], "to": "input.store", "var": "dl", "idempotencyKey": "x" } } ]""")));
+        errors.ShouldContain(e => e.Path.StartsWith("/steps/0/download", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void An_unknown_node_head_fails_the_schema()
     {
         var errors = PayloadSchema.Validate(Parse(Steps("""[ { "frobnicate": {} } ]""")));

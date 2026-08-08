@@ -184,11 +184,6 @@ internal sealed class SemanticWalker
             case "download":
                 CheckExpr(body.GetProperty("to").GetString()!, $"{p}/to");
                 WalkBlock(body.GetProperty("trigger"), $"{p}/trigger");
-                if (body.TryGetProperty("idempotencyKey", out var idem))
-                {
-                    CheckExpr(idem.GetString()!, $"{p}/idempotencyKey");
-                }
-
                 Define(body);
                 break;
             case "set":

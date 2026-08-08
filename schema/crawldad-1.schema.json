@@ -177,7 +177,8 @@
 
         { "required": ["download"], "additionalProperties": false, "properties": { "download": {
           "type": "object", "required": ["trigger", "to", "var"], "additionalProperties": false,
-          "properties": { "trigger": { "$ref": "#/$defs/block" }, "to": { "type": "string" }, "var": { "type": "string" }, "timeoutMs": { "type": "integer" }, "idempotencyKey": { "type": "string" } } } } },
+          "description": "Run `trigger`, capture the browser download it provokes, and stream the bytes to the `to` storageTarget under their content-addressed identity (§9.3). Storage is idempotent by content hash — an already-present blob short-circuits to `stored:true` with no re-upload — so a stable artifact is de-duplicated automatically, no author key required. (`idempotencyKey` was removed in CD-11: content addressing already delivers that `stored:true` dedup, and a pre-fetch key skip would need per-tenant key→blob state kept coherent with §12 retention plus author warrants against upstream drift and skipped trigger side-effects. See §9.3.)",
+          "properties": { "trigger": { "$ref": "#/$defs/block" }, "to": { "type": "string" }, "var": { "type": "string" }, "timeoutMs": { "type": "integer" } } } } },
 
         { "required": ["set"], "additionalProperties": false, "properties": { "set": {
           "type": "object", "required": ["var", "value"], "additionalProperties": false,

@@ -184,7 +184,7 @@ any action/selector names a frame handle (§5.2); `timeoutMs?` overrides the tim
 | `clear` | `selector:Sel, in?` | `ClearAsync` | `:99,:107` |
 | `addStyleTag` | `content:Tmpl` | `AddStyleTagAsync` | force tabs visible `:209` |
 | `screenshot` | `name?:Tmpl` (full-page → `IScreenshotStore`) | `page.ScreenshotAsync` | #8 shipped: full-page via the screenshot-on-failure seam; `to:Target`/`fullPage`/`selector`/`in` deferred until a workload needs them (§13) |
-| `download` | `trigger:Node[], to:Target, timeoutMs?, idempotencyKey?:Expr, var` | `WaitForDownloadAsync` + trigger | per-row `:560` |
+| `download` | `trigger:Node[], to:Target, timeoutMs?, var` | `WaitForDownloadAsync` + trigger | per-row `:560` |
 | `set` | `var, path?:Tmpl, value:Expr` | (interpreter state) | pervasive |
 | `push` | `into:var, value:Expr` | (interpreter state) | accumulate output lists |
 | `log` | `level:"info"\|"warning"\|"error", message:Tmpl` | emits a `LogEmitted` run event | all `_logger.LogWarning/Error` |
@@ -521,7 +521,29 @@ The `download` result var carries: `{ contentId, sha256, sizeBytes, storedAs, st
 `internalFilename` follows `BuildInternalFilename` = `"{contentId}.{ext}"`, but `{ext}` comes from the
 **scraped filename cell** — which can differ from the download's HTTP-suggested name — so the payload
 composes it from the scraped `filename` + `contentId` (Appendix B.2), not from the download's own name.
-`idempotencyKey?` lets the payload dedupe on `contentId` before re-uploading.
+
+**Deduplication is by content hash, not an author key (CD-11 decision).** The `stored:true`
+short-circuit above already de-duplicates a stable artifact for free: the engine hashes the drained
+bytes, and an already-present `contentId` skips the re-upload. A `download.idempotencyKey` field was
+accepted-but-ignored through Phase 4; CD-11 **removed it** (schema `additionalProperties:false` now
+rejects it at save time) rather than honour it, because it added nothing its own spec had promised —
+"dedupe on `contentId` before re-uploading" is precisely what content addressing does unconditionally.
+The *only* capability a key adds over the content hash is a **pre-fetch skip** (short-circuit before
+running `trigger` and fetching the bytes, saving bandwidth on a known-stable artifact). That was
+rejected as disproportionate and unsafe here: it would need a new persistent, per-tenant
+`key → {contentId, sha256, sizeBytes, storedAs}` store (the content-addressed blob stores of §9.4 do
+not serve arbitrary-key lookups), kept **coherent with §12 retention** — the `RetentionJanitor` ages
+out `BlobKind.Download` blobs, so every key hit must still probe `ExistsAsync` and re-download on a
+reclaimed blob (never 404 a stale ref), and the key store needs its own TTL or it leaks dangling
+pointers — plus a `Downloaded` trace discriminator (`dedupe:"idempotencyKey"` vs `"contentHash"`) to
+stay observable, and it carries two silent, engine-unguardable footguns: **upstream drift** (bytes
+change but the author reuses the key ⇒ the run keeps the old ref, the HTTP idempotency-key contract)
+and **skipped trigger side-effects** (content-hash dedup always runs `trigger`; a pre-fetch skip does
+not, so any page-state the author put in `trigger` silently does not happen). Migration is a no-op at
+run time — the field was never honoured, the run-time pre-pass (`ValidateStructure`) never read it, so
+stored payloads that carried it still run unchanged; only re-saving one now fails validation. Revisit
+if a workload appears whose stable artifacts are large enough that skipping the fetch itself pays for
+the key→blob subsystem and its retention coupling.
 
 ---
 

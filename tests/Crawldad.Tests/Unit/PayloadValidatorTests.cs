@@ -48,7 +48,7 @@ public class PayloadValidatorTests
     [Fact]
     public void Scrape_payload_B2_validates_clean() => ValidateAll(Load("scrape-full.json")).ShouldBeEmpty();
 
-    // A valid payload exercising the rarer shapes B.1/B.2 do not: no `vars` block; a `download` idempotencyKey; a
+    // A valid payload exercising the rarer shapes B.1/B.2 do not: no `vars` block; a `download` inside a `forEach`; a
     // `locate` from-form with a filter and no nth; a `for` loop with a step; a `forEach` with an index; and a
     // structured selector map carrying base/css/in/nth/first.
     [Fact]
@@ -65,7 +65,7 @@ public class PayloadValidatorTests
                     { "waitFor": { "selector": { "base": "rows", "css": "td", "in": "fr", "nth": "0", "first": true } } }
                 ] } },
                 { "forEach": { "in": "['a']", "as": "x", "index": "ix", "maxIterations": 10, "do": [
-                    { "download": { "trigger": [ { "click": { "selector": "a" } } ], "to": "input.store", "idempotencyKey": "x", "var": "dl" } }
+                    { "download": { "trigger": [ { "click": { "selector": "a" } } ], "to": "input.store", "var": "dl" } }
                 ] } }
               ],
               "result": "null" }
