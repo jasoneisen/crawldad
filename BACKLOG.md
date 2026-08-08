@@ -191,9 +191,10 @@ Configure repo `vars` for `.github/workflows/canary.yml` (canary link uses the l
 ## Tier 4 — carried engine gaps (deliberate since P3; none block LJCMG)
 
 ### [#8](https://github.com/jasoneisen/crawldad/issues/8) Explicit `screenshot` node
-**Status:** open; cheap — `IPageHandle.ScreenshotAsync` + `IScreenshotStore` exist (P5
-screenshot-on-failure). Add the payload-authored action: schema, semantic walker, interpreter,
-trace event with blob ref, fake + real coverage.
+**Status:** shipped 2026-08-08 (PR #30, reviewer-approved first round). Full-page
+`{ "screenshot": { "name"?: Tmpl } }` through the failure-screenshot seam (inherits #2 storage,
+TTL, tenant partitioning); `Screenshotted` trace event + additive timeline `Screenshots` list;
+sync fast-path inert. Element-scope (`sel`/`in`) and `fullPage` flag deferred alongside #9.
 
 ### [#9](https://github.com/jasoneisen/crawldad/issues/9) Structured `Sel` role/text/xpath
 **Status:** open. **Ref:** §5.2. `Sel` carries css + title today; the acceptance suite needs no
