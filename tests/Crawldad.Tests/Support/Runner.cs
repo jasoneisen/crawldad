@@ -37,8 +37,9 @@ internal static class Runner
     /// <param name="inputsJson">The inputs JSON.</param>
     /// <param name="clock">The time seam (defaults to the frozen <see cref="FakeClock"/>); pass a real one to exercise retry delays.</param>
     /// <param name="sinks">The download-sink registry (defaults to a fresh in-memory fake under kind <c>"fake"</c>).</param>
+    /// <param name="limits">The server-side resource caps (CD-3); defaults to the generous <see cref="RunLimits.Default"/>.</param>
     public static async Task<(RunOutcome Outcome, FakeBrowserBackend Backend)> RunWithFakeAsync(
-        string payloadJson, string inputsJson = FakeInputs, TimeProvider? clock = null, IDownloadSinkRegistry? sinks = null)
+        string payloadJson, string inputsJson = FakeInputs, TimeProvider? clock = null, IDownloadSinkRegistry? sinks = null, RunLimits? limits = null)
     {
         using var payloadDoc = JsonDocument.Parse(payloadJson);
         using var inputsDoc = JsonDocument.Parse(inputsJson);
@@ -50,7 +51,8 @@ internal static class Runner
             new SingleBackendRegistry("fake", backend),
             sinks ?? new SingleSinkRegistry("fake", new FakeDownloadSink()),
             clock ?? new FakeClock(),
-            TestTenants.InterpreterTenant);
+            TestTenants.InterpreterTenant,
+            limits: limits);
         return (await interpreter.RunAsync(CancellationToken.None), backend);
     }
 
@@ -70,8 +72,11 @@ internal static class Runner
     /// <param name="sink">The download sink bound under kind <c>"fake"</c> (defaults to a fresh in-memory fake).</param>
     /// <param name="backend">The backend bound under adapter <c>"fake"</c> (defaults to the record/replay fake); pass a
     /// decorator to model a page whose screenshot capture fails.</param>
+    /// <param name="limits">The server-side resource caps (CD-3); defaults to the generous <see cref="RunLimits.Default"/>.</param>
+    /// <param name="resume">A checkpoint to resume from (§11), or null for a fresh run from the top.</param>
     public static async Task<(RunOutcome Outcome, RecordingObserver Observer, InMemoryScreenshotStore Screenshots)> RunWithObserverAsync(
-        string payloadJson, string inputsJson = FakeInputs, bool cancelRequested = false, FakeDownloadSink? sink = null, IBrowserBackend? backend = null)
+        string payloadJson, string inputsJson = FakeInputs, bool cancelRequested = false, FakeDownloadSink? sink = null, IBrowserBackend? backend = null,
+        RunLimits? limits = null, ResumeState? resume = null)
     {
         using var payloadDoc = JsonDocument.Parse(payloadJson);
         using var inputsDoc = JsonDocument.Parse(inputsJson);
@@ -86,8 +91,9 @@ internal static class Runner
             new FakeClock(),
             TestTenants.InterpreterTenant,
             observer,
-            resume: null,
-            screenshots);
+            resume,
+            screenshots,
+            limits);
         return (await interpreter.RunAsync(CancellationToken.None), observer, screenshots);
     }
 

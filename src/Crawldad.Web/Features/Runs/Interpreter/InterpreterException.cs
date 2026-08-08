@@ -19,6 +19,18 @@ internal static class InterpreterErrorCodes
     /// <summary>A loop exceeded its <c>maxIterations</c> cap (§6 safety).</summary>
     public const string MaxIterationsExceeded = "max_iterations_exceeded";
 
+    /// <summary>The run ran more semantic steps than the server's max-steps cap (CD-3/§12) — the global runaway guard the
+    /// per-loop <c>maxIterations</c> cap cannot cover (many loops each under their own cap still multiply into a runaway).</summary>
+    public const string MaxStepsExceeded = "max_steps_exceeded";
+
+    /// <summary>The run's total downloaded bytes crossed the server's max-download-bytes cap (CD-3/§9.3/§12) — enforced as
+    /// the bytes flow, so an over-cap download aborts mid-stream, never after buffering the whole body.</summary>
+    public const string MaxDownloadBytesExceeded = "max_download_bytes_exceeded";
+
+    /// <summary>The run appended more trace events than the server's max-events cap (CD-3/§12) — a fair-use guardrail on run
+    /// stream volume (docs/PRODUCT.md §Pv.3) no legitimate run reaches.</summary>
+    public const string MaxEventsExceeded = "max_events_exceeded";
+
     /// <summary>A <c>push</c> target is undefined or is not an array.</summary>
     public const string UndefinedPushTarget = "undefined_push_target";
 

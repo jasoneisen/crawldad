@@ -28,4 +28,15 @@ public interface IEvalScope
 
     /// <summary>The read-only DOM access seam the page-querying builtins (<c>count/exists/text/…</c>) go through.</summary>
     IDomAccess Dom { get; }
+
+    /// <summary>
+    /// The per-evaluation expression step budget (CD-3/§12): the maximum node evaluations a single
+    /// <see cref="CrawldadExpression.EvaluateAsync"/> may spend before it aborts with
+    /// <see cref="ExpressionErrorCodes.ExpressionBudgetExceeded"/>. Defence in depth over the parse-time depth cap — the
+    /// evaluator is already non-Turing-complete, but a breadth-heavy expression (a binding builtin over a large list) is
+    /// still bounded here. Carried on the scope so it rides to every nested evaluation without threading through call
+    /// sites; the run scope returns the server-configured value, and the default keeps ad-hoc scopes (tests, tooling)
+    /// generously budgeted. A payload can never raise it — it is a server-side knob, not a payload field.
+    /// </summary>
+    int ExpressionStepBudget => CrawldadExpression.DefaultStepBudget;
 }

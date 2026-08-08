@@ -36,6 +36,9 @@ public static class ExpressionErrorCodes
     public const string RegexTooLarge = "regex_too_large";
     /// <summary>A regex match exceeded the time budget (§7.2 "timeout-guarded") — reproduces a catastrophic-backtracking abort as terminal, never a hang.</summary>
     public const string RegexTimeout = "regex_timeout";
+    /// <summary>A single expression evaluation spent its per-evaluation step budget (CD-3/§12) — a fuel-metered abort of a
+    /// pathological (breadth-heavy) expression, defence in depth beyond the parse-time depth cap. Terminal, never a spin.</summary>
+    public const string ExpressionBudgetExceeded = "expression_budget_exceeded";
 }
 
 /// <summary>

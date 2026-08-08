@@ -10,6 +10,7 @@ using Crawldad.Web.Infrastructure.Security;
 using Crawldad.Web.Infrastructure.Storage;
 using Marten;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
 using Wolverine;
 using Wolverine.Http;
 
@@ -55,9 +56,14 @@ public static class StartRunEndpoint
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
         IMessageBus bus,
+        IOptions<RunLimitsOptions> limitsOptions,
         TimeProvider clock,
         CancellationToken ct)
     {
+        // The server-side mid-run caps (CD-3/§12) the synchronous interpreter enforces; the async executor derives its own
+        // from the same options. A payload cannot raise them — they are config, not payload fields.
+        var limits = limitsOptions.Value.ToRunLimits();
+
         if (request.PayloadId is Guid payloadId)
         {
             var resolved = await PayloadRevisions.LoadAsync(session, payloadId, ct);
@@ -82,12 +88,12 @@ public static class StartRunEndpoint
             using var pinnedDocument = JsonDocument.Parse(pinned.Script);
             return await DispatchAsync(
                 request, pinnedDocument.RootElement, pinned.Script, pinned.ScriptHash, payloadId, revision,
-                session, registry, sinks, scrubber, secretScope, bus, clock, ct);
+                session, registry, sinks, scrubber, secretScope, bus, limits, clock, ct);
         }
 
         return await DispatchAsync(
             request, request.Payload, request.Payload.GetRawText(), ComputeScriptHash(request.Payload), null, null,
-            session, registry, sinks, scrubber, secretScope, bus, clock, ct);
+            session, registry, sinks, scrubber, secretScope, bus, limits, clock, ct);
     }
 
     // Routes the resolved payload to the synchronous inline path (default) or the async executor-saga path.
@@ -104,11 +110,12 @@ public static class StartRunEndpoint
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
         IMessageBus bus,
+        RunLimits limits,
         TimeProvider clock,
         CancellationToken ct) =>
         request.Async
             ? StartBackgroundRunAsync(payload, script, scriptHash, payloadId, payloadRevision, request.Inputs, session, scrubber, bus, clock, ct)
-            : ExecuteInlineAsync(payload, scriptHash, payloadId, payloadRevision, request.Inputs, session, registry, sinks, scrubber, secretScope, clock, ct);
+            : ExecuteInlineAsync(payload, scriptHash, payloadId, payloadRevision, request.Inputs, session, registry, sinks, scrubber, secretScope, limits, clock, ct);
 
     // The synchronous run path (P1–P4, unchanged): open the per-run secret scope, pin RunStarted, interpret, and persist the
     // scrubbed trace + terminal event — all in the request's one transaction. Byte-for-byte the prior behaviour, so every
@@ -124,6 +131,7 @@ public static class StartRunEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        RunLimits limits,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -141,7 +149,7 @@ public static class StartRunEndpoint
 
         // The session is already tenant-scoped by Wolverine's HTTP tenant detection, so its tenant is the run's tenant —
         // thread it to the interpreter so a synchronous run's downloads/screenshots land in this tenant's storage (CD-1).
-        var outcome = await new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId).RunAsync(ct);
+        var outcome = await new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId, limits: limits).RunAsync(ct);
 
         // The interpreter's trace events (LogEmitted/RunAttemptFailed) land between RunStarted and the terminal event,
         // in occurrence order — each scrubbed at this single append chokepoint, so nothing credential-bearing is persisted.

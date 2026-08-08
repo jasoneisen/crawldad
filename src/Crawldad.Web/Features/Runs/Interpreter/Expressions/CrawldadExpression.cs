@@ -9,6 +9,12 @@ namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 /// </summary>
 public sealed class CrawldadExpression
 {
+    /// <summary>The default per-evaluation step budget (CD-3/§12) when a scope names no stricter one: generous enough that
+    /// no legitimate expression approaches it (a normal expression spends tens of units; a binding builtin over a large
+    /// list, thousands), so it only ever bites a pathological breadth-heavy expression. A server-side constant — the run
+    /// scope overrides it with the configured knob, and a payload can never raise it.</summary>
+    public const int DefaultStepBudget = 1_000_000;
+
     private readonly ExpressionNode _root;
 
     private CrawldadExpression(ExpressionNode root, string source)
@@ -47,7 +53,9 @@ public sealed class CrawldadExpression
     public ValueTask<object?> EvaluateAsync(IEvalScope scope, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(scope);
-        return _root.EvaluateAsync(new EvalContext(scope, ct));
+        // A fresh fuel counter per top-level evaluation (CD-3/§12): the budget is per expression, not per run, sized by the
+        // scope's configured knob. Every nested node spends from this same counter via EvalContext.
+        return _root.EvaluateAsync(new EvalContext(scope, new ExpressionFuel(scope.ExpressionStepBudget), ct));
     }
 
     /// <summary>

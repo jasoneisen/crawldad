@@ -49,6 +49,7 @@ internal sealed class RunInterpreter
     private readonly IRunObserver? _observer;
     private readonly ResumeState? _resume;
     private readonly IScreenshotStore? _screenshots;
+    private readonly RunLimits _limits;
     private readonly List<object> _events = [];
     private readonly Dictionary<string, Func<JsonElement, CancellationToken, ValueTask<Flow>>> _dispatch;
 
@@ -58,6 +59,8 @@ internal sealed class RunInterpreter
     private int _steps;
     private int _requests;
     private int _downloads;
+    private long _downloadedBytes;
+    private int _eventCount;
     private int _checkpointSeq;
     private bool _resumePending;
     private int _defaultTimeoutMs = 120000;
@@ -80,6 +83,9 @@ internal sealed class RunInterpreter
     /// <param name="resume">The checkpoint to resume from (§11), or null for a fresh run from the top.</param>
     /// <param name="screenshots">The failure-screenshot blob store (§13): the executor supplies one; null on the synchronous
     /// path (no observer ⇒ no screenshot-on-failure). Capture is gated on <c>config.screenshotOnFailure</c> and best-effort.</param>
+    /// <param name="limits">The server-side per-run resource caps (CD-3/§12): max steps, total downloaded bytes, event count,
+    /// and the per-evaluation expression budget. Null uses <see cref="RunLimits.Default"/> (the interpreter unit harness);
+    /// the sync endpoint and the async executor both pass the resolved configured caps.</param>
     public RunInterpreter(
         JsonElement payload,
         IReadOnlyDictionary<string, object?> input,
@@ -89,7 +95,8 @@ internal sealed class RunInterpreter
         string tenant,
         IRunObserver? observer = null,
         ResumeState? resume = null,
-        IScreenshotStore? screenshots = null)
+        IScreenshotStore? screenshots = null,
+        RunLimits? limits = null)
     {
         _payload = payload;
         _input = input;
@@ -100,8 +107,9 @@ internal sealed class RunInterpreter
         _observer = observer;
         _resume = resume;
         _screenshots = screenshots;
+        _limits = limits ?? RunLimits.Default;
         _checkpointSeq = resume?.Sequence ?? 0; // keep checkpoint sequence monotonic across a resume
-        _scope = new RunScope(input); // an input-only scope for backend resolution; execution rebuilds it per attempt
+        _scope = new RunScope(input, _limits.ExpressionStepBudget); // input-only scope for backend resolution; execution rebuilds it per attempt
         _dispatch = BuildDispatch();
     }
 
@@ -171,7 +179,7 @@ internal sealed class RunInterpreter
         {
             try
             {
-                _scope = new RunScope(_input); // FRESH scope per attempt — re-evaluate vars, same session
+                _scope = new RunScope(_input, _limits.ExpressionStepBudget); // FRESH scope per attempt — re-evaluate vars, same session
                 _scope.Bind(_page);
                 if (_resume is null)
                 {
@@ -417,7 +425,13 @@ internal sealed class RunInterpreter
             throw new RunCancelledSignal();
         }
 
-        _steps++;
+        // Max-steps cap (CD-3/§12): the global runaway guard, checked at the single node-dispatch chokepoint so loop-body
+        // nodes count too — many loops each under their own maxIterations still multiply into a runaway this bounds.
+        if (++_steps > _limits.MaxSteps)
+        {
+            throw new InterpreterException(InterpreterErrorCodes.MaxStepsExceeded, $"run exceeded its {_limits.MaxSteps}-step cap");
+        }
+
         var head = node.EnumerateObject().First();
         _currentKind = head.Name;
         return _dispatch[head.Name](head.Value, ct); // head.Name is a known kind — ValidateProgram guaranteed it
@@ -563,9 +577,7 @@ internal sealed class RunInterpreter
         byte[] data;
         await using (var content = await download.OpenReadAsync(ct))
         {
-            using var buffer = new MemoryStream();
-            await content.CopyToAsync(buffer, ct);
-            data = buffer.ToArray();
+            data = await DrainWithinByteCapAsync(content, ct);
         }
 
         var hash = SHA256.HashData(data);
@@ -591,6 +603,31 @@ internal sealed class RunInterpreter
 
         // §13 Downloaded: metadata only (blob ref + guessed content type + size + hash) — the bytes streamed to the sink.
         await StepAsync(new Downloaded(storedAs, ContentTypes.ForFile(storedAs), sizeBytes, sha256, _clock.GetUtcNow()), ct);
+    }
+
+    // Drains the download to bytes while enforcing the run-wide downloaded-bytes cap AS THE BYTES FLOW (CD-3/§9.3/§12): each
+    // chunk advances the cumulative total (across every download in the run) and an over-cap total aborts mid-stream, so a
+    // run that would blow the cap fails at the first chunk that crosses it, never after buffering a huge body. The bytes are
+    // still materialised for the whole-payload SHA-256 content identity (§9.3) — the guard is on how many may flow, not on
+    // buffering the ones that stay under it.
+    private async ValueTask<byte[]> DrainWithinByteCapAsync(Stream content, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await content.ReadAsync(chunk, ct)) > 0)
+        {
+            _downloadedBytes += read;
+            if (_downloadedBytes > _limits.MaxDownloadedBytes)
+            {
+                throw new InterpreterException(
+                    InterpreterErrorCodes.MaxDownloadBytesExceeded, $"run exceeded its {_limits.MaxDownloadedBytes}-byte download cap");
+            }
+
+            await buffer.WriteAsync(chunk.AsMemory(0, read), ct);
+        }
+
+        return buffer.ToArray();
     }
 
     private IDownloadSink ResolveSink(object? target)
@@ -894,6 +931,7 @@ internal sealed class RunInterpreter
     // order), else accumulated for the synchronous endpoint to append at the end (P1 behaviour + goldens unchanged).
     private ValueTask EmitAsync(object traceEvent, CancellationToken ct)
     {
+        EnforceEventBudget();
         if (_observer is not null)
         {
             return _observer.EmitAsync(traceEvent, ct);
@@ -904,18 +942,44 @@ internal sealed class RunInterpreter
     }
 
     // Emits a semantic step-trace event (StepStarted/Navigated/…): ONLY on the durable path (an observer is present). The
-    // synchronous path no-ops, so its stream — and every §10 golden — is byte-identical to before.
-    private ValueTask StepAsync(object traceEvent, CancellationToken ct) =>
-        _observer is null ? ValueTask.CompletedTask : _observer.EmitAsync(traceEvent, ct);
+    // synchronous path no-ops, so its stream — and every §10 golden — is byte-identical to before (and counts no event).
+    private ValueTask StepAsync(object traceEvent, CancellationToken ct)
+    {
+        if (_observer is null)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        EnforceEventBudget();
+        return _observer.EmitAsync(traceEvent, ct);
+    }
+
+    // Max-events cap (CD-3/§12): counts every trace event the interpreter appends to the run stream (step + coarse +
+    // checkpoint markers) and trips terminally past the cap. The terminal RunFailed/RunSucceeded is appended by the
+    // executor/endpoint after the interpreter returns, so it always lands — the cap bounds the run's own emitted volume.
+    private void EnforceEventBudget()
+    {
+        if (++_eventCount > _limits.MaxEvents)
+        {
+            throw new InterpreterException(InterpreterErrorCodes.MaxEventsExceeded, $"run exceeded its {_limits.MaxEvents}-event cap");
+        }
+    }
 
     // Reports a failure (§13): captures a screenshot when asked (a page is bound), emits StepFailed with its ref, then
     // builds the RunOutcome. On the synchronous path StepAsync no-ops and the screenshot is skipped — Failed() as before.
     private async Task<RunOutcome> ReportFailedAsync(string failureClass, string code, string message, DateTimeOffset startedAt, bool screenshot, CancellationToken ct)
     {
         var screenshotRef = screenshot ? await CaptureFailureScreenshotAsync(ct) : null;
-        await StepAsync(new StepFailed(_currentStepIndex, code, screenshotRef, _clock.GetUtcNow()), ct);
+        // The terminal StepFailed marker bypasses the event budget (like the RunFailed the executor appends after): a
+        // max_events_exceeded failure must still be able to report itself, not re-trip the cap while emitting its own marker.
+        await EmitTerminalStepAsync(new StepFailed(_currentStepIndex, code, screenshotRef, _clock.GetUtcNow()), ct);
         return Failed(failureClass, code, message, startedAt);
     }
+
+    // Emits the terminal StepFailed marker straight to the observer (durable path only), never counting it against the
+    // event budget — the failure's own marker always lands, exactly as the terminal RunFailed does.
+    private ValueTask EmitTerminalStepAsync(object traceEvent, CancellationToken ct) =>
+        _observer is null ? ValueTask.CompletedTask : _observer.EmitAsync(traceEvent, ct);
 
     // Captures the failing page to blob storage and returns the ref (§13), or null when unavailable: no observer (sync
     // path), no store, disabled via config, or no session/page bound. Best-effort — a crashed page's capture failure is
@@ -1000,6 +1064,7 @@ internal sealed class RunInterpreter
 
         var name = body.GetProperty("name").GetString()!;
         var cursor = JsonValues.ToJson(await ExprAsync(body.GetProperty("cursor"), ct));
+        EnforceEventBudget(); // the checkpoint marker is a stream event too (CD-3/§12)
         await _observer.CheckpointReachedAsync(new CheckpointSnapshot(name, ++_checkpointSeq, _currentStepIndex, cursor, SnapshotVarsJson()), ct);
     }
 

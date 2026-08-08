@@ -15,11 +15,17 @@ internal sealed class RunScope : IEvalScope, IDomAccess
     private readonly SelResolver _sel;
     private IPageHandle? _page;
 
-    public RunScope(IReadOnlyDictionary<string, object?> input)
+    public RunScope(IReadOnlyDictionary<string, object?> input, int expressionStepBudget = CrawldadExpression.DefaultStepBudget)
     {
         _vars["input"] = new Dictionary<string, object?>(input, StringComparer.Ordinal);
         _sel = new SelResolver(this);
+        ExpressionStepBudget = expressionStepBudget;
     }
+
+    /// <summary>The per-evaluation expression fuel budget (CD-3/§12) every expression this run evaluates is metered against
+    /// — the server-configured knob threaded from <see cref="RunLimits"/>, overriding the interface default so a payload
+    /// can never widen it.</summary>
+    public int ExpressionStepBudget { get; }
 
     /// <summary>The current page. Bound after the backend connects (§8.1 order); reads before <see cref="Bind"/> throw.</summary>
     internal IPageHandle PageHandle =>

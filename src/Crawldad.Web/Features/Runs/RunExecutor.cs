@@ -7,6 +7,7 @@ using Crawldad.Web.Infrastructure.Storage;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Wolverine;
 
 namespace Crawldad.Web.Features.Runs;
@@ -43,6 +44,8 @@ public static class ExecuteRunHandler
 /// <param name="screenshots">The failure-screenshot blob store the interpreter captures into (§13).</param>
 /// <param name="signals">The in-process SSE notification hub pinged after each durable append (§11/§13).</param>
 /// <param name="lifetime">The host lifetime, so an in-flight run observes shutdown and leaves itself resumable.</param>
+/// <param name="runLimits">The server-side resource-limit options (CD-3/§12): the executor derives the interpreter's
+/// mid-run caps from them once. A payload can never raise them.</param>
 /// <param name="clock">The time seam for trace timestamps.</param>
 public sealed class RunExecutor(
     IDocumentStore store,
@@ -54,10 +57,14 @@ public sealed class RunExecutor(
     IScreenshotStore screenshots,
     RunEventSignals signals,
     IHostApplicationLifetime lifetime,
+    IOptions<RunLimitsOptions> runLimits,
     TimeProvider clock)
 {
     /// <summary>The terminal failure code for a run that outran its wall-clock deadline (§8.4).</summary>
     public const string DeadlineExceededCode = "run_deadline_exceeded";
+
+    // The interpreter's mid-run resource caps (CD-3/§12), resolved once from the bound options for every run this executor drives.
+    private readonly RunLimits _limits = runLimits.Value.ToRunLimits();
 
     /// <summary>Executes (or resumes) the run to a terminal state under <paramref name="tenantId"/>. A host-shutdown
     /// interruption is left un-finalised so the durable <see cref="ExecuteRun"/> message is redelivered and the run resumes
@@ -124,7 +131,7 @@ public sealed class RunExecutor(
         RunOutcome outcome;
         try
         {
-            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, tenantId, observer, resume, screenshots).RunAsync(runCt);
+            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, tenantId, observer, resume, screenshots, _limits).RunAsync(runCt);
         }
         catch (OperationCanceledException) when (runCt.IsCancellationRequested)
         {

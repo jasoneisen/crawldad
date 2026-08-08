@@ -60,6 +60,11 @@ public static class RunsModule
     {
         services.AddScoped<IValidator<StartRunRequest>, StartRunRequestValidator>();
 
+        // The server-side resource limits (CD-3/§12): the config knobs bound from Crawldad:Limits. The four mid-run caps
+        // flow into the interpreter as RunLimits (derived per-consumer from these options); the concurrent-runs admission
+        // gate (limit 5) reads MaxConcurrentRunsPerTenant. A payload can never raise them.
+        services.AddOptions<RunLimitsOptions>().BindConfiguration(RunLimitsOptions.Section);
+
         // The durable-execution surface (§11/§14.2): the background executor that drives the saga's runs (owning its own
         // Marten sessions) and the in-process stop-signal registry the cancel endpoint + saga deadline raise. The saga and
         // its Marten storage are discovered/registered by Wolverine's Marten integration; these are the extra services the
