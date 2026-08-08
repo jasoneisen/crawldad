@@ -215,11 +215,21 @@ public static class DurableHost
         return host;
     }
 
-    /// <summary>Polls <c>GET /runs/{id}</c> until the run is no longer running, returning its terminal state body.</summary>
+    /// <summary>Polls <c>GET /runs/{id}</c> until the run reaches a terminal state (past <c>queued</c> and <c>running</c>),
+    /// returning its terminal state body.</summary>
     /// <param name="host">The host to poll.</param>
     /// <param name="runId">The run to poll.</param>
     /// <param name="timeout">How long to wait before giving up.</param>
-    public static async Task<JsonElement> PollUntilTerminalAsync(IAlbaHost host, Guid runId, TimeSpan timeout)
+    public static async Task<JsonElement> PollUntilTerminalAsync(IAlbaHost host, Guid runId, TimeSpan timeout) =>
+        await PollUntilAsync(host, runId, timeout, status => status is "succeeded" or "failed" or "cancelled");
+
+    /// <summary>Polls <c>GET /runs/{id}</c> until its status satisfies <paramref name="isDone"/> (CD-16: e.g. "left the queue"
+    /// — no longer <c>queued</c>), returning the matching state body.</summary>
+    /// <param name="host">The host to poll.</param>
+    /// <param name="runId">The run to poll.</param>
+    /// <param name="timeout">How long to wait before giving up.</param>
+    /// <param name="isDone">The predicate over the wire status that ends the poll.</param>
+    public static async Task<JsonElement> PollUntilAsync(IAlbaHost host, Guid runId, TimeSpan timeout, Func<string, bool> isDone)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -230,7 +240,7 @@ public static class DurableHost
                 x.StatusCodeShouldBe(200);
             });
             var root = (await result.ReadAsJsonAsync<JsonElement>()).Clone();
-            if (!string.Equals(root.GetProperty("status").GetString(), "running", StringComparison.Ordinal))
+            if (isDone(root.GetProperty("status").GetString()!))
             {
                 return root;
             }
@@ -238,6 +248,6 @@ public static class DurableHost
             await Task.Delay(40);
         }
 
-        throw new TimeoutException($"run {runId} did not reach a terminal state within {timeout}");
+        throw new TimeoutException($"run {runId} did not reach the awaited state within {timeout}");
     }
 }

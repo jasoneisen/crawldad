@@ -18,13 +18,21 @@ namespace Crawldad.Web.Features.Runs;
 /// leaves the run resumable — <see cref="RunRecoveryService"/> re-publishes it on the next host.</summary>
 public static class ExecuteRunHandler
 {
-    /// <summary>Drives one run (or resumes it) to a terminal state, under the message's tenant (CD-1).</summary>
+    /// <summary>Drives one run (or resumes it) to a terminal state, under the message's tenant (CD-1). When the run reaches a
+    /// terminal state (freeing its slot), it triggers promotion of the tenant's oldest queued run (CD-16) — a durable, no-op-if-
+    /// nothing-queued trigger; a run merely interrupted for recovery frees no slot and triggers nothing.</summary>
     /// <param name="command">The run to execute.</param>
     /// <param name="executor">The run executor.</param>
+    /// <param name="bus">The bus the queue promotion trigger is published on.</param>
     /// <param name="envelope">The message envelope — its tenant id scopes every session the executor opens for this run.</param>
     /// <param name="ct">The handler cancellation token (cancelled on host shutdown).</param>
-    public static Task Handle(ExecuteRun command, RunExecutor executor, Envelope envelope, CancellationToken ct) =>
-        executor.ExecuteAsync(command.RunId, envelope.TenantId, ct);
+    public static async Task Handle(ExecuteRun command, RunExecutor executor, IMessageBus bus, Envelope envelope, CancellationToken ct)
+    {
+        if (await executor.ExecuteAsync(command.RunId, envelope.TenantId, ct))
+        {
+            await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = envelope.TenantId });
+        }
+    }
 }
 
 /// <summary>
@@ -76,17 +84,19 @@ public sealed class RunExecutor(
     /// <param name="runId">The run to execute.</param>
     /// <param name="tenantId">The run's tenant (from the message envelope); a run with no tenant is a fail-closed no-op.</param>
     /// <param name="handlerCt">The handler cancellation token (cancelled on host shutdown).</param>
-    public async Task ExecuteAsync(Guid runId, string? tenantId, CancellationToken handlerCt)
+    /// <returns>True when the run reached a terminal state and freed its slot for good (so the caller promotes the tenant's
+    /// oldest queued run, CD-16); false when nothing ran or the run was merely interrupted for recovery (its slot is not free).</returns>
+    public async Task<bool> ExecuteAsync(Guid runId, string? tenantId, CancellationToken handlerCt)
     {
         if (string.IsNullOrEmpty(tenantId))
         {
-            return; // a run without a tenant cannot be resolved — fail closed (never touch the default partition)
+            return false; // a run without a tenant cannot be resolved — fail closed (never touch the default partition)
         }
 
         var loaded = await LoadRunnableAsync(runId, tenantId, handlerCt);
         if (loaded is null)
         {
-            return; // unknown run, already terminal (idempotent redelivery), or not yet set up
+            return false; // unknown run, already terminal (idempotent redelivery), or not yet set up
         }
 
         var (saga, progress) = loaded.Value;
@@ -96,7 +106,7 @@ public sealed class RunExecutor(
         var control = controls.GetOrAdd(runId);
         if (!control.TryClaim())
         {
-            return;
+            return false;
         }
 
         // Occupy the run's admission slot for as long as this executor drives it (CD-3): a no-op for a fresh run the HTTP
@@ -105,7 +115,7 @@ public sealed class RunExecutor(
         admissionGate.Occupy(tenantId, runId);
         try
         {
-            await DriveAsync(runId, tenantId, saga, progress, control, handlerCt);
+            return await DriveAsync(runId, tenantId, saga, progress, control, handlerCt);
         }
         finally
         {
@@ -115,7 +125,9 @@ public sealed class RunExecutor(
         }
     }
 
-    private async Task DriveAsync(Guid runId, string tenantId, RunExecutorSaga saga, RunProgress progress, RunControl control, CancellationToken handlerCt)
+    // Drives the run to a terminal state, returning true when it finalised (freeing its slot for good) and false when host
+    // shutdown interrupted it — the latter leaves the run resumable and its slot not truly free (a fresh host re-drives it).
+    private async Task<bool> DriveAsync(Guid runId, string tenantId, RunExecutorSaga saga, RunProgress progress, RunControl control, CancellationToken handlerCt)
     {
         // The deadline source (§8.4) forcibly interrupts a run stuck mid-call; it is linked in beside host shutdown so the
         // interpreter's operations observe both. The control binds it so the saga's deadline timeout can fire it.
@@ -148,15 +160,17 @@ public sealed class RunExecutor(
                 // The wall-clock deadline forcibly cancelled a stuck run (§8.4): finalise a terminal failure. The
                 // interpreter's `await using` already tore the backend session down cleanly.
                 await FinalizeAsync(runId, tenantId, DeadlineOutcome(), control, CancellationToken.None);
+                return true; // terminal — the slot is free for a queued run (CD-16)
             }
 
             // Otherwise host shutdown interrupted the run: leave RunProgress "running" (do NOT finalise) and return
             // normally so the message is acked cleanly. The startup recovery scan on the next host re-publishes
-            // ExecuteRun and the executor resumes from the last durable checkpoint (§11).
-            return;
+            // ExecuteRun and the executor resumes from the last durable checkpoint (§11). The slot is NOT truly free.
+            return false;
         }
 
         await FinalizeAsync(runId, tenantId, outcome, control, runCt);
+        return true; // terminal — the slot is free for a queued run (CD-16)
     }
 
     // A synthetic stopped outcome for a run the deadline forcibly cancelled mid-call (there is no salvageable result);
@@ -288,26 +302,32 @@ public sealed class RunExecutor(
 }
 
 /// <summary>
-/// The startup recovery for interrupted runs (§11): when a host boots on a Marten schema whose durable queues survived a
-/// prior host, any run still marked <see cref="RunStatus.Running"/> in <see cref="RunProgress"/> was interrupted mid-flight
-/// (the prior host was killed after a checkpoint but before finalising). This hosted service re-publishes a durable
-/// <see cref="ExecuteRun"/> for each, and the executor resumes it from its last checkpoint with a fresh browser session —
-/// not from step 0. It runs after the Wolverine host services (registered later), so the durable local queue is live.
+/// The startup recovery for interrupted <b>and queued</b> runs (§11/CD-16): when a host boots on a Marten schema whose durable
+/// queues survived a prior host, any run still marked <see cref="RunStatus.Running"/> in <see cref="RunProgress"/> was
+/// interrupted mid-flight, and any surviving <see cref="QueuedRun"/> was waiting at the cap when the prior host died. This
+/// hosted service re-publishes a durable <see cref="ExecuteRun"/> for each interrupted run (the executor resumes it from its
+/// last checkpoint with a fresh browser session — not from step 0), <b>seeds the queue's FIFO counter</b> above the surviving
+/// high-water sequence so post-restart enqueues preserve order, and re-triggers <see cref="PromoteQueued"/> for every tenant
+/// with a non-empty queue so queued runs start (in FIFO order) once slots are free. It runs after the Wolverine host services
+/// (registered later), so the durable local queue is live.
 /// </summary>
-/// <param name="store">The Marten store used to scan for interrupted runs.</param>
+/// <param name="store">The Marten store used to scan for interrupted and queued runs.</param>
 /// <param name="scopeFactory">Creates a scope to resolve the (scoped) message bus for re-publishing.</param>
 /// <param name="tenants">The configured tenant directory — the fan-out set the per-tenant scan iterates (CD-1).</param>
-public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactory scopeFactory, TenantRegistry tenants) : IHostedService
+/// <param name="queue">The run queue whose FIFO counter is seeded from the surviving high-water sequence.</param>
+public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactory scopeFactory, TenantRegistry tenants, RunQueue queue) : IHostedService
 {
-    /// <summary>Scans for interrupted runs and re-publishes their executor messages, <b>per tenant</b>. Under conjoined
-    /// tenancy (CD-1) every query is tenant-scoped, so recovery fans out over each configured tenant and re-publishes each
-    /// interrupted run's <see cref="ExecuteRun"/> tagged with that tenant — so the executor resumes it under the same
-    /// partition it started in. On a fresh database each per-tenant query simply finds none.</summary>
+    /// <summary>Scans for interrupted and queued runs and re-drives them, <b>per tenant</b>. Under conjoined tenancy (CD-1)
+    /// every query is tenant-scoped, so recovery fans out over each configured tenant: it re-publishes each interrupted run's
+    /// <see cref="ExecuteRun"/> tagged with that tenant, tracks the largest surviving <see cref="QueuedRun.Sequence"/>, and (for
+    /// a tenant with queued runs) publishes a <see cref="PromoteQueued"/> so its queue drains into free slots in FIFO order.
+    /// Finally it seeds the queue counter above that high-water mark. On a fresh database each per-tenant query finds none.</summary>
     /// <param name="cancellationToken">Cancels the scan.</param>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
+        var highWaterSequence = 0L;
 
         foreach (var tenantId in tenants.TenantIds)
         {
@@ -320,7 +340,20 @@ public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactor
             {
                 await bus.PublishAsync(new ExecuteRun(run.Id), new DeliveryOptions { TenantId = tenantId });
             }
+
+            // Surviving queued runs (CD-16): note the high-water FIFO sequence, and re-trigger promotion so the queue drains
+            // once slots free (the trigger drains one and re-triggers for each further free slot, in sequence order).
+            var queued = await session.Query<QueuedRun>().ToListAsync(cancellationToken);
+            if (queued.Count > 0)
+            {
+                highWaterSequence = Math.Max(highWaterSequence, queued.Max(q => q.Sequence));
+                await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
+            }
         }
+
+        // Seed the FIFO counter above every surviving queued run so a post-restart enqueue never reuses or undercuts a
+        // waiting run's sequence — FIFO ordering is preserved across the restart.
+        queue.Seed(highWaterSequence);
     }
 
     /// <summary>No teardown work.</summary>

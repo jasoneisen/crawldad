@@ -19,6 +19,17 @@ public sealed class RunLimitsOptions
     /// <summary>The global default concurrent-run cap per tenant when a tenant sets no override.</summary>
     public const int DefaultMaxConcurrentRunsPerTenant = 32;
 
+    /// <summary>The global default admission-queue depth per tenant (CD-16) when a tenant sets no override — the number of
+    /// at-cap runs that may wait before a further one is rejected <c>429 queue_depth_exceeded</c>. Generous by default so the
+    /// queue is effectively unbounded for legitimate use; the per-tier value (Free 10 / Team 100 / Scale 1,000) is set per
+    /// tenant (docs/PRODUCT.md §Pv.3).</summary>
+    public const int DefaultMaxQueueDepthPerTenant = 1_000;
+
+    /// <summary>The global default max queue wait in milliseconds (CD-16): how long a run may sit queued before it terminates
+    /// with <c>queue_wait_exceeded</c>. 0 disables the bound (a queued run waits indefinitely for a slot); the default leaves
+    /// it disabled so time-in-queue is capped only where a deployment opts in.</summary>
+    public const int DefaultMaxQueueWaitMs = 0;
+
     /// <summary>The most semantic steps one execution may run (§12) — <c>max_steps_exceeded</c> beyond it.</summary>
     public int MaxStepsPerRun { get; init; } = RunLimits.DefaultMaxSteps;
 
@@ -32,9 +43,19 @@ public sealed class RunLimitsOptions
     public int ExpressionStepBudget { get; init; } = CrawldadExpression.DefaultStepBudget;
 
     /// <summary>The global default concurrent, non-terminal runs a tenant may have in flight (docs/PRODUCT.md §Pv.3) — a
-    /// per-tenant override takes precedence when configured. At the cap, <c>POST /runs</c> is rejected 429
-    /// <c>concurrent_runs_exceeded</c> (CD-16 will upgrade reject → queue).</summary>
+    /// per-tenant override takes precedence when configured. At the cap, <c>POST /runs</c> queues the run (CD-16, 202
+    /// <c>status:"queued"</c>) rather than rejecting it.</summary>
     public int MaxConcurrentRunsPerTenant { get; init; } = DefaultMaxConcurrentRunsPerTenant;
+
+    /// <summary>The global default admission-queue depth per tenant (CD-16) — a per-tenant override
+    /// (<see cref="Crawldad.Web.Infrastructure.Security.TenantDescriptor.MaxQueueDepth"/>) takes precedence. At this depth a
+    /// further at-cap run is rejected 429 <c>queue_depth_exceeded</c> — the only 429 admission still returns.</summary>
+    public int MaxQueueDepthPerTenant { get; init; } = DefaultMaxQueueDepthPerTenant;
+
+    /// <summary>The max time a run may wait in the admission queue before terminating with <c>queue_wait_exceeded</c>
+    /// (CD-16), in milliseconds; 0 disables the bound. A global knob (no per-tenant override — the seam is the depth override
+    /// plus this deployment default).</summary>
+    public int MaxQueueWaitMs { get; init; } = DefaultMaxQueueWaitMs;
 
     /// <summary>Projects the four mid-run caps into the interpreter's <see cref="RunLimits"/>.</summary>
     internal RunLimits ToRunLimits() =>

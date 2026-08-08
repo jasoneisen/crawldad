@@ -39,11 +39,13 @@ public sealed class ConcurrentRunsCollection : ICollectionFixture<ConcurrentRuns
 }
 
 /// <summary>
-/// The CD-3 billing-critical limit end-to-end (limit 5): the per-tenant concurrent-run cap enforced at <c>POST /runs</c>
-/// admission. With the cap at 1 and one run held mid-execution, a second start is rejected <c>429</c> with the
-/// machine-readable <c>concurrent_runs_exceeded</c> code (the seam CD-16 will turn into a queue); once the first run frees
-/// its slot at terminal, a later start is admitted again — proving the async slot is held from admission to finalisation
-/// and released by the executor.
+/// The CD-3/CD-16 billing-critical limit end-to-end (cap 1): the per-tenant concurrent-run cap at <c>POST /runs</c> admission,
+/// now <b>queue, don't reject</b> (docs/PRODUCT.md §Pv.3). With the cap at 1 and one run held mid-execution, a second start is
+/// <b>accepted 202 <c>status:"queued"</c> with position 1</b> (not a 429) and is visible as queued via <c>GET /runs/{id}</c>;
+/// once the first run frees its slot at terminal, the queued run is <b>auto-promoted</b> and runs to completion — proving the
+/// async slot is held from admission to finalisation, that the at-cap run waits rather than fails, and that a freed slot
+/// promotes the tenant's oldest queued run. (The former 429-at-cap assertion is intentionally gone — that is the CD-16
+/// contract change; the only 429 now is <c>queue_depth_exceeded</c>, covered by <c>SlotQueueTests</c>.)
 /// </summary>
 [Collection(ConcurrentRunsCollection.Name)]
 public class ConcurrentRunsCapTests(ConcurrentRunsFixture fixture)
@@ -75,28 +77,41 @@ public class ConcurrentRunsCapTests(ConcurrentRunsFixture fixture)
     };
 
     [Fact]
-    public async Task At_the_tenant_cap_a_second_run_is_rejected_429_then_admitted_once_a_slot_frees()
+    public async Task At_the_tenant_cap_the_next_run_is_queued_then_auto_starts_when_a_slot_frees()
     {
         var host = await fixture.EnsureAsync();
 
         // Run 1 is admitted (202) and blocks mid-execution — the tenant's one slot is now occupied.
         var firstRunId = await StartBlockedAsync(host);
 
-        // Run 2 hits the cap at admission — no run is started, and the body is the typed rejection.
-        var rejected = await host.Scenario(x =>
+        // Run 2 hits the cap at admission — it is QUEUED (202), not rejected: accepted with a runId, status "queued", position 1.
+        var accepted = await host.Scenario(x =>
         {
             x.Post.Json(Body()).ToUrl("/runs");
-            x.StatusCodeShouldBe(429);
+            x.StatusCodeShouldBe(202);
         });
-        (await rejected.ReadAsJsonAsync<JsonElement>()).GetProperty("code").GetString().ShouldBe(RunAdmissionGate.RejectionCode);
+        var queued = (await accepted.ReadAsJsonAsync<JsonElement>()).Clone();
+        queued.GetProperty("status").GetString().ShouldBe("queued");
+        queued.GetProperty("position").GetInt32().ShouldBe(1);
+        var queuedRunId = queued.GetProperty("runId").GetGuid();
 
-        // Cancel run 1 to a terminal state; the executor frees its slot before the terminal status is observable.
+        // GET shows the queued run's live position while it waits behind the cap.
+        var polled = await host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{queuedRunId}");
+            x.StatusCodeShouldBe(200);
+        });
+        var state = (await polled.ReadAsJsonAsync<JsonElement>()).Clone();
+        state.GetProperty("status").GetString().ShouldBe("queued");
+        state.GetProperty("position").GetInt32().ShouldBe(1);
+
+        // Cancel run 1 to a terminal state; the executor frees its slot, which auto-promotes the queued run.
         await CancelToTerminalAsync(host, firstRunId);
 
-        // With the slot freed, a fresh start is admitted again (202) — the cap is a live gauge, not a one-way latch — and it
-        // is cancelled too, so the test leaves no run in a non-terminal state.
-        var thirdRunId = await StartBlockedAsync(host);
-        await CancelToTerminalAsync(host, thirdRunId);
+        // The queued run leaves the queue on its own and runs to completion — never a slot beyond the cap of 1.
+        var terminal = await DurableHost.PollUntilTerminalAsync(host, queuedRunId, TimeSpan.FromSeconds(30));
+        terminal.GetProperty("status").GetString().ShouldBe("succeeded");
+        terminal.GetProperty("queueWaitMs").GetInt64().ShouldBe(0); // promoted under the frozen test clock — the wait metric is recorded
     }
 
     // Arms the gate, starts an async run, and waits until it is provably blocked mid-execution (its slot held).

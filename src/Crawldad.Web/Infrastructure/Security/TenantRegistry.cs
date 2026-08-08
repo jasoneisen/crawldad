@@ -39,6 +39,13 @@ public sealed class TenantDescriptor
     /// <see cref="Crawldad.Web.Features.Runs.RunLimitsOptions.MaxConcurrentRunsPerTenant"/>. This is the CD-1 tenant-config
     /// seam later pricing tiers hang off, so the admission cap is per-tenant now that tenancy identity exists.</summary>
     public int? MaxConcurrentRuns { get; init; }
+
+    /// <summary>An optional per-tenant override of the global admission-queue depth (CD-16, docs/PRODUCT.md §Pv.3): the
+    /// per-tier at-cap wait room (Free 10 / Team 100 / Scale 1,000) before a further at-cap run is rejected
+    /// <c>429 queue_depth_exceeded</c>. Null defers to the global
+    /// <see cref="Crawldad.Web.Features.Runs.RunLimitsOptions.MaxQueueDepthPerTenant"/> — the same override pattern as
+    /// <see cref="MaxConcurrentRuns"/>.</summary>
+    public int? MaxQueueDepth { get; init; }
 }
 
 /// <summary>The identity an authenticated request resolves to: the tenant partition id and the actor stamped on its
@@ -95,13 +102,18 @@ public sealed class TenantRegistry
                 throw new InvalidOperationException($"tenant '{tenant.Id}' has a maxConcurrentRuns override below 1");
             }
 
+            if (tenant.MaxQueueDepth is < 1)
+            {
+                throw new InvalidOperationException($"tenant '{tenant.Id}' has a maxQueueDepth override below 1");
+            }
+
             var hash = Hash(tenant.ApiKey);
             if (entries.Any(e => CryptographicOperations.FixedTimeEquals(e.KeyHash, hash)))
             {
                 throw new InvalidOperationException($"tenant '{tenant.Id}' reuses another tenant's api key");
             }
 
-            entries.Add(new Entry(new AuthenticatedTenant(tenant.Id, tenant.Actor), hash, tenant.MaxConcurrentRuns));
+            entries.Add(new Entry(new AuthenticatedTenant(tenant.Id, tenant.Actor), hash, tenant.MaxConcurrentRuns, tenant.MaxQueueDepth));
         }
 
         _entries = entries;
@@ -157,7 +169,29 @@ public sealed class TenantRegistry
         return false;
     }
 
+    /// <summary>The tenant's configured admission-queue-depth override (CD-16), or null when it defers to the global default.
+    /// Looked up by the run queue to resolve the tenant's max queue depth. An unknown tenant id yields null (defers to the
+    /// global) — the same override shape as <see cref="TryGetConcurrencyOverride"/>.</summary>
+    /// <param name="tenantId">The tenant id to look up.</param>
+    /// <param name="depth">The configured override when present.</param>
+    /// <returns><see langword="true"/> when the tenant configured an override.</returns>
+    public bool TryGetQueueDepthOverride(string tenantId, out int depth)
+    {
+        ArgumentNullException.ThrowIfNull(tenantId);
+        foreach (var entry in _entries)
+        {
+            if (string.Equals(entry.Tenant.Id, tenantId, StringComparison.Ordinal) && entry.MaxQueueDepth is { } configured)
+            {
+                depth = configured;
+                return true;
+            }
+        }
+
+        depth = 0;
+        return false;
+    }
+
     private static byte[] Hash(string key) => SHA256.HashData(Encoding.UTF8.GetBytes(key));
 
-    private sealed record Entry(AuthenticatedTenant Tenant, byte[] KeyHash, int? MaxConcurrentRuns);
+    private sealed record Entry(AuthenticatedTenant Tenant, byte[] KeyHash, int? MaxConcurrentRuns, int? MaxQueueDepth);
 }

@@ -5,11 +5,12 @@ using Microsoft.Extensions.Options;
 namespace Crawldad.Tests.Unit;
 
 /// <summary>
-/// The CD-3 per-tenant concurrent-run admission gate (limit 5, docs/PRODUCT.md §Pv.3): the single seam a run funnels
-/// through at start. Proves the cap (global default + per-tenant override), that a released slot re-opens capacity, that
-/// occupancy is counted per tenant, and that the cap-exempt <c>Occupy</c> (the executor's restart self-heal) and a
-/// no-op <c>Release</c> behave. The atomic check-and-occupy under one lock closes the two-simultaneous-starts race within
-/// a process; the HTTP/429 surfacing is covered by <c>ConcurrentRunsCapTests</c>.
+/// The CD-3/CD-16 per-tenant concurrent-run admission gate: the single atomic seam a run funnels through at start. Proves the
+/// cap (global default + per-tenant override), that a released slot re-opens capacity, that occupancy is counted per tenant,
+/// that the cap-exempt <c>Occupy</c> (the executor's restart self-heal) and a no-op <c>Release</c> behave, and — the CD-16
+/// addition — that <c>TryAdmit</c> refuses a run it already counts (so two concurrent promotions cannot both claim the same
+/// run). Since CD-16 the gate no longer decides the at-cap response (queue vs 429) — it answers only "is a slot free?"; the
+/// HTTP queue-at-cap surface is covered by <c>ConcurrentRunsCapTests</c>/<c>SlotQueueTests</c>.
 /// </summary>
 public class RunAdmissionGateTests
 {
@@ -35,18 +36,26 @@ public class RunAdmissionGateTests
     }
 
     [Fact]
-    public void Admits_up_to_the_cap_then_rejects_with_the_typed_code()
+    public void Admits_up_to_the_cap_then_refuses()
     {
         var gate = Gate(globalCap: 2, (TenantA, null));
 
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeTrue();
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeTrue();
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeTrue();
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeTrue();
 
-        var rejected = gate.TryAdmit(TenantA, Guid.NewGuid());
-        rejected.Admitted.ShouldBeFalse();
-        rejected.Rejection!.Code.ShouldBe(RunAdmissionGate.RejectionCode);
-        rejected.Rejection.Message.ShouldContain("cap of 2");
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeFalse(); // at the cap → the caller queues (CD-16), not a rejection
         gate.ActiveCount(TenantA).ShouldBe(2);
+    }
+
+    [Fact]
+    public void Refuses_a_run_it_already_counts()
+    {
+        var gate = Gate(globalCap: 2, (TenantA, null));
+        var run = Guid.NewGuid();
+
+        gate.TryAdmit(TenantA, run).ShouldBeTrue();
+        gate.TryAdmit(TenantA, run).ShouldBeFalse(); // already counted — a second (concurrent promotion) claim is refused
+        gate.ActiveCount(TenantA).ShouldBe(1);       // and the run is counted exactly once, not twice
     }
 
     [Fact]
@@ -55,11 +64,11 @@ public class RunAdmissionGateTests
         var gate = Gate(globalCap: 1, (TenantA, null));
         var run1 = Guid.NewGuid();
 
-        gate.TryAdmit(TenantA, run1).Admitted.ShouldBeTrue();
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeFalse(); // at the cap
+        gate.TryAdmit(TenantA, run1).ShouldBeTrue();
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeFalse(); // at the cap
 
         gate.Release(TenantA, run1);
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeTrue(); // the freed slot admits the next
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeTrue(); // the freed slot admits the next
         gate.ActiveCount(TenantA).ShouldBe(1);
     }
 
@@ -79,10 +88,10 @@ public class RunAdmissionGateTests
     {
         var gate = Gate(globalCap: 1, (TenantA, null), (TenantB, null));
 
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeTrue();
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeFalse(); // A is at its cap
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeTrue();
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeFalse(); // A is at its cap
 
-        gate.TryAdmit(TenantB, Guid.NewGuid()).Admitted.ShouldBeTrue(); // B is independent
+        gate.TryAdmit(TenantB, Guid.NewGuid()).ShouldBeTrue(); // B is independent
         gate.ActiveCount(TenantB).ShouldBe(1);
     }
 
@@ -91,9 +100,9 @@ public class RunAdmissionGateTests
     {
         var gate = Gate(globalCap: 1, (TenantA, 2)); // override raises A above the global default of 1
 
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeTrue();
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeTrue();
-        gate.TryAdmit(TenantA, Guid.NewGuid()).Admitted.ShouldBeFalse(); // and caps at the override
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeTrue();
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeTrue();
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeFalse(); // and caps at the override
     }
 
     [Fact]
@@ -101,7 +110,7 @@ public class RunAdmissionGateTests
     {
         var gate = Gate(globalCap: 2, (TenantA, null));
         var run1 = Guid.NewGuid();
-        gate.TryAdmit(TenantA, run1).Admitted.ShouldBeTrue();
+        gate.TryAdmit(TenantA, run1).ShouldBeTrue();
 
         gate.Release("no-such-tenant", Guid.NewGuid()); // unknown tenant — tolerated
         gate.Release(TenantA, Guid.NewGuid());          // unknown run in a known tenant — tolerated

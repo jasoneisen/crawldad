@@ -1,33 +1,26 @@
-using Crawldad.Contracts.Runs;
 using Crawldad.Web.Infrastructure.Security;
 using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Features.Runs;
 
 /// <summary>
-/// The outcome of an admission decision (CD-3): either <see cref="Admitted"/> (the run now occupies a slot) or a rejection
-/// carrying the typed <see cref="Rejection"/> the endpoint returns as <c>429</c>. Kept as one value so the caller acts on a
-/// single seam — CD-16 will change what a non-admission means (queue, not reject) by changing the gate, not the endpoint.
-/// </summary>
-/// <param name="Admitted">Whether the run was admitted (a slot is now held for it).</param>
-/// <param name="Rejection">The typed rejection to surface when not admitted; null when admitted.</param>
-public readonly record struct RunAdmission(bool Admitted, RunRejection? Rejection);
-
-/// <summary>
-/// The single admission seam for starting a run (CD-3, docs/PRODUCT.md §Pv.3): under slot-based pricing the per-tenant
-/// concurrent-run cap is revenue enforcement, so admission is one abstraction the whole engine funnels through — the seam
-/// CD-16 replaces to turn reject-at-cap into queue-at-cap without touching the endpoint. A run holds a slot from admission
-/// until it reaches a terminal state: the synchronous path releases it when the request completes; the async path hands the
-/// slot's lifetime to the background executor, which releases it at finalisation (and re-occupies on a post-restart resume).
+/// The single admission seam for starting a run (CD-3/CD-16, docs/PRODUCT.md §Pv.3): under slot-based pricing the per-tenant
+/// concurrent-run cap is revenue enforcement, so admission is one abstraction the whole engine funnels through. A run holds a
+/// slot from admission until it reaches a terminal state: the synchronous path releases it when the request completes; the
+/// async path hands the slot's lifetime to the background executor, which releases it at finalisation (and re-occupies on a
+/// post-restart resume). Since CD-16 the gate no longer decides the at-cap <em>response</em> — a run that cannot be admitted is
+/// queued, not rejected (<see cref="RunQueue"/>); the gate answers only the atomic question "is a slot free for this run?".
 /// </summary>
 public interface IRunAdmissionGate
 {
-    /// <summary>Admits a run for a tenant if the tenant is under its concurrent-run cap, occupying a slot when it is; at the
-    /// cap it rejects. The decision is atomic per process, so two simultaneous starts at cap-1 cannot both pass.</summary>
+    /// <summary>Atomically admits a run for a tenant if the tenant is under its concurrent-run cap and this run is not already
+    /// counted, occupying a slot when it is. The check-and-occupy is atomic per process, so two simultaneous starts at cap-1
+    /// cannot both pass, and two concurrent promotions cannot both claim the same run (a run it already counts is refused, so
+    /// promotion needs no separate lock). At the cap it returns false and the caller queues the run (CD-16).</summary>
     /// <param name="tenantId">The run's tenant (the billing subject the cap is per, CD-1).</param>
     /// <param name="runId">The run being admitted.</param>
-    /// <returns>An admission granting a slot, or a rejection to surface as <c>429</c>.</returns>
-    RunAdmission TryAdmit(string tenantId, Guid runId);
+    /// <returns>True when a slot was granted (newly occupied for this run); false at the cap or when the run already holds one.</returns>
+    bool TryAdmit(string tenantId, Guid runId);
 
     /// <summary>Re-registers a run this process is about to drive as occupying a slot, <b>without</b> a cap check — the async
     /// executor calls it at drive-start so the in-memory slot count self-heals after a restart re-runs an already-admitted
@@ -43,45 +36,47 @@ public interface IRunAdmissionGate
 }
 
 /// <summary>
-/// The first-slice <see cref="IRunAdmissionGate"/>: an in-process, per-tenant set of the run ids currently holding a slot,
-/// guarded by one lock so the check-and-occupy is atomic. The cap is the tenant's configured override
-/// (<see cref="TenantDescriptor.MaxConcurrentRuns"/>) or, absent one, the global
-/// <see cref="RunLimitsOptions.MaxConcurrentRunsPerTenant"/>.
+/// The in-process, per-tenant set of run ids currently holding a slot, guarded by one lock so check-and-occupy is atomic. The
+/// cap is the tenant's configured override (<see cref="TenantDescriptor.MaxConcurrentRuns"/>) or, absent one, the global
+/// <see cref="RunLimitsOptions.MaxConcurrentRunsPerTenant"/>. <see cref="TryAdmit"/> refuses a run it already counts, so it
+/// doubles as the atomic reservation point for both fresh admission and queue promotion (<see cref="RunQueue"/>) without a
+/// second lock.
 /// <para>
-/// <b>Race &amp; scope (documented trade-off).</b> The lock closes the ticket's race entirely <em>within a process</em> —
-/// two simultaneous starts at cap-1 serialise, and the second sees the cap. Across <em>multiple instances</em> the counts
-/// are not shared, so a small over-admission is possible; closing that needs a distributed lock or a durable
-/// admission counter (deferred — the first slice is single-instance-authoritative, and CD-16 owns the durable queue).
-/// Likewise, an async run whose durable setup fails after admission but before the executor picks it up leaks its
-/// in-memory slot until the process restarts (rare, exceptional-path); the executor is the normal releaser.
+/// <b>Race &amp; scope (documented trade-off).</b> The lock closes the ticket's race entirely <em>within a process</em> — two
+/// simultaneous starts at cap-1 serialise, and the second sees the cap. Two remaining transients, both single-instance-benign
+/// and self-correcting, are accepted exactly as CD-3 framed them:
+/// <list type="bullet">
+/// <item><b>Cross-instance.</b> Counts are not shared between instances, so a small over-admission is possible until runs
+/// finalise; closing it needs a distributed lock or a durable admission counter (deferred — CD-16's durable queue governs
+/// <em>order</em> and durability, not cross-instance slot arithmetic).</item>
+/// <item><b>Restart catch-up.</b> After a restart the set is empty and refills as the recovery scan re-drives running runs
+/// (<c>Occupy</c>) and promotes queued ones; a promotion that reserves a slot before a resuming run has re-occupied its own can
+/// transiently exceed the cap (~2×) until both are counted, after which finalisation restores the invariant. FIFO order and
+/// durability are unaffected — only momentary occupancy.</item>
+/// </list>
 /// </para>
 /// </summary>
 /// <param name="tenants">The tenant directory — the source of a tenant's per-tenant cap override (CD-1).</param>
 /// <param name="limits">The bound resource-limit options — the global default cap.</param>
 public sealed class RunAdmissionGate(TenantRegistry tenants, IOptions<RunLimitsOptions> limits) : IRunAdmissionGate
 {
-    /// <summary>The machine-readable rejection code returned at the cap (HTTP 429). CD-16 introduces the queued alternative.</summary>
-    public const string RejectionCode = "concurrent_runs_exceeded";
-
     private readonly int _defaultCap = limits.Value.MaxConcurrentRunsPerTenant;
     private readonly Dictionary<string, HashSet<Guid>> _active = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
 
     /// <inheritdoc />
-    public RunAdmission TryAdmit(string tenantId, Guid runId)
+    public bool TryAdmit(string tenantId, Guid runId)
     {
         lock (_gate)
         {
             var slots = Slots(tenantId);
-            var cap = CapFor(tenantId);
-            if (slots.Count >= cap)
+            if (slots.Count >= CapFor(tenantId) || slots.Contains(runId))
             {
-                return new RunAdmission(false, new RunRejection(
-                    RejectionCode, $"tenant '{tenantId}' is at its concurrent-run cap of {cap}"));
+                return false; // at the cap → queue (CD-16); already counted → a concurrent promotion already claimed this run
             }
 
             slots.Add(runId);
-            return new RunAdmission(true, null);
+            return true;
         }
     }
 

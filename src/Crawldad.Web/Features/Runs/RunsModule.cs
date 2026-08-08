@@ -9,6 +9,7 @@ using JasperFx.Events.Projections;
 using Marten;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Features.Runs;
 
@@ -31,10 +32,12 @@ public static class RunsModule
         // The pure trace events (§13) carry no aggregate Apply, so Marten does not discover them from the Run
         // snapshot — register them explicitly so the schema knows the types and old streams stay readable. The P5
         // checkpoint/resume/cancellation-request markers (§11) join them; RunCancelled has a Run Apply but is listed for
-        // parity so the whole terminal set is explicit.
+        // parity so the whole terminal set is explicit. The CD-16 queue markers (RunQueued opens a queued run's stream;
+        // RunDequeued is its queued→running promotion) are folded by the Run snapshot + RunTimeline, listed here for parity.
         options.Events.AddEventTypes([
             typeof(LogEmitted), typeof(RunAttemptFailed),
             typeof(RunCheckpointReached), typeof(RunResumed), typeof(RunCancellationRequested), typeof(RunCancelled),
+            typeof(RunQueued), typeof(RunDequeued),
         ]);
 
         // The WP3 semantic step-trace events (§13): appended only on the executor path, consumed by the SSE tail and the
@@ -52,6 +55,10 @@ public static class RunsModule
         // The executor-owned run-progress read model (§11): the pollable state + the durable resume cursor. A plain Marten
         // document (not a projection) written solely by the executor's own sessions.
         options.Schema.For<RunProgress>();
+
+        // The durable FIFO admission-queue entry (CD-16): a plain, tenant-scoped Marten document — one per run waiting at the
+        // concurrent-run cap — so the queue survives process restarts. Written at enqueue, deleted at promotion/cancel/timeout.
+        options.Schema.For<QueuedRun>();
     }
 
     /// <summary>Registers the slice's services: the request validator and the browser-backend registry + P1 fake.</summary>
@@ -60,12 +67,18 @@ public static class RunsModule
     {
         services.AddScoped<IValidator<StartRunRequest>, StartRunRequestValidator>();
 
-        // The server-side resource limits (CD-3/§12): the config knobs bound from Crawldad:Limits. The four mid-run caps
-        // flow into the interpreter as RunLimits (derived per-consumer from these options); the concurrent-runs admission
-        // gate (limit 5) reads MaxConcurrentRunsPerTenant. A payload can never raise them. The gate is a singleton so its
-        // per-tenant slot counts span every request and the background executor — the one seam CD-16 will replace to queue.
-        services.AddOptions<RunLimitsOptions>().BindConfiguration(RunLimitsOptions.Section);
+        // The server-side resource limits (CD-3/CD-16/§12): the config knobs bound from Crawldad:Limits, boot-validated so a
+        // nonsensical value fails the host loudly at startup (the per-tenant overrides are already boot-validated in the tenant
+        // registry). The four mid-run caps flow into the interpreter as RunLimits; the admission gate reads
+        // MaxConcurrentRunsPerTenant and the run queue reads MaxQueueDepthPerTenant/MaxQueueWaitMs. A payload can never raise them.
+        services.AddOptions<RunLimitsOptions>().BindConfiguration(RunLimitsOptions.Section).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<RunLimitsOptions>, RunLimitsOptionsValidator>();
+
+        // The concurrent-run admission gate (CD-3) and the durable FIFO admission queue (CD-16): both singletons so the gate's
+        // per-tenant slot counts and the queue's process-monotonic FIFO sequence span every request and the background
+        // executor. At the cap the endpoint enqueues rather than 429s; a freed slot promotes the tenant's oldest queued run.
         services.AddSingleton<IRunAdmissionGate, RunAdmissionGate>();
+        services.AddSingleton<RunQueue>();
 
         // The durable-execution surface (§11/§14.2): the background executor that drives the saga's runs (owning its own
         // Marten sessions) and the in-process stop-signal registry the cancel endpoint + saga deadline raise. The saga and
