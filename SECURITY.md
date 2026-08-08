@@ -16,16 +16,49 @@ one-time secret (still scrubbed — see below). The store's default backing is c
 (`Secrets:{ref}`), so any provider (user-secrets, env, a mounted vault file) supplies secrets without
 a code change.
 
-## The Browserbase `connectUrl` is NOT safe to leak (re-verified)
+## Provider connect strings are NOT safe to leak (live-primary re-verified 2026-08-08)
 
-Verified shape: `wss://connect.browserbase.com?apiKey=bb_live_…&sessionId=ses_…`. The default CDP
-`connectUrl` **embeds the account `apiKey` in its query string**. It is ephemeral in *session
-lifetime* but **not credential-isolated**: a holder can read the key out and mint more sessions.
-`connectUrl` mode therefore reduces credential *storage* (no long-lived key in our vault) but not
-*blast radius on leak*. It is scrubbed **exactly like an `apiKey`**; the session-create response's
-separate `signingKey` is likewise secret. Do not describe `connectUrl` as "safe to leak" anywhere.
-The Browserless `token` is account-scoped (a leaked token drains the account's unit balance) — same
-rules.
+Both providers were re-verified against **real accounts** on 2026-08-08 with a single live session
+each (created, inspected, released; only redacted evidence retained — no key or raw URL printed). This
+supersedes the earlier docs-based re-check; the Browserbase shape had **drifted**.
+
+**Browserbase (apiKey mode).** The account `apiKey` (`bb_live_…`) travels **only** in the
+`X-BB-API-Key` header of the `POST /v1/sessions` call — never in a URL we build or connect with. The
+response's `connectUrl` has the live shape `wss://connect.<region>.browserbase.com/?signingKey=<JWT>` —
+a region-encoded host (e.g. `connect.usw2.browserbase.com`), path `/`, and a **single** `signingKey`
+query param that is a per-session JWT (`eyJhbGci…`). This **differs from the previously documented
+shape** (`…?apiKey=bb_live_…&sessionId=ses_…`): the live URL does **not** embed the account apiKey
+(verified — the account key is not a substring of the returned URL) and carries no `sessionId`. The
+same JWT is also returned as a discrete top-level `signingKey` field (with `seleniumRemoteUrl`,
+`region`, `expiresAt`); the adapter connects via `connectUrl` and does not surface that field
+separately. Consequence: leaking the `connectUrl` compromises **that one session** (a holder can
+drive/observe it), **not** the account — new sessions cannot be minted from it. The response reported an
+`expiresAt` timestamp (observed once, from this single session — we did **not** test that expiry is
+actually enforced), which would bound a leaked URL's window if honoured. That is *stronger* isolation
+than previously documented, but the URL is still a live-session credential and must **not** be called
+"safe to leak."
+
+**Browserless.** The connect shape the adapter builds —
+`wss://production-<region>.browserless.io/chromium/playwright?token=<token>` — is current and accepted.
+`sfo` (the adapter default), `lon`, and `ams` are the **documented** production regions; only
+`production-sfo` was **live-probed**. Against it, a WebSocket-upgrade probe carrying the real `token`
+clears the edge auth gate, while the same probe with no token is rejected `401` at the gate (no browser
+session was started — the probe closed at the handshake). The `token` is account-scoped: a leaked token
+drains the account's unit balance.
+
+**Scrub-rule re-confirmation (against the real strings).** No rule needed changing:
+- The connecting adapter registers the whole `connectUrl` (Browserbase) and the resolved `token`
+  (Browserless) into `IRunSecretScope`, so the **exact-match** rule redacts them verbatim wherever they
+  appear.
+- The **known-param** rule (`apiKey`, `token`, `signingKey`; case-insensitive) redacts `signingKey=<JWT>`
+  and `token=<token>`. The live signingKey JWT (base64url, `.`-separated) and the live token contain
+  **no** character in the rule's value-terminator set (`\s & # " ' < > ( ) [ ] { } , ;`), so each value
+  is captured to its end — confirmed against both real strings. The `apiKey` param stays in the rule to
+  cover an apiKey-bearing `connectUrl` (connectUrl mode, or a user-constructed / pre-drift URL).
+
+`Unit/CredentialScrubberTests` mirrors both live shapes with **synthetic** keys of the same
+prefix/structure (a synthetic `signingKey` JWT in a region-encoded host; the
+`/chromium/playwright?token=…` shape). Do not describe any provider connect string as "safe to leak."
 
 ## The scrubbing primitive
 

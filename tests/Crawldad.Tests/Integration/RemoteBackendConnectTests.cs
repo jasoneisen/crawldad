@@ -174,7 +174,8 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
     [Fact]
     public async Task Browserbase_connect_failure_does_not_leak_the_apiKey_embedding_connect_url()
     {
-        // The ship-blocker: connectUrl mode's secret embeds the account apiKey. A failed connect must scrub it.
+        // connectUrl mode: the whole URL is the secret. An apiKey-bearing URL (connectUrl mode / pre-2026-08 shape; the
+        // live default now carries a per-session signingKey) must still be scrubbed on a failed connect.
         const string Leaky = "ws://127.0.0.1:1/?apiKey=bb_live_LEAKME&sessionId=ses_x";
         var backend = Browserbase(Leaky, BrowserbaseBackend.DefaultApiBaseUrl);
         var binding = new BackendBinding("browserbase", "cred-ref", new Dictionary<string, object?>(StringComparer.Ordinal)
