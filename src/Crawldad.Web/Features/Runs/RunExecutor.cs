@@ -7,6 +7,7 @@ using Crawldad.Web.Infrastructure.Storage;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Wolverine;
 
 namespace Crawldad.Web.Features.Runs;
@@ -40,9 +41,13 @@ public static class ExecuteRunHandler
 /// <param name="scrubber">Scrubs credentials from every persisted event, checkpoint, and stored result (§12).</param>
 /// <param name="secretScope">The per-run secret registry opened for the whole execution (§12).</param>
 /// <param name="controls">The in-process stop-signal registry (cancel/deadline).</param>
+/// <param name="admissionGate">The concurrent-run admission gate (CD-3): the executor occupies the run's slot while it
+/// drives it (self-healing the count after a restart re-runs an already-admitted run) and frees it at finalisation.</param>
 /// <param name="screenshots">The failure-screenshot blob store the interpreter captures into (§13).</param>
 /// <param name="signals">The in-process SSE notification hub pinged after each durable append (§11/§13).</param>
 /// <param name="lifetime">The host lifetime, so an in-flight run observes shutdown and leaves itself resumable.</param>
+/// <param name="runLimits">The server-side resource-limit options (CD-3/§12): the executor derives the interpreter's
+/// mid-run caps from them once. A payload can never raise them.</param>
 /// <param name="clock">The time seam for trace timestamps.</param>
 public sealed class RunExecutor(
     IDocumentStore store,
@@ -51,13 +56,18 @@ public sealed class RunExecutor(
     CredentialScrubber scrubber,
     IRunSecretScope secretScope,
     IRunControlRegistry controls,
+    IRunAdmissionGate admissionGate,
     IScreenshotStore screenshots,
     RunEventSignals signals,
     IHostApplicationLifetime lifetime,
+    IOptions<RunLimitsOptions> runLimits,
     TimeProvider clock)
 {
     /// <summary>The terminal failure code for a run that outran its wall-clock deadline (§8.4).</summary>
     public const string DeadlineExceededCode = "run_deadline_exceeded";
+
+    // The interpreter's mid-run resource caps (CD-3/§12), resolved once from the bound options for every run this executor drives.
+    private readonly RunLimits _limits = runLimits.Value.ToRunLimits();
 
     /// <summary>Executes (or resumes) the run to a terminal state under <paramref name="tenantId"/>. A host-shutdown
     /// interruption is left un-finalised so the durable <see cref="ExecuteRun"/> message is redelivered and the run resumes
@@ -89,12 +99,17 @@ public sealed class RunExecutor(
             return;
         }
 
+        // Occupy the run's admission slot for as long as this executor drives it (CD-3): a no-op for a fresh run the HTTP
+        // admission already counted, and the real (re)registration for a run recovered after a restart — so the in-memory
+        // slot count self-heals. Freed in the finally when the run reaches terminal (or this host is torn down mid-run).
+        admissionGate.Occupy(tenantId, runId);
         try
         {
             await DriveAsync(runId, tenantId, saga, progress, control, handlerCt);
         }
         finally
         {
+            admissionGate.Release(tenantId, runId);
             controls.Remove(runId);
             signals.Remove(runId); // no more events for this run — drop its SSE notification slot
         }
@@ -124,7 +139,7 @@ public sealed class RunExecutor(
         RunOutcome outcome;
         try
         {
-            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, tenantId, observer, resume, screenshots).RunAsync(runCt);
+            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, tenantId, observer, resume, screenshots, _limits).RunAsync(runCt);
         }
         catch (OperationCanceledException) when (runCt.IsCancellationRequested)
         {
@@ -222,6 +237,10 @@ public sealed class RunExecutor(
                 break;
         }
 
+        // Free the admission slot as the run finalises — BEFORE the terminal status commits — so a caller that then observes
+        // "terminal" (poll or SSE) can immediately start another run without a transient false 429 (CD-3). The executor's
+        // outer finally repeats this idempotently, covering the non-finalised shutdown/exception paths.
+        admissionGate.Release(tenantId, runId);
         session.Store(progress);
         await session.SaveChangesAsync(ct);
         signals.Notify(runId); // the terminal event closes any live SSE tail

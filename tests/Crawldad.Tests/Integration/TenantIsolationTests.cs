@@ -181,8 +181,21 @@ public class TenantIsolationTests(TenantIsolationFixture fixture)
             new JsonObject { ["payload"] = JsonNode.Parse(TenantIsolationFixture.DemoPayload) });
 
     [Fact]
+    public async Task Tenant_B_cannot_archive_tenant_As_payload() => // CD-1 review carry-over: an uncovered cross-tenant mutation
+        await ExpectStatusAsync("POST", $"/payloads/{fixture.PayloadA}/archive", HttpStatusCode.NotFound);
+
+    [Fact]
+    public async Task Tenant_B_cannot_rename_tenant_As_payload() => // valid body so the name validator passes — the 404 is the tenant guard, not validation
+        await ExpectStatusAsync("POST", $"/payloads/{fixture.PayloadA}/rename", HttpStatusCode.NotFound,
+            new JsonObject { ["name"] = "renamed-by-b" });
+
+    [Fact]
     public async Task Tenant_B_cannot_read_tenant_As_run() =>
         await ExpectStatusAsync("GET", $"/runs/{fixture.SucceededRunA}", HttpStatusCode.NotFound);
+
+    [Fact]
+    public async Task Tenant_B_cannot_cancel_tenant_As_run() => // CD-1 review carry-over: cancel is a mutating route too
+        await ExpectStatusAsync("POST", $"/runs/{fixture.SucceededRunA}/cancel", HttpStatusCode.NotFound);
 
     [Fact]
     public async Task Tenant_B_cannot_read_tenant_As_timeline() =>
