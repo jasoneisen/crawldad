@@ -183,7 +183,7 @@ any action/selector names a frame handle (§5.2); `timeoutMs?` overrides the tim
 | `fill` | `selector:Sel, value:Expr, in?` | `FillAsync` | `:100,:108` |
 | `clear` | `selector:Sel, in?` | `ClearAsync` | `:99,:107` |
 | `addStyleTag` | `content:Tmpl` | `AddStyleTagAsync` | force tabs visible `:209` |
-| `screenshot` | `to:Target, fullPage?, selector?, in?` | `ScreenshotAsync` | absent in ref; required (§3.2, §13) |
+| `screenshot` | `name?:Tmpl` (full-page → `IScreenshotStore`) | `page.ScreenshotAsync` | #8 shipped: full-page via the screenshot-on-failure seam; `to:Target`/`fullPage`/`selector`/`in` deferred until a workload needs them (§13) |
 | `download` | `trigger:Node[], to:Target, timeoutMs?, idempotencyKey?:Expr, var` | `WaitForDownloadAsync` + trigger | per-row `:560` |
 | `set` | `var, path?:Tmpl, value:Expr` | (interpreter state) | pervasive |
 | `push` | `into:var, value:Expr` | (interpreter state) | accumulate output lists |

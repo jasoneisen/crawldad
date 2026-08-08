@@ -23,6 +23,15 @@ public sealed record RunTimelineExtract(string Key, string ValueRef);
 /// <param name="Sha256">The full SHA-256 of the bytes (lowercase hex).</param>
 public sealed record RunTimelineDownload(string BlobRef, string ContentType, long Size, string Sha256);
 
+/// <summary>One explicit <c>screenshot</c> node's capture in a run's timeline (§13/#8). Metadata only (§12): the
+/// content-addressed blob ref (<c>screenshots/{sha256}.png</c>), the optional author label, and the captured PNG byte size —
+/// never the image (it lives in the deletable, tenant-partitioned, TTL-governed screenshot blob store, the same seam as
+/// screenshot-on-failure).</summary>
+/// <param name="ScreenshotRef">The captured screenshot's content-addressed blob ref (<c>screenshots/{sha256}.png</c>).</param>
+/// <param name="Name">The node's optional author label (for correlating the shot), or null when the node declared none.</param>
+/// <param name="Size">The captured PNG byte count.</param>
+public sealed record RunTimelineScreenshot(string ScreenshotRef, string? Name, long Size);
+
 /// <summary>A run's terminal failure as surfaced in its timeline (§13): the typed failure plus the
 /// <see cref="ScreenshotRef"/> captured on the failing step (§13 screenshot-on-failure), or null when no screenshot was
 /// taken (disabled, no page bound, or a forcibly-cancelled deadline). The screenshot bytes live in deletable blob
@@ -56,6 +65,7 @@ public sealed record RunTimelineFailure(string Code, string Message, RunStepRef 
 /// <param name="Steps">The ordered top-level step list with per-step durations.</param>
 /// <param name="Extracted">The values bound into the run's data model (key + shape ref, never the value).</param>
 /// <param name="Downloads">The downloads streamed to blob storage (refs + metadata, never bytes).</param>
+/// <param name="Screenshots">The explicit <c>screenshot</c> captures (refs + metadata, never images), in capture order (#8).</param>
 /// <param name="Failure">The terminal failure + screenshot ref, or null when the run did not fail.</param>
 public sealed record RunTimelineResponse(
     Guid RunId,
@@ -72,4 +82,5 @@ public sealed record RunTimelineResponse(
     IReadOnlyList<RunTimelineStep> Steps,
     IReadOnlyList<RunTimelineExtract> Extracted,
     IReadOnlyList<RunTimelineDownload> Downloads,
+    IReadOnlyList<RunTimelineScreenshot> Screenshots,
     RunTimelineFailure? Failure);

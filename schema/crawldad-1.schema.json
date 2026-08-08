@@ -165,6 +165,11 @@
           "type": "object", "required": ["selector"], "additionalProperties": false,
           "properties": { "selector": { "$ref": "#/$defs/sel" }, "in": { "type": "string" } } } } },
 
+        { "required": ["screenshot"], "additionalProperties": false, "properties": { "screenshot": {
+          "type": "object", "additionalProperties": false,
+          "description": "Capture a full-page PNG to the tenant's deletable screenshot blob store (§13), recording only the content-addressed ref in the trace — the same seam, retention, and tenant partitioning as screenshot-on-failure (never the image, §12). `name` is an optional author label (Tmpl) carried into the trace/timeline to correlate the shot; it does not affect the content-addressed ref.",
+          "properties": { "name": { "type": "string" } } } } },
+
         { "required": ["locate"], "additionalProperties": false, "properties": { "locate": {
           "type": "object", "required": ["var"], "additionalProperties": false,
           "properties": { "var": { "type": "string" }, "selector": { "$ref": "#/$defs/sel" }, "base": { "type": "string" }, "in": { "type": "string" }, "from": { "type": "string" }, "nth": { "type": "string" }, "first": { "type": "boolean" }, "filter": { "type": "object", "required": ["hasTextRegex"], "additionalProperties": false, "properties": { "hasTextRegex": { "type": "string" } } } },

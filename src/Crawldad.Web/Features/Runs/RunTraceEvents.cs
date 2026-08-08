@@ -75,6 +75,23 @@ public sealed record Extracted(string Key, string ValueRef, DateTimeOffset At);
 public sealed record Downloaded(string BlobRef, string ContentType, long Size, string Sha256, DateTimeOffset At);
 
 /// <summary>
+/// An explicit <c>screenshot</c> node captured the page (§13/#8): the author-authored analogue of screenshot-on-failure,
+/// flowing through the <b>same</b> <c>IScreenshotStore</c> seam, so it inherits its deletable, tenant-partitioned,
+/// TTL-governed blob storage for free. Metadata only (§12): the content-addressed <see cref="ScreenshotRef"/>
+/// (<c>screenshots/{sha256}.png</c>, exactly like <c>StepFailed.ScreenshotRef</c>) and the captured PNG byte size — <b>never</b>
+/// the image, which lives only in the deletable blob store. <see cref="Name"/> is the node's optional author label (a rendered
+/// Tmpl, scrubbed defensively), for correlating the shot in the trace/timeline; it never affects the content-addressed ref.
+/// Emitted only on the durable executor path (an observer + a store are present); on the synchronous path the node is inert,
+/// so the §10 goldens are unchanged. Unlike the best-effort failure capture, an explicit capture that faults surfaces as the
+/// run's failure — the author asked for it.
+/// </summary>
+/// <param name="ScreenshotRef">The captured screenshot's content-addressed blob ref (<c>screenshots/{sha256}.png</c>; scrubbed defensively).</param>
+/// <param name="Name">The node's optional author label (rendered Tmpl, scrubbed), or null when the node declared none.</param>
+/// <param name="Size">The captured PNG byte count (metadata only, never the bytes).</param>
+/// <param name="At">When the screenshot was captured (through the <see cref="TimeProvider"/> seam).</param>
+public sealed record Screenshotted(string ScreenshotRef, string? Name, long Size, DateTimeOffset At);
+
+/// <summary>
 /// A step failed (§13 <c>StepFailed</c>): emitted just before the run reports a terminal / retryable-exhausted failure, so
 /// the trace pinpoints the failing step and links its screenshot. <see cref="ScreenshotRef"/> is the failure screenshot's
 /// blob ref (§13 screenshot-on-failure), or null when none was captured (screenshots disabled via

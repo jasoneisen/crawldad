@@ -93,6 +93,12 @@ public class PayloadValidatorTests
         ValidateAll(Parse(Payload)).ShouldBeEmpty();
     }
 
+    // #8: a screenshot node with no body (the name-absent walker branch) and one whose name Tmpl interpolates an input
+    // (the name-present branch) both validate clean — input sub-keys are not resolved as references (§12 walker leniency).
+    [Fact]
+    public void Screenshot_nodes_with_and_without_a_name_validate_clean() =>
+        ValidateAll(Parse(Steps("""[ { "screenshot": {} }, { "screenshot": { "name": "shot-${input.tag}" } } ]"""))).ShouldBeEmpty();
+
     private static string Steps(string steps) =>
         $$"""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend" }, "vars": {}, "steps": {{steps}}, "result": "null" }""";
 
@@ -140,6 +146,14 @@ public class PayloadValidatorTests
         var issues = Semantic(Steps("""[ { "log": { "level": "info", "message": "x${1 +}y" } } ]"""));
         issues.ShouldHaveSingleItem().Code.ShouldBe(ExpressionErrorCodes.SyntaxError);
         issues[0].Path.ShouldBe("/steps/0/log/message");
+    }
+
+    [Fact]
+    public void A_screenshot_name_referencing_an_undefined_var_is_rejected() // #8: the name Tmpl is checked like any sibling template field
+    {
+        var issues = Semantic(Steps("""[ { "screenshot": { "name": "shot-${nope}" } } ]"""));
+        issues.ShouldHaveSingleItem().Code.ShouldBe(InterpreterErrorCodes.UndefinedReference);
+        issues[0].Path.ShouldBe("/steps/0/screenshot/name");
     }
 
     [Fact]

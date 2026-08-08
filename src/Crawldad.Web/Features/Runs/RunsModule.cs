@@ -44,7 +44,7 @@ public static class RunsModule
         // schema knows the types and old runs stay readable (§14.3 event-schema versioning).
         options.Events.AddEventTypes([
             typeof(RunSessionOpened), typeof(StepStarted), typeof(Navigated), typeof(Clicked),
-            typeof(Waited), typeof(Extracted), typeof(Downloaded), typeof(StepFailed), typeof(Filled),
+            typeof(Waited), typeof(Extracted), typeof(Downloaded), typeof(Screenshotted), typeof(StepFailed), typeof(Filled),
         ]);
 
         // The RunTimeline observability read model (§13): the ordered step list + durations + refs + region, folded from the

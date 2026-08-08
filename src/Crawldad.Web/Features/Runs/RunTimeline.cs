@@ -5,8 +5,8 @@ namespace Crawldad.Web.Features.Runs;
 
 /// <summary>
 /// The async run-observability read model (§13): one document per run, folded from its step-trace event stream into the
-/// ordered step list (with durations), the redacted input key names, the extracted-value + blob refs, the failure +
-/// screenshot ref, the pinned payload revision + script hash, and the backend region. This is the lag-tolerant cross-run
+/// ordered step list (with durations), the redacted input key names, the extracted-value refs, the download + explicit
+/// <c>screenshot</c> (#8) artifact refs, the failure + screenshot ref, the pinned payload revision + script hash, and the backend region. This is the lag-tolerant cross-run
 /// dashboard view (§11) — distinct from the read-your-writes <see cref="RunProgress"/> state — and it derives <b>purely</b>
 /// from already-<b>scrubbed</b> events (§12), so it holds no raw credentials or bulk PII by construction. It is exposed as
 /// the <see cref="RunTimelineResponse"/> DTO, never this document. Populated only for the executor path (which emits the
@@ -56,6 +56,9 @@ public sealed record RunTimeline
     /// <summary>The downloads streamed to blob storage (refs + metadata, never bytes).</summary>
     public IReadOnlyList<RunTimelineDownload> Downloads { get; init; } = [];
 
+    /// <summary>The explicit <c>screenshot</c> captures (refs + metadata, never images), in capture order (#8).</summary>
+    public IReadOnlyList<RunTimelineScreenshot> Screenshots { get; init; } = [];
+
     /// <summary>The failure screenshot's ref captured on the failing step, carried into <see cref="Failure"/> at the terminal event.</summary>
     public string? ScreenshotRef { get; init; }
 
@@ -66,8 +69,9 @@ public sealed record RunTimeline
 /// <summary>
 /// Folds a run's trace events into its <see cref="RunTimeline"/> (§13). Registered on the shared, config-driven projection
 /// lifecycle (Inline under the test switch, Async in production, §11/HostConfiguration) beside the aggregate snapshots. It
-/// reacts only to the events it curates — <c>StepStarted</c> spines the step list, terminals close durations — and ignores
-/// the finer <c>Navigated</c>/<c>Clicked</c>/<c>Waited</c> events (those serve the live SSE tail, not this summary).
+/// reacts only to the events it curates — <c>StepStarted</c> spines the step list, <c>Extracted</c>/<c>Downloaded</c>/
+/// <c>Screenshotted</c> collect the run's artifacts, terminals close durations — and ignores the finer <c>Navigated</c>/
+/// <c>Clicked</c>/<c>Waited</c> events (those serve the live SSE tail, not this summary).
 /// </summary>
 public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTimeline, Guid>
 {
@@ -128,6 +132,13 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
     /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(Downloaded downloaded, RunTimeline timeline) =>
         timeline with { Downloads = [.. timeline.Downloads, new RunTimelineDownload(downloaded.BlobRef, downloaded.ContentType, downloaded.Size, downloaded.Sha256)] };
+
+    /// <summary>Records one explicit screenshot's ref + metadata (#8), curated like a download — an author-requested
+    /// artifact, unlike the finer per-node events the timeline drops.</summary>
+    /// <param name="shot">The screenshot event.</param>
+    /// <param name="timeline">The current timeline.</param>
+    public RunTimeline Apply(Screenshotted shot, RunTimeline timeline) =>
+        timeline with { Screenshots = [.. timeline.Screenshots, new RunTimelineScreenshot(shot.ScreenshotRef, shot.Name, shot.Size)] };
 
     /// <summary>Captures the failing step's screenshot ref (carried into the failure at the terminal event).</summary>
     /// <param name="failed">The step-failed event.</param>
