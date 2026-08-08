@@ -61,13 +61,15 @@ crossing the cap returns 202 and completes with the same terminal result async w
 produced; the threshold is a config knob; deployment docs state the required ingress timeout.
 
 ### [#4](https://github.com/jasoneisen/crawldad/issues/4) Browserbase `connectUrl` live-primary re-check
-**Status:** open (verification currently MED-HIGH from docs + captured examples). **Ref:** §3.5/§9,
+**Status:** shipped 2026-08-08 (PR #22). Live-primary re-verified both remote backends against real
+accounts (one session each, released). **Finding — the Browserbase shape drifted:** the live
+`connectUrl` is `wss://connect.<region>.browserbase.com/?signingKey=<JWT>` (a per-session JWT — it does
+**not** embed the account apiKey, which travels only in the `X-BB-API-Key` header), so a leak now
+compromises one session, not the account. Browserless confirmed:
+`wss://production-<region>.browserless.io/chromium/playwright?token=<token>` (token accepted; no-token
+→ 401). No scrub-rule change needed (`signingKey`/`token` already known params); `SECURITY.md` updated
+docs-based → live-primary for both providers, with the scrub re-confirmation. **Ref:** §3.5/§9,
 SECURITY.md.
-One live Browserbase session-create against a real account to confirm the `connectUrl` shape
-(`wss://connect.browserbase.com?apiKey=bb_live_…&sessionId=…` — embeds the account apiKey) before
-the GA security copy ships. Operator task — needs a Browserbase account.
-**Done when:** shape confirmed against a live response; SECURITY.md updated from "re-verified
-(docs)" to live-primary; scrub rules re-confirmed against the real string.
 
 ## Tier 2 — approved engineering follow-ups
 
