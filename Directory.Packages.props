@@ -31,6 +31,13 @@
     <PackageVersion Include="Microsoft.Playwright" Version="1.61.0" />
   </ItemGroup>
 
+  <ItemGroup Label="Storage (CD-2)">
+    <!-- The durable Azure Blob storage adapter (CD-2, deployment target is Azure — docs/PRODUCT.md). Pinned to 12.21.2,
+         the build cached in this environment; its transitive Azure.Core/Azure.Storage.Common are auto-pinned above. The
+         adapter is exercised against the Azurite emulator (opt-in local + CI service), never live storage. -->
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.21.2" />
+  </ItemGroup>
+
   <ItemGroup Label="Validation">
     <!-- Payload validation-at-save (§12): the JSON Schema (schema/crawldad-1.schema.json) is enforced by
          JsonSchema.Net — the de-facto System.Text.Json-native JSON Schema engine. Pinned to 8.0.0, the last

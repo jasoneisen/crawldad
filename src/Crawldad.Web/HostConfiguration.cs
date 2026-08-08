@@ -2,6 +2,7 @@ using Crawldad.Contracts;
 using Crawldad.Web.Features.Payloads;
 using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Web.Infrastructure.Storage;
 using JasperFx;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
@@ -86,6 +87,7 @@ public static class HostConfiguration
         // credential scrubber + per-run secret scope, §12), and the Payloads slice registers the POST /payloads validator.
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
+        StorageModule.AddStorage(builder.Services, builder.Configuration); // CD-2: durable download sink + screenshot store + retention janitor
         AddTenantSecurity(builder);
         ScrubAllLogOutput(builder.Services);
         return builder;

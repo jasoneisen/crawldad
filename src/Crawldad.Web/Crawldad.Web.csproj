@@ -14,6 +14,9 @@
     <PackageReference Include="Microsoft.Playwright" />
     <!-- Payload validation-at-save (§12): enforces schema/crawldad-1.schema.json against saved payloads. -->
     <PackageReference Include="JsonSchema.Net" />
+    <!-- The durable Azure Blob storage adapter (CD-2, §9.3/§12/§13). The filesystem adapter is the hermetic default;
+         this is the Azure-native durable seam for the Azure deployment target, tested against Azurite. -->
+    <PackageReference Include="Azure.Storage.Blobs" />
   </ItemGroup>
 
   <!-- The payload JSON Schema (Deliverable 1) is the normative structural spec (§4). It lives once at the

@@ -128,6 +128,59 @@ The honest corollary (see the final "Designed, not built" note): a raw secret pa
 un-scrubbed in the `inputs` carried by `StartRun` and the saga (and re-read on resume) — which is exactly why form-fill
 credentials must become a `secretRef` type, never a plain input.
 
+## Durable blob storage, retention & PII erasure (CD-2)
+
+Bulk extracted downloads (§9.3) and failure screenshots (§13) never enter the immutable event store — events carry
+**metadata only** (content id, hash, blob ref); the bytes live in **deletable blob storage** (§12). CD-2 ships the real
+durable adapters behind the existing `IDownloadSink` / `IScreenshotStore` seams (replacing the in-memory fakes production
+previously wired) and adds the §12/§13 lifecycle policy the host enforces.
+
+**Adapters — config-selected via `Crawldad:Storage:Provider`.**
+
+| Provider | Adapter | Role |
+|---|---|---|
+| `filesystem` | `Infrastructure/Storage/FileSystem/FileSystemBlobStore.cs` | The **durable default**: content-addressed, idempotent, atomic writes on disk under `Crawldad:Storage:FileSystem:Root`. Dependency-free — the adapter the 100% gate covers, against real on-disk storage. |
+| `azure` | `Infrastructure/Storage/Azure/AzureBlobStore.cs` | The Azure-native durable adapter for the Azure deployment target (docs/PRODUCT.md). Exercised against the **Azurite emulator** (opt-in `AzuriteBlobStoreTests` locally + an Azurite service in CI) — **zero live third-party traffic**. Excluded from the hermetic coverage gate (which runs with no external storage dependency); the filesystem adapter proves the seam, and the DI wiring that selects Azure is covered without the emulator. |
+| `fake` | `FakeDownloadSink` + `InMemoryScreenshotStore` | Non-durable, in-memory; the **test-host** default (`UseCrawldadTestDefaults`), so the hermetic suite needs no filesystem/emulator. |
+
+Both durable adapters pass the **same seam contract** (`tests/…/Support/BlobStoreContract.cs`) — one matrix, run against each
+adapter rather than a parallel copy: content-addressed idempotency (§9.3), tenant partitioning, and the retention lifecycle.
+
+**Tenant partitioning (CD-1/§12).** Every blob is stored under its tenant — `{Root}/{tenant}/{downloads|screenshots}/…` on
+the filesystem, a `{tenant}/…` blob-name prefix in the Azure container. The idempotency probe resolves a tenant-qualified
+location, so one tenant can neither read, overwrite, nor probe another's blob by content id. The content id / screenshot ref
+handed back to the engine stay **tenant-independent**, so the wire result and immutable trace are byte-identical across
+providers. The one attacker-influenceable path segment (the tenant, from the authenticated principal) is guarded against
+traversal; the content id (a GUID) and screenshot key (a hex digest) are intrinsically safe.
+
+**Retention / lifecycle (§12/§13).** Retention is a **host-enforced policy** (`Crawldad:Storage:Retention`), not a
+provider-specific storage rule — so it enforces uniformly across filesystem and Azure. A scheduled janitor
+(`Infrastructure/Storage/RetentionJanitor.cs`, a `BackgroundService` — the same "scheduled enforcer" pattern the run
+wall-clock deadline `RunDeadline` uses) sweeps every registered durable store on `SweepInterval` and deletes blobs past their
+category's TTL:
+
+| Category | Knob | Default | Rationale |
+|---|---|---|---|
+| Downloads | `Retention:DownloadTtl` | 30 days | the caller's bulk data |
+| Screenshots | `Retention:ScreenshotTtl` | 7 days | **shorter — a screenshot can show PII (§12)** |
+
+A TTL of `0` retains that category indefinitely (e.g. when an external storage-lifecycle rule owns expiry);
+`Retention:Enabled=false` disables the janitor entirely. A non-positive `SweepInterval`, or a durable provider missing its
+target (a filesystem root, an Azure connection string), fails the host **loudly at boot** (`StorageOptionsValidator`, the
+`RunLimitsOptionsValidator` idiom). Under the `fake` provider no durable store is registered, so the janitor is a no-op.
+
+**Deletable PII blobs / erasure.** `IRetentionStore.DeleteAsync` is the deletion primitive: it backs the janitor and is the
+on-demand **hard-delete** erasure path for a subject's PII (a right-to-erasure request deletes the tenant's matching blobs;
+the immutable trace retains only the credential-free ref, never the bytes).
+
+**Designed, not built — crypto-shredding.** §12's *optional* crypto-shredding (encrypt each blob under a per-run/subject key;
+discard the key to render it unrecoverable) is **not built**: hard delete via `DeleteAsync` is the erasure mechanism CD-2
+ships, and it suffices wherever storage is mutable. The sketch for the WORM/backup case where delete alone is not enough —
+encrypt bytes at rest under an AES-GCM **data key** wrapped by a per-run/subject key held in the BYO vault (CD-6); store the
+wrapped key beside the blob; "shred" by discarding the key, leaving unrecoverable ciphertext. It slots in as a **decorator**
+over the durable adapters — the content-addressed id/ref are computed from the *plaintext* by the engine, before the sink, so
+idempotency and the wire/trace stay byte-identical — and rides CD-6's key custody, which is why it is sequenced after it.
+
 ## Leak test (the phase gate)
 
 `tests/Crawldad.Tests/Integration/CredentialLeakTests.cs` runs a payload through `POST /runs` with a
