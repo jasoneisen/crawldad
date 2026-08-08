@@ -206,9 +206,11 @@ carried in the design, not gated on).
 for computed steps.
 
 ### [#11](https://github.com/jasoneisen/crawldad/issues/11) Honor `download.idempotencyKey`
-**Status:** open. Accepted-but-ignored today (content-hash identity already provides the
-`stored:true` short-circuit). Decide: implement key-based dedup or remove the field from the schema
-— either way, stop silently ignoring it.
+**Status:** resolved 2026-08-08 — REMOVED (PR #31, reviewer-approved first round). The field's own
+§9.3 spec described what content-addressed upload idempotency already does unconditionally; the
+rejected implement-path reasoning is recorded in §9.3. Stored payloads carrying the field still
+run/replay unchanged; re-saving rejects it. Reviewer DX note for #20/#21: schema `oneOf` rejection
+output is noisy (~98 errors, property named only as a JSON-pointer path).
 
 ## Tier 5 — designed, awaiting a workload (post-MVP by the brief)
 
