@@ -28,9 +28,6 @@ namespace Crawldad.Web.Infrastructure.Storage.Azure;
     "carries the seam's covered implementation. Construction is I/O-free, so StorageModule's azure wiring is covered without Azurite.")]
 internal sealed class AzureBlobStore : IDownloadSink, IScreenshotStore, IRetentionStore
 {
-    private const string _downloadsDir = "downloads";
-    private const string _screenshotsDir = "screenshots";
-
     private readonly BlobContainerClient _container;
     private Task? _containerReady;
 
@@ -47,8 +44,9 @@ internal sealed class AzureBlobStore : IDownloadSink, IScreenshotStore, IRetenti
 
     public async Task<bool> ExistsAsync(string tenant, Guid contentId, CancellationToken ct)
     {
+        var name = DownloadName(tenant, contentId); // validates the tenant (traversal guard) before any I/O
         await EnsureContainerAsync(ct);
-        return await _container.GetBlobClient(DownloadName(tenant, contentId)).ExistsAsync(ct);
+        return await _container.GetBlobClient(name).ExistsAsync(ct);
     }
 
     public async Task<bool> StoreAsync(string tenant, StoredDownload item, Stream content, CancellationToken ct)
@@ -56,8 +54,9 @@ internal sealed class AzureBlobStore : IDownloadSink, IScreenshotStore, IRetenti
         ArgumentNullException.ThrowIfNull(item);
         ArgumentNullException.ThrowIfNull(content);
 
+        var name = DownloadName(tenant, item.ContentId); // validates the tenant (traversal guard) before any I/O
         await EnsureContainerAsync(ct);
-        await _container.GetBlobClient(DownloadName(tenant, item.ContentId)).UploadAsync(content, overwrite: true, ct);
+        await _container.GetBlobClient(name).UploadAsync(content, overwrite: true, ct);
         return true;
     }
 
@@ -68,10 +67,11 @@ internal sealed class AzureBlobStore : IDownloadSink, IScreenshotStore, IRetenti
         ArgumentNullException.ThrowIfNull(png);
 
         var digest = Convert.ToHexStringLower(SHA256.HashData(png));
-        var reference = $"{_screenshotsDir}/{digest}.png"; // tenant-independent — the trace stays byte-identical
+        var reference = $"{BlobNaming.ScreenshotsDir}/{digest}.png"; // tenant-independent — the trace stays byte-identical
+        var name = ScreenshotName(tenant, digest); // validates the tenant (traversal guard) before any I/O
 
         await EnsureContainerAsync(ct);
-        var blob = _container.GetBlobClient(ScreenshotName(tenant, digest));
+        var blob = _container.GetBlobClient(name);
         if (!await blob.ExistsAsync(ct))
         {
             await using var buffer = new MemoryStream(png, writable: false);
@@ -107,18 +107,17 @@ internal sealed class AzureBlobStore : IDownloadSink, IScreenshotStore, IRetenti
     {
         ArgumentNullException.ThrowIfNull(blob);
 
+        // Validate both attacker-influenceable segments (traversal guard) before any I/O.
+        var name = $"{BlobNaming.SafeSegment(blob.Tenant)}/{BlobNaming.SubDir(blob.Kind)}/{BlobNaming.SafeSegment(blob.Key)}";
         await EnsureContainerAsync(ct);
-        var name = $"{blob.Tenant}/{SubDir(blob.Kind)}/{blob.Key}";
         return await _container.GetBlobClient(name).DeleteIfExistsAsync(cancellationToken: ct);
     }
 
     // ----- naming + lazy init -------------------------------------------------------------------------------------------
 
-    private static string DownloadName(string tenant, Guid contentId) => $"{tenant}/{_downloadsDir}/{contentId}";
+    private static string DownloadName(string tenant, Guid contentId) => $"{BlobNaming.SafeSegment(tenant)}/{BlobNaming.DownloadsDir}/{contentId}";
 
-    private static string ScreenshotName(string tenant, string digest) => $"{tenant}/{_screenshotsDir}/{digest}.png";
-
-    private static string SubDir(BlobKind kind) => kind == BlobKind.Download ? _downloadsDir : _screenshotsDir;
+    private static string ScreenshotName(string tenant, string digest) => $"{BlobNaming.SafeSegment(tenant)}/{BlobNaming.ScreenshotsDir}/{digest}.png";
 
     // Parses "{tenant}/{downloads|screenshots}/{key}"; a blob that doesn't match the layout (foreign content) is skipped.
     private static bool TryParseName(string name, out BlobKind kind, out string tenant, out string key)
@@ -135,8 +134,8 @@ internal sealed class AzureBlobStore : IDownloadSink, IScreenshotStore, IRetenti
 
         kind = parts[1] switch
         {
-            _downloadsDir => BlobKind.Download,
-            _screenshotsDir => BlobKind.Screenshot,
+            BlobNaming.DownloadsDir => BlobKind.Download,
+            BlobNaming.ScreenshotsDir => BlobKind.Screenshot,
             _ => (BlobKind)(-1),
         };
         if ((int)kind < 0)

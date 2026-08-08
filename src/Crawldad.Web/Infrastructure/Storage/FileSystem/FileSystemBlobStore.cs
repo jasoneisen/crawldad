@@ -24,14 +24,10 @@ namespace Crawldad.Web.Infrastructure.Storage.FileSystem;
 /// </summary>
 internal sealed class FileSystemBlobStore : IDownloadSink, IScreenshotStore, IRetentionStore
 {
-    private const string _downloadsDir = "downloads";
-    private const string _screenshotsDir = "screenshots";
-
     // In-flight writes land under this marker then move into place; the marker also excludes a leftover (crashed) temp from
     // enumeration so it can never masquerade as a complete blob.
     private const string _tempMarker = ".uploading-";
 
-    private static readonly char[] _separators = ['/', '\\'];
     private static readonly BlobKind[] _kinds = [BlobKind.Download, BlobKind.Screenshot];
 
     private readonly string _root;
@@ -68,7 +64,7 @@ internal sealed class FileSystemBlobStore : IDownloadSink, IScreenshotStore, IRe
         ArgumentNullException.ThrowIfNull(png);
 
         var digest = Convert.ToHexStringLower(SHA256.HashData(png));
-        var reference = $"{_screenshotsDir}/{digest}.png"; // tenant-independent — the StepFailed event/timeline stay byte-identical
+        var reference = $"{BlobNaming.ScreenshotsDir}/{digest}.png"; // tenant-independent — the StepFailed event/timeline stay byte-identical
         var path = ScreenshotPath(tenant, digest);
 
         if (!File.Exists(path)) // content-addressed ⇒ identical bytes collapse to one blob (idempotent capture)
@@ -93,7 +89,7 @@ internal sealed class FileSystemBlobStore : IDownloadSink, IScreenshotStore, IRe
                 var tenant = Path.GetFileName(tenantDir);
                 foreach (var kind in _kinds)
                 {
-                    var dir = Path.Combine(tenantDir, SubDir(kind));
+                    var dir = Path.Combine(tenantDir, BlobNaming.SubDir(kind));
                     if (!Directory.Exists(dir))
                     {
                         continue; // this tenant has no blobs of this kind
@@ -121,7 +117,7 @@ internal sealed class FileSystemBlobStore : IDownloadSink, IScreenshotStore, IRe
     {
         ArgumentNullException.ThrowIfNull(blob);
 
-        var path = Path.Combine(_root, SafeSegment(blob.Tenant), SubDir(blob.Kind), SafeSegment(blob.Key));
+        var path = Path.Combine(_root, BlobNaming.SafeSegment(blob.Tenant), BlobNaming.SubDir(blob.Kind), BlobNaming.SafeSegment(blob.Key));
         if (!File.Exists(path))
         {
             return Task.FromResult(false); // already gone (a concurrent sweep / erasure)
@@ -134,28 +130,12 @@ internal sealed class FileSystemBlobStore : IDownloadSink, IScreenshotStore, IRe
     // ----- pathing + guards ---------------------------------------------------------------------------------------------
 
     private string DownloadPath(string tenant, Guid contentId) =>
-        Path.Combine(_root, SafeSegment(tenant), _downloadsDir, contentId.ToString());
+        Path.Combine(_root, BlobNaming.SafeSegment(tenant), BlobNaming.DownloadsDir, contentId.ToString());
 
     private string ScreenshotPath(string tenant, string digest) =>
-        Path.Combine(_root, SafeSegment(tenant), _screenshotsDir, $"{digest}.png");
-
-    private static string SubDir(BlobKind kind) => kind == BlobKind.Download ? _downloadsDir : _screenshotsDir;
+        Path.Combine(_root, BlobNaming.SafeSegment(tenant), BlobNaming.ScreenshotsDir, $"{digest}.png");
 
     private static bool IsTemp(string path) => path.Contains(_tempMarker, StringComparison.Ordinal);
-
-    // Guards the one attacker-influenceable path segment (the tenant) against traversal: no separators, no "..", non-empty.
-    // The content id (a GUID) and screenshot key (a hex digest) are intrinsically safe and pass through unchanged.
-    private static string SafeSegment(string value)
-    {
-        if (string.IsNullOrEmpty(value)
-            || value.Contains("..", StringComparison.Ordinal)
-            || value.IndexOfAny(_separators) >= 0)
-        {
-            throw new ArgumentException($"'{value}' is not a safe storage path segment", nameof(value));
-        }
-
-        return value;
-    }
 
     // Writes to a temp sibling then atomically moves it into place, so a reader (ExistsAsync) never sees a torn write and a
     // re-store of identical content is a harmless overwrite (same content id ⇒ same bytes). A failed write leaves no temp.

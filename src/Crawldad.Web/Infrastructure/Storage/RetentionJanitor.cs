@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -63,7 +64,7 @@ public sealed class RetentionJanitor : BackgroundService
                     continue; // still within its retention window
                 }
 
-                if (await store.DeleteAsync(blob, ct))
+                if (await TryDeleteAsync(store, blob, ct))
                 {
                     deleted++;
                 }
@@ -78,6 +79,22 @@ public sealed class RetentionJanitor : BackgroundService
         return deleted;
     }
 
+    // A single blob's delete failure (an Azure throttle/5xx, a file that vanished mid-sweep, a permission blip) must not abort
+    // the rest of the sweep — log it and move on. Cancellation is not a failure: it propagates so shutdown stops promptly.
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "A retention sweep must tolerate any transient per-blob storage error and continue; cancellation is re-thrown by the exception filter.")]
+    private async Task<bool> TryDeleteAsync(IRetentionStore store, StoredBlob blob, CancellationToken ct)
+    {
+        try
+        {
+            return await store.DeleteAsync(blob, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Retention janitor failed to delete {Kind} blob {Tenant}/{Key}; continuing.", blob.Kind, blob.Tenant, blob.Key);
+            return false;
+        }
+    }
+
     /// <summary>The periodic driver: sweeps immediately, then every <see cref="RetentionOptions.SweepInterval"/>, until the
     /// host stops. A no-op when retention is disabled.</summary>
     /// <param name="stoppingToken">Cancelled on host shutdown.</param>
@@ -90,8 +107,25 @@ public sealed class RetentionJanitor : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await SweepOnceAsync(_clock.GetUtcNow(), stoppingToken);
+            await SweepSafelyAsync(stoppingToken);
             await DelayAsync(_retention.SweepInterval, stoppingToken);
+        }
+    }
+
+    // Runs one sweep, absorbing any failure so it never stops the host. The default BackgroundService behaviour is StopHost —
+    // a single transient storage error (e.g. a store's ListAsync throwing) would otherwise take the whole API down; instead we
+    // log and retry next interval. Cancellation (shutdown) is re-thrown by the filter so the host tears down promptly. Internal
+    // so both filter branches are directly testable.
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "A background janitor must survive any transient sweep failure rather than stop the host; cancellation is re-thrown by the exception filter.")]
+    internal async Task SweepSafelyAsync(CancellationToken ct)
+    {
+        try
+        {
+            await SweepOnceAsync(_clock.GetUtcNow(), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Retention sweep failed; retrying next interval.");
         }
     }
 

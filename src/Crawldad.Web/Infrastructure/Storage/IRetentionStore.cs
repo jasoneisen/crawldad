@@ -40,8 +40,8 @@ public interface IRetentionStore
     /// <returns>Each stored blob with its category, tenant, key, last-modified time, and size.</returns>
     Task<IReadOnlyList<StoredBlob>> ListAsync(CancellationToken ct);
 
-    /// <summary>Deletes the blob the sweep enumerated (retention or PII erasure).</summary>
-    /// <param name="blob">The blob to delete (as returned by <see cref="EnumerateAsync"/>).</param>
+    /// <summary>Deletes the blob the sweep listed (retention or PII erasure).</summary>
+    /// <param name="blob">The blob to delete (as returned by <see cref="ListAsync"/>).</param>
     /// <param name="ct">Cancels the delete.</param>
     /// <returns><see langword="true"/> when a blob was deleted; <see langword="false"/> when it was already gone.</returns>
     Task<bool> DeleteAsync(StoredBlob blob, CancellationToken ct);

@@ -46,6 +46,56 @@ public class RetentionJanitorTests
     }
 
     [Fact]
+    public async Task A_failing_blob_delete_is_logged_and_the_sweep_continues()
+    {
+        var store = new FakeRetentionStore { DeleteFault = new InvalidOperationException("azure 503") };
+        store.Blobs.Add(new StoredBlob(BlobKind.Download, "t", "old", _now.AddDays(-40), 10)); // expired ⇒ delete attempted
+
+        // The delete throws, but the sweep swallows it and reports zero deletions rather than crashing.
+        var deleted = await Janitor(new RetentionOptions { DownloadTtl = TimeSpan.FromDays(30) }, store).SweepOnceAsync(_now, CancellationToken.None);
+
+        deleted.ShouldBe(0);
+        store.Deleted.Count.ShouldBe(1); // the delete was attempted
+    }
+
+    [Fact]
+    public async Task Cancellation_during_a_delete_is_not_swallowed()
+    {
+        var store = new FakeRetentionStore { DeleteFault = new OperationCanceledException() };
+        store.Blobs.Add(new StoredBlob(BlobKind.Download, "t", "old", _now.AddDays(-40), 10));
+
+        // Cancellation is not a transient error — it propagates so shutdown stops the sweep promptly.
+        await Should.ThrowAsync<OperationCanceledException>(async () =>
+            await Janitor(new RetentionOptions { DownloadTtl = TimeSpan.FromDays(30) }, store).SweepOnceAsync(_now, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_safe_sweep_absorbs_a_store_failure_but_reraises_cancellation()
+    {
+        // A store-level failure (e.g. ListAsync throwing) is absorbed — the host survives, the sweep retries next interval.
+        var failing = Janitor(new RetentionOptions(), new FakeRetentionStore { ListFault = new InvalidOperationException("azure 500") });
+        await Should.NotThrowAsync(async () => await failing.SweepSafelyAsync(CancellationToken.None));
+
+        // …but a cancellation still propagates, so the periodic loop tears down on shutdown.
+        var cancelling = Janitor(new RetentionOptions(), new FakeRetentionStore { ListFault = new OperationCanceledException() });
+        await Should.ThrowAsync<OperationCanceledException>(async () => await cancelling.SweepSafelyAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_store_that_keeps_failing_does_not_stop_the_host()
+    {
+        // The periodic driver keeps ticking through repeated sweep failures instead of letting BackgroundService StopHost fire.
+        var store = new FakeRetentionStore { ListFault = new InvalidOperationException("azure 500") };
+        var janitor = Janitor(new RetentionOptions { Enabled = true, SweepInterval = TimeSpan.FromMilliseconds(20) }, store);
+
+        await janitor.StartAsync(CancellationToken.None);
+        await Task.WhenAny(store.SweptTwice.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        await janitor.StopAsync(CancellationToken.None);
+
+        store.SweptTwice.Task.IsCompletedSuccessfully.ShouldBeTrue(); // it kept sweeping despite every sweep failing
+    }
+
+    [Fact]
     public async Task Sweeping_with_no_stores_or_an_empty_store_deletes_nothing()
     {
         (await Janitor(new RetentionOptions()).SweepOnceAsync(_now, CancellationToken.None)).ShouldBe(0);
@@ -91,6 +141,12 @@ public class RetentionJanitorTests
 
         public bool DeleteResult { get; init; } = true;
 
+        /// <summary>When set, <see cref="ListAsync"/> faults with it — a transient store failure the sweep must survive.</summary>
+        public Exception? ListFault { get; init; }
+
+        /// <summary>When set, <see cref="DeleteAsync"/> faults with it — a per-blob failure the sweep must log and skip.</summary>
+        public Exception? DeleteFault { get; init; }
+
         public int Enumerations => Volatile.Read(ref _enumerations);
 
         public TaskCompletionSource SweptTwice { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -102,13 +158,15 @@ public class RetentionJanitorTests
                 SweptTwice.TrySetResult();
             }
 
-            return Task.FromResult<IReadOnlyList<StoredBlob>>(Blobs);
+            return ListFault is not null
+                ? Task.FromException<IReadOnlyList<StoredBlob>>(ListFault)
+                : Task.FromResult<IReadOnlyList<StoredBlob>>(Blobs);
         }
 
         public Task<bool> DeleteAsync(StoredBlob blob, CancellationToken ct)
         {
             Deleted.Add(blob);
-            return Task.FromResult(DeleteResult);
+            return DeleteFault is not null ? Task.FromException<bool>(DeleteFault) : Task.FromResult(DeleteResult);
         }
     }
 }
