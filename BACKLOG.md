@@ -50,7 +50,10 @@ acceptable first slice). Note: under the slot-based pricing model (`docs/PRODUCT
 per-tenant concurrent-runs cap is the billing-critical limit — its at-limit semantics are #16.
 
 ### [#15](https://github.com/jasoneisen/crawldad/issues/15) Cap synchronous runs at 120 s with auto-upgrade to async
-**Status:** approved 2026-08-08. **Ref:** `docs/PRODUCT.md` §1.1/§2.2, §8.4.
+**Status:** shipped 2026-08-08 (PR #23, reviewer-approved after a two-round loop — round 1 caught a
+pinned/replay `ObjectDisposedException` across the 202 handoff and a supervisor slot leak, both
+fixed and regression-tested). Sub-cap sync goldens unchanged; window is
+`Crawldad:Limits:SyncUpgradeThresholdMs` (default 120 s). **Ref:** `docs/PRODUCT.md` §1.1/§2.2, §8.4.
 Every viable Azure ingress kills a long sync request first (Front Door 240 s, Container Apps Envoy
 240 s, App Service ~230 s fixed) — the 30-minute synchronous `POST /runs` is architecturally dead
 behind any of them. Cap sync execution at 120 s wall clock; at the cap the run is auto-upgraded,
