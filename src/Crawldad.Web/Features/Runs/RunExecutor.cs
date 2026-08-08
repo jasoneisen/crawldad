@@ -19,8 +19,9 @@ namespace Crawldad.Web.Features.Runs;
 public static class ExecuteRunHandler
 {
     /// <summary>Drives one run (or resumes it) to a terminal state, under the message's tenant (CD-1). When the run reaches a
-    /// terminal state (freeing its slot), it triggers promotion of the tenant's oldest queued run (CD-16) — a durable, no-op-if-
-    /// nothing-queued trigger; a run merely interrupted for recovery frees no slot and triggers nothing.</summary>
+    /// terminal state (freeing its slot — and, atomically, deleting its saga in <see cref="RunFinalization"/>), it triggers
+    /// promotion of the tenant's oldest queued run (CD-16) — a durable, no-op-if-nothing-queued trigger; a run merely
+    /// interrupted for recovery frees no slot and triggers nothing.</summary>
     /// <param name="command">The run to execute.</param>
     /// <param name="executor">The run executor.</param>
     /// <param name="bus">The bus the queue promotion trigger is published on.</param>

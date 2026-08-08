@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Alba;
+using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
 using Marten;
@@ -224,6 +225,33 @@ public static class DurableHost
         }
 
         return host;
+    }
+
+    /// <summary>Polls until the run's <see cref="RunExecutorSaga"/> document is gone (CD-5): the shared finaliser deletes it in
+    /// the same transaction as the run's terminal disposition, so its <c>script</c>+<c>inputs</c> stop lingering at rest
+    /// (SECURITY.md "Durable state at rest"). Returns as soon as the run reaches terminal — there is no separate cleanup step to
+    /// wait on.</summary>
+    /// <param name="host">The host to poll.</param>
+    /// <param name="runId">The run whose saga should be reclaimed.</param>
+    /// <param name="timeout">How long to wait before giving up.</param>
+    public static async Task WaitUntilSagaGoneAsync(IAlbaHost host, Guid runId, TimeSpan timeout)
+    {
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using (var session = store.LightweightSession(TestTenants.PrimaryId))
+            {
+                if (await session.LoadAsync<RunExecutorSaga>(runId) is null)
+                {
+                    return;
+                }
+            }
+
+            await Task.Delay(40);
+        }
+
+        throw new TimeoutException($"the executor saga for run {runId} was not reclaimed within {timeout}");
     }
 
     /// <summary>Polls <c>GET /runs/{id}</c> until the run reaches a terminal state (past <c>queued</c> and <c>running</c>),

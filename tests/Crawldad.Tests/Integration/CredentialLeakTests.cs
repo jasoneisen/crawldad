@@ -250,20 +250,16 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         // The scrubbed sinks (events, projections, run-progress, SSE, timeline, screenshots, logs, response) stay clean too.
         await AssertRunLeaksNothingAsync(host, root, LeakHost.DurableSecretSentinel);
 
-        // The RunExecutorSaga LINGERS after the run finished — it is never marked complete — and holds the run's
-        // inputs+script at rest, but by reference: the credentialRef IS stored, the resolved secret is NOT (§12).
-        var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
-        {
-            var saga = await session.LoadAsync<RunExecutorSaga>(runId);
-            saga.ShouldNotBeNull();                                         // still at rest post-completion (the retention finding)
-            saga.Inputs.ShouldContain(LeakHost.DurableRef);                  // the reference is persisted…
-            saga.Inputs.ShouldNotContain(LeakHost.DurableSecretSentinel);    // …the resolved secret is not
-        }
+        // CD-5: the RunExecutorSaga no longer LINGERS after the run finished — the shared terminal finaliser deletes it in the
+        // SAME transaction as the run's terminal disposition, so its inputs+script are reclaimed atomically rather than sitting
+        // at rest indefinitely. Poll until it is gone (was: asserted lingering).
+        await DurableHost.WaitUntilSagaGoneAsync(host, runId, TimeSpan.FromSeconds(20));
 
-        // The saga document + every Wolverine durable envelope body (StartRun inputs+script, ExecuteRun, the scheduled
-        // RunDeadline, dead-letters) carry no resolved secret — the durable at-rest surfaces the earlier sweep omitted.
-        (await DumpDurableStateAsync(host)).ShouldNotContain(LeakHost.DurableSecretSentinel);
+        // The durable at-rest surfaces still hold the run definition BY REFERENCE — the StartRun envelope carries inputs+script,
+        // so the credentialRef IS present at rest while the resolved secret is NOWHERE (the by-reference-model boundary, §12).
+        var durableState = await DumpDurableStateAsync(host);
+        durableState.ShouldContain(LeakHost.DurableRef);                 // the reference is persisted (a non-vacuous sweep)…
+        durableState.ShouldNotContain(LeakHost.DurableSecretSentinel);   // …the resolved secret is not, anywhere durable
     }
 
     // ----- the sink sweep -----------------------------------------------------

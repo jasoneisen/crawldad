@@ -82,7 +82,8 @@ public sealed class SyncRunSupervisor(
     private readonly ConcurrentDictionary<Guid, Task> _inFlight = new();
 
     /// <summary>Set once host shutdown begins: the freed slot's queue-promotion nudge is idempotent and durably re-triggered by
-    /// the startup recovery scan, so during shutdown it is skipped rather than published onto a stopping bus (#26).</summary>
+    /// the startup recovery scan, so during shutdown it is skipped rather than published onto a stopping bus (#26). Saga cleanup
+    /// is unaffected — the finaliser already deleted the saga in the terminal transaction (CD-5), before this skip.</summary>
     private volatile bool _shuttingDown;
 
     /// <summary>Adopts an upgraded run's in-flight execution and drives it to a terminal state in the background. The caller
@@ -155,8 +156,9 @@ public sealed class SyncRunSupervisor(
         signals.Notify(handoff.RunId); // the terminal event closes any live SSE tail
     }
 
-    // The freed slot promotes the tenant's oldest queued run (a no-op when none is queued, CD-16). The request that started
-    // this run is long gone, so publish on a fresh scope's bus — mirroring the startup recovery service's pattern.
+    // The freed slot promotes the tenant's oldest queued run (a no-op when none is queued, CD-16). The upgraded run's saga was
+    // already deleted in the finaliser's terminal transaction (CD-5), so this is only about draining the queue. The request that
+    // started this run is long gone, so publish on a fresh scope's bus — mirroring the startup recovery service's pattern.
     private async Task PromoteAsync(string tenantId)
     {
         if (_shuttingDown)

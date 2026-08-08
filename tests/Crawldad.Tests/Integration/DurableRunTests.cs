@@ -1,10 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Alba;
+using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using Wolverine;
 
 namespace Crawldad.Tests.Integration;
 
@@ -459,6 +461,9 @@ public class DurableRunTests(DurableFixture fixture)
         var progress = await read.LoadAsync<RunProgress>(runId);
         progress!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Running); // left running so the recovery scan re-drives it
         progress.Checkpoint.ShouldNotBeNull(); // its durable checkpoint survived
+
+        // CD-5 resume invariant: a non-finalised run is never deleted, so its saga (the script+inputs resume source) survives.
+        (await read.LoadAsync<RunExecutorSaga>(runId)).ShouldNotBeNull();
     }
 
     [Fact]
@@ -481,5 +486,92 @@ public class DurableRunTests(DurableFixture fixture)
         var progress = await read.LoadAsync<RunProgress>(runId);
         progress!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Failed); // empty inputs → no backend → terminal
         progress.Failure!.Code.ShouldBe("invalid_backend_binding");
+    }
+
+    // ----- saga completion at terminal (CD-5, §14.2) -------------------------
+
+    private static async Task<RunExecutorSaga?> LoadSagaAsync(IAlbaHost host, Guid runId)
+    {
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        return await session.LoadAsync<RunExecutorSaga>(runId);
+    }
+
+    // Drives one durable message through its real generated handler inline, under the run's tenant — so a redelivered StartRun
+    // is loaded/handled/stored exactly as Wolverine would, with no wall-clock wait.
+    private static async Task InvokeAsync(IAlbaHost host, object message)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IMessageBus>().InvokeForTenantAsync(TestTenants.PrimaryId, message);
+    }
+
+    [Fact]
+    public async Task A_finished_async_runs_saga_is_deleted_atomically_at_terminal()
+    {
+        fixture.Gate.Arm(gate: null);
+        var host = await fixture.EnsureAsync();
+        var (runId, _) = await StartAsyncAsync(host, SearchBody("caphome-multipage", async: true));
+
+        (await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(20)))
+            .GetProperty("status").GetString().ShouldBe("succeeded");
+
+        // CD-5: the saga is deleted in the SAME transaction as the terminal disposition — no RunFinished, no deadline janitor,
+        // just gone the instant the run reaches terminal (its deadline is 30 min away and never fires here).
+        await DurableHost.WaitUntilSagaGoneAsync(host, runId, TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task A_deadline_killed_runs_saga_is_gone_with_no_finish_signal_and_no_second_deadline()
+    {
+        // The reviewer's spent-deadline case (CD-5): a run its OWN deadline stopped — the deadline is already fired/acked and
+        // cannot fire again, and there is no separate RunFinished — so the saga is reclaimed ONLY by the atomic delete in the
+        // terminal transaction. The gate stalls the first postback so a short deadline forcibly caps the run (§8.4).
+        var host = await fixture.EnsureAsync();
+        fixture.Gate.Arm(new RunGate("CapHome"));
+        var payload = JsonNode.Parse(
+            """
+            { "crawldad": "1", "name": "deadline.saga", "config": { "backend": "input.backend", "deadlineMs": 200 }, "vars": {},
+              "steps": [
+                { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement" } },
+                { "waitForRequest": { "urlPrefix": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST",
+                    "trigger": [ { "click": { "selector": "#ctl00_PlaceHolderMain_btnNewSearch" } } ] } }
+              ],
+              "result": "'unreached'" }
+            """);
+        var body = new JsonObject
+        {
+            ["payload"] = payload,
+            ["inputs"] = new JsonObject { ["backend"] = new JsonObject { ["adapter"] = "fake", ["options"] = new JsonObject { ["fixture"] = "caphome-resume" } } },
+            ["async"] = true,
+        };
+        var (runId, _) = await StartAsyncAsync(host, body);
+
+        (await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(30)))
+            .GetProperty("failure").GetProperty("code").GetString().ShouldBe(RunExecutor.DeadlineExceededCode);
+
+        await DurableHost.WaitUntilSagaGoneAsync(host, runId, TimeSpan.FromSeconds(10)); // reclaimed by the atomic delete alone
+    }
+
+    [Fact]
+    public async Task A_redelivered_start_run_creates_no_second_saga_and_does_not_error()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+        var command = new StartRun(runId, "n", "redeliverhash",
+            """{ "crawldad": "1", "name": "n", "config": { "backend": "input.backend" }, "steps": [], "result": "'ok'" }""",
+            "{}", null, null, 90_000);
+
+        await InvokeAsync(host, command);                 // first delivery — starts the saga
+        (await LoadSagaAsync(host, runId)).ShouldNotBeNull();
+
+        // The redelivery must be a genuine no-op: the load-first starter finds the existing saga and returns — no second saga,
+        // no re-kicked executor, and NOT the DocumentAlreadyExistsException a straight Insert would throw (which would surface
+        // out of this InvokeForTenantAsync and fail the test).
+        await InvokeAsync(host, command);
+
+        var saga = await LoadSagaAsync(host, runId);
+        saga.ShouldNotBeNull();
+        saga.Id.ShouldBe(runId);
+        saga.ScriptHash.ShouldBe("redeliverhash");
     }
 }

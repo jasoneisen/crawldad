@@ -117,13 +117,15 @@ where, and for how long, stated honestly:
 | At-rest store | Holds | Credential-scrubbed? | Retention |
 |---|---|---|---|
 | **`RunProgress`** (`mt_doc_runprogress`) | the pollable `result`/`partial`/`failure` body and the durable checkpoint (cursor + accumulated-var snapshot) | **yes** — result/partial/checkpoint are scrubbed before store; the body is bulk data deliberately kept out of the immutable trace (§12), and any *extracted PII* it holds lives here (deletable), never in an event | deletable, mutable, executor-owned document |
-| **`RunExecutorSaga`** (`mt_doc_runexecutorsaga`) | the run's `script` + `inputs` — the resume source (re-run + re-connect after a restart) | no (inputs are caller config; credentials among them are refs) | **lingers indefinitely** — the saga is never marked complete, so a finished run's inputs+script remain at rest until the schema is dropped |
+| **`RunExecutorSaga`** (`mt_doc_runexecutorsaga`) | the run's `script` + `inputs` — the resume source (re-run + re-connect after a restart) | no (inputs are caller config; credentials among them are refs) | **reclaimed atomically at terminal (CD-5)** — the shared finaliser deletes the saga in the **same transaction** as the run's terminal disposition (`RunFinalization.Apply` → `session.Delete`), so a finished run's inputs+script are gone the instant it reaches terminal — no separate cleanup message to lose and no crash window (a non-finalised run keeps its saga, the resume source). Retention is bounded to the run's own duration, not "until the schema is dropped" |
 | **Wolverine durable envelopes** (`wolverine_incoming/outgoing_envelopes`, `wolverine_dead_letters`) | `StartRun` carries `script` + `inputs`; `ExecuteRun` / `RunDeadline` carry only the run id | no | handled `StartRun`/`ExecuteRun` are retained until Wolverine's `keep_until` sweep; the scheduled `RunDeadline` sits until its wall-clock delay fires; a dead-lettered `ExecuteRun` persists until cleared |
 
 The invariant that holds at rest: **inputs travel by reference**, so `credentialRef` — not the resolved secret — is what
 these stores contain. `CredentialLeakTests.An_async_by_reference_run_keeps_the_resolved_secret_out_of_the_saga_and_wolverine_envelopes`
 drives a by-reference run and asserts the resolved secret appears in the `RunExecutorSaga` document and every Wolverine
-envelope body **nowhere**, while the `credentialRef` *is* present — proving the boundary at rest, not just at the sinks.
+envelope body **nowhere**, while the `credentialRef` *is* present — proving the boundary at rest, not just at the sinks — and
+now also asserts the saga is **reclaimed once the run finishes** (CD-5, deleted atomically with the terminal disposition), so
+even the by-reference inputs no longer linger indefinitely at rest.
 The honest corollary (see the final "Designed, not built" note): a raw secret passed as a plain **input value** would sit
 un-scrubbed in the `inputs` carried by `StartRun` and the saga (and re-read on resume) — which is exactly why form-fill
 credentials must become a `secretRef` type, never a plain input.
