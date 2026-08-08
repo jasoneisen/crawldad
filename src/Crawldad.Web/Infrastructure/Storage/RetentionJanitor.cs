@@ -1,0 +1,110 @@
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Crawldad.Web.Infrastructure.Storage;
+
+/// <summary>
+/// The retention/lifecycle janitor (CD-2, §12/§13): a host-enforced scheduled sweep that deletes durable blobs past their
+/// category's TTL. It is the same "scheduled background enforcer" pattern the run wall-clock deadline uses (a Wolverine saga
+/// timeout, <c>RunDeadline</c>), applied to storage lifecycle: the policy lives in <see cref="RetentionOptions"/> (config
+/// knobs the host tunes), not in provider-specific lifecycle rules, so it enforces the same policy over the filesystem or the
+/// Azure adapter uniformly. Screenshots (which can show PII, §12) get a shorter default TTL than downloads.
+/// <para>
+/// It sweeps every registered <see cref="IRetentionStore"/> — the durable adapters. When the store provider is the in-memory
+/// fake (tests), none is registered and the janitor is a harmless no-op. <see cref="SweepOnceAsync"/> carries the whole policy
+/// and is directly unit-tested; <see cref="ExecuteAsync"/> is the thin periodic driver over the injected
+/// <see cref="TimeProvider"/> (real in production, controllable in tests).
+/// </para>
+/// </summary>
+public sealed class RetentionJanitor : BackgroundService
+{
+    private readonly IRetentionStore[] _stores;
+    private readonly RetentionOptions _retention;
+    private readonly TimeProvider _clock;
+    private readonly ILogger<RetentionJanitor> _logger;
+
+    /// <summary>Wires the janitor to the durable stores it sweeps and the retention policy it enforces.</summary>
+    /// <param name="stores">The registered durable stores (empty under the in-memory fake provider — then the janitor no-ops).</param>
+    /// <param name="options">The storage options carrying the <see cref="RetentionOptions"/> policy.</param>
+    /// <param name="clock">The time seam (real in production; a short interval + system clock drives it deterministically in tests).</param>
+    /// <param name="logger">The (credential-scrubbing) logger for the swept-count line.</param>
+    public RetentionJanitor(IEnumerable<IRetentionStore> stores, IOptions<StorageOptions> options, TimeProvider clock, ILogger<RetentionJanitor> logger)
+    {
+        ArgumentNullException.ThrowIfNull(stores);
+        ArgumentNullException.ThrowIfNull(options);
+        _stores = [.. stores];
+        _retention = options.Value.Retention;
+        _clock = clock;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Sweeps every durable store once, deleting each blob older than its category's TTL (a TTL of ≤ 0 retains that category
+    /// indefinitely). Pure with respect to <paramref name="now"/> so a test drives expiry deterministically.
+    /// </summary>
+    /// <param name="now">The instant expiry is measured against (a blob is expired when <c>now − lastModified ≥ ttl</c>).</param>
+    /// <param name="ct">Cancels the sweep.</param>
+    /// <returns>How many blobs were deleted.</returns>
+    public async Task<int> SweepOnceAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var deleted = 0;
+        foreach (var store in _stores)
+        {
+            foreach (var blob in await store.ListAsync(ct))
+            {
+                if (_retention.TtlFor(blob.Kind) is not { } ttl)
+                {
+                    continue; // this category's retention is disabled (TTL ≤ 0) — keep indefinitely
+                }
+
+                if (now - blob.LastModifiedUtc < ttl)
+                {
+                    continue; // still within its retention window
+                }
+
+                if (await store.DeleteAsync(blob, ct))
+                {
+                    deleted++;
+                }
+            }
+        }
+
+        if (deleted > 0)
+        {
+            _logger.LogInformation("Retention janitor deleted {Count} expired blob(s).", deleted);
+        }
+
+        return deleted;
+    }
+
+    /// <summary>The periodic driver: sweeps immediately, then every <see cref="RetentionOptions.SweepInterval"/>, until the
+    /// host stops. A no-op when retention is disabled.</summary>
+    /// <param name="stoppingToken">Cancelled on host shutdown.</param>
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        if (!_retention.Enabled)
+        {
+            return;
+        }
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await SweepOnceAsync(_clock.GetUtcNow(), stoppingToken);
+            await DelayAsync(_retention.SweepInterval, stoppingToken);
+        }
+    }
+
+    // The inter-sweep wait, swallowing the shutdown cancellation so the loop exits cleanly via its while condition.
+    private async Task DelayAsync(TimeSpan delay, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(delay, _clock, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // host shutdown during the wait — fall through so the while condition observes the cancellation and exits
+        }
+    }
+}

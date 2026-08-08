@@ -3,7 +3,6 @@ using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
 using Crawldad.Web.Infrastructure.Browser.Real;
 using Crawldad.Web.Infrastructure.Security;
-using Crawldad.Web.Infrastructure.Storage;
 using FluentValidation;
 using JasperFx.Events.Projections;
 using Marten;
@@ -92,12 +91,10 @@ public static class RunsModule
         // state in-process after the endpoint returns 202, reusing the shared RunFinalization + the durable saga's deadline/recovery.
         services.AddSingleton<SyncRunSupervisor>();
 
-        // The WP3 observability surface (§13): the in-process SSE tail-wakeup hub (shared by the executor's appends and the
-        // GET /runs/{id}/events endpoint) and the failure-screenshot blob store the interpreter captures into. Both are
-        // singletons; the screenshot store's default is the in-memory implementation, with a real blob store slotting in
-        // behind IScreenshotStore exactly as the download sinks do.
+        // The WP3 observability surface (§13): the in-process SSE tail-wakeup hub, shared by the executor's appends and the
+        // GET /runs/{id}/events endpoint. The failure-screenshot blob store (IScreenshotStore) and the download-sink seam
+        // (§9.3) are wired by StorageModule (CD-2), which selects the durable/fake provider from configuration.
         services.AddSingleton<RunEventSignals>();
-        services.AddSingleton<IScreenshotStore, InMemoryScreenshotStore>();
 
         // The backend seam: a registry over keyed adapters. Phase 1 registered only the record/replay fake, reading
         // shipped fixtures from the app's output directory; Phase 4 adds the three real adapters beside it.
@@ -107,12 +104,6 @@ public static class RunsModule
             static (_, _) => new FakeBrowserBackend(Path.Combine(AppContext.BaseDirectory, "Fixtures")));
 
         AddRealBrowserBackends(services);
-
-        // The download-sink seam (§9.3): a registry over keyed sinks. Phase 2 registers only the in-memory fake;
-        // Phase 4 adds presigned-URL / blob-store kinds. Content-addressed idempotency lives in the engine, so every
-        // sink kind inherits the exists-then-store short-circuit for free.
-        services.AddSingleton<IDownloadSinkRegistry, KeyedDownloadSinkRegistry>();
-        services.AddKeyedSingleton<IDownloadSink>("fake", static (_, _) => new FakeDownloadSink());
     }
 
     // The Phase 4 real backend adapters (§9) and the shared policy-layer singletons they compose. The credential-free
