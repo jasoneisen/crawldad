@@ -75,7 +75,13 @@ no-op on ordinary text:
 
 Redaction marker: `[redacted]`. The word "token" without `=value` is never touched (so the acceptance
 goldens are byte-identical), and a value below a short length floor is not exact-scrubbed (so a
-pathologically short "secret" can't mangle common substrings — the param rule still redacts it).
+pathologically short "secret" can't mangle common substrings — the param rule still redacts it). A
+**form-fill secret** (a CD-6 `fill.secret`) is exact-scrubbed at a **lower floor** than a connect
+credential: a connect credential is machine-generated and long (floor 8), but a form credential is
+user-chosen and may be short — a PIN, a short password — and its whole purpose is protection, so it is
+redacted down to length 4 (a 1–3 char form "secret" stays inert, the documented over-redaction guard).
+A short PIN read back from the page after a fill and echoed into a `log`/`result` is therefore still
+redacted — the short-secret case is swept in `CredentialLeakTests`.
 
 A third input feeds the exact-match rule: the configured **tenant API keys** (CD-1) are registered as **always-on**
 secrets (process-wide, not per-run), so a leaked key is redacted anywhere it might surface. See "Authentication & tenant
@@ -328,7 +334,9 @@ resolved secret is absent from every sink and every at-rest surface while the re
   unknown reference **at action time** (the vault holds no secret) is a terminal `secret_unresolved` at
   the fill, naming only the safe reference. *Tests:* the leak sweep below;
   `RunSecretFillTests` (resolve→register→type into the field, `Filled` carries the ref name not the
-  secret, both fail-fast codes); `CredentialLeakTests.Fill_secret_types_the_resolved_secret_into_a_real_form_field`
+  secret, both fail-fast codes, and — with a call-counting vault + a checkpoint — a fill.secret in a
+  **resumed** segment **re-resolves from the vault** while the resolved value is absent from the
+  checkpoint state and the `ResumeState`); `CredentialLeakTests.Fill_secret_types_the_resolved_secret_into_a_real_form_field`
   (RealChromium parity — fake ≡ real).
 
 **The leak sweep (the phase gate).** `CredentialLeakTests.A_fill_secret_run_leaks_the_typed_secret_into_no_sink`
@@ -337,7 +345,12 @@ and `…An_async_fill_secret_run_keeps_the_secret_out_of_events_projections_sse_
 sentinel resolved **only** through the vault (never echoed as a plain input). The payload types it into a
 form field, reads it back, and adversarially echoes it into a `log` and the shaped `result`; the sweep
 then asserts the sentinel appears in **no** event, projection/document row, raw table byte, log line,
-response body, SSE frame, `RunTimeline` row, or screenshot — and, for the async run, in **no**
-`RunExecutorSaga` document or Wolverine envelope body — while the **reference** (`login-password`) *is*
-present at rest (it travels as the input value). Proving the by-reference boundary holds for form-fill
-credentials at the sinks and at rest, not just for connect credentials.
+response body, SSE frame, `RunTimeline` row, or screenshot — and, for the async run (which places the
+read-back secret into a **checkpoint** cursor + var snapshot, scrubbed into the durable `RunProgress`
+checkpoint), in **no** `RunExecutorSaga` document or Wolverine envelope body — while the **reference**
+(`login-password`) *is* present at rest (it travels as the input value). `…A_short_fill_secret_below_the_connect_floor_still_leaks_into_no_sink`
+re-runs the sweep with a 6-char PIN-shaped secret (below the connect floor, so it would have leaked under
+the old floor), proving the lower form floor redacts it. Proving the by-reference boundary holds for
+form-fill credentials — of any length — at the sinks and at rest, not just for connect credentials.
+A boot-time guard rejects a `:` in a tenant id (`TenantRegistry`), closing the theoretical
+`Secrets:{tenant}:{ref}` prefix ambiguity on operator misconfiguration.

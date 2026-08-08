@@ -82,6 +82,13 @@ public sealed class TenantRegistry
                 throw new InvalidOperationException("a configured tenant has no id");
             }
 
+            // A tenant id namespaces its per-tenant secret-vault keys (CD-6, Secrets:{tenant}:{ref}); a ':' in the id would
+            // make that prefix ambiguous (tenant "a" + ref "b:c" vs tenant "a:b" + ref "c" resolve the same key). Reject at boot.
+            if (tenant.Id.Contains(':', StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"tenant id '{tenant.Id}' must not contain ':' (it namespaces per-tenant secret-vault keys, CD-6)");
+            }
+
             if (string.IsNullOrWhiteSpace(tenant.Actor))
             {
                 throw new InvalidOperationException($"tenant '{tenant.Id}' has no actor identity");

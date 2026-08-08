@@ -606,7 +606,7 @@ internal sealed class RunInterpreter
             throw new InterpreterException(InterpreterErrorCodes.SecretUnresolved, $"secretRef input '{refName}' could not be resolved: {ex.Message}");
         }
 
-        _secretScope.Register(secret); // exact-match scrub for the run's lifetime, including this fill's own trace event
+        _secretScope.RegisterFormSecret(secret); // exact-match scrub (lower form floor) for the run's lifetime, including this fill's own trace event
         return (refName, secret);
     }
 

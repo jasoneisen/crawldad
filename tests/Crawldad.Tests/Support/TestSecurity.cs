@@ -35,9 +35,17 @@ internal sealed class StubSecretScope(params string[] secrets) : IRunSecretScope
 {
     public IReadOnlyCollection<string> Current { get; } = secrets;
 
+    /// <summary>The form-fill secrets (CD-6) the scrubber sees at the lower form floor; defaults to none.</summary>
+    public IReadOnlyCollection<string> FormSecrets { get; init; } = [];
+
     public IDisposable Begin() => new NoopScope();
 
     public void Register(string secret)
+    {
+        // Inert: the fixed set is supplied at construction.
+    }
+
+    public void RegisterFormSecret(string secret)
     {
         // Inert: the fixed set is supplied at construction.
     }
@@ -63,6 +71,27 @@ internal sealed class MapSecretStore(IReadOnlyDictionary<string, string> secrets
 
     public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct) =>
         secrets.TryGetValue(reference, out var secret) ? Task.FromResult(secret) : throw new SecretNotFoundException(reference);
+}
+
+/// <summary>An <see cref="ISecretStore"/> returning one fixed secret and <b>counting</b> tenant-scoped resolutions — so a
+/// test can prove a <c>fill.secret</c> re-resolves from the vault on a checkpoint resume (rather than restoring a persisted
+/// value).</summary>
+/// <param name="secret">The value every resolution returns.</param>
+internal sealed class CountingVault(string secret) : ISecretStore
+{
+    /// <summary>How many times the form-fill (tenant-scoped) resolution has been called.</summary>
+    public int Calls { get; private set; }
+
+    /// <summary>Resets the call count (between the fresh run and the resumed run).</summary>
+    public void Reset() => Calls = 0;
+
+    public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) => Task.FromResult(secret);
+
+    public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct)
+    {
+        Calls++;
+        return Task.FromResult(secret);
+    }
 }
 
 /// <summary>

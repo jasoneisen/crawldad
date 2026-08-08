@@ -54,7 +54,7 @@ public class RunSecretFillTests
 
             outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
             outcome.Result!.Value.GetString().ShouldBe("S3cr3tP@ss"); // the field holds the vault-resolved secret
-            scope.Current.ShouldContain("S3cr3tP@ss");                 // registered for exact-match scrubbing, like a connect credential
+            scope.FormSecrets.ShouldContain("S3cr3tP@ss");             // registered for exact-match scrubbing (the lower form floor)
         }
     }
 
@@ -73,6 +73,58 @@ public class RunSecretFillTests
             observer.Events.OfType<Filled>().ShouldHaveSingleItem().Target.ShouldBe("secret:loginPw");
             // The resolved secret is structurally absent from EVERY emitted trace event (not merely scrubbed after the fact).
             observer.Events.ShouldAllBe(e => !JsonSerializer.Serialize(e, e.GetType()).Contains(Secret, StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public async Task A_fill_secret_re_resolves_from_the_vault_on_a_checkpoint_resume()
+    {
+        // A checkpoint before the fill: on a resumed segment the fill.secret re-executes, so it must re-resolve from the
+        // vault rather than restore a persisted value — the resolved secret is never in the checkpoint state or the ResumeState.
+        const string Secret = "R3solvedOnResume-canary";
+        var vault = new CountingVault(Secret);
+        var registry = new SingleSecretVaultRegistry(SecretVaults.Config, vault);
+        var inputs = Inputs(""", "loginPw": "vault-ref" """);
+        var payload = $$"""
+            { "name": "login", "config": { "backend": "input.backend" },
+              "inputs": { "backend": { "type": "backend" }, "loginPw": { "type": "secretRef" } },
+              "vars": { "i": 0 },
+              "steps": [
+                { "goto": { "url": "{{_capHome}}" } },
+                { "loop": { "maxIterations": 3, "while": "i < 2", "do": [
+                    { "checkpoint": { "name": "cp", "cursor": "i", "resume": [] } },
+                    { "fill": { "selector": "{{_dateField}}", "secret": "input.loginPw" } },
+                    { "set": { "var": "i", "value": "i + 1" } }
+                ] } }
+              ],
+              "result": "'done'" }
+            """;
+
+        // Fresh run: resolves the fill from the vault and yields the checkpoints; a snapshot holds the loop cursor/vars, NOT the secret.
+        var freshScope = new AmbientRunSecretScope();
+        ResumeState resume;
+        using (freshScope.Begin())
+        {
+            var (fresh, observer, _) = await Runner.RunWithObserverAsync(payload, inputs, secretStores: registry, secretScope: freshScope);
+            fresh.Status.ShouldBe(RunStatus.Succeeded, fresh.Failure?.Code);
+            vault.Calls.ShouldBeGreaterThan(0);
+            var cp = observer.Checkpoints[0];
+            JsonSerializer.Serialize(cp).ShouldNotContain(Secret); // the persisted checkpoint state carries no secret
+            resume = new ResumeState(cp.Name, cp.Sequence, cp.StepIndex, cp.Cursor, cp.Vars);
+        }
+
+        // Resume with a reset vault + a fresh scope: the fill.secret in the resumed segment MUST re-resolve from the vault —
+        // it cannot be restored from durable state, because the ResumeState it restores from carries no secret.
+        vault.Reset();
+        JsonSerializer.Serialize(resume).ShouldNotContain(Secret);
+        var resumeScope = new AmbientRunSecretScope();
+        using (resumeScope.Begin())
+        {
+            var (resumed, observer2, _) = await Runner.RunWithObserverAsync(payload, inputs, resume: resume, secretStores: registry, secretScope: resumeScope);
+            resumed.Status.ShouldBe(RunStatus.Succeeded, resumed.Failure?.Code);
+            vault.Calls.ShouldBeGreaterThan(0);            // (a) RE-RESOLVED from the vault on resume
+            resumeScope.FormSecrets.ShouldContain(Secret); // registered fresh in the resumed run's scope
+            observer2.Checkpoints.ShouldAllBe(c => !JsonSerializer.Serialize(c).Contains(Secret, StringComparison.Ordinal)); // (b) still no secret at rest
         }
     }
 

@@ -129,6 +129,21 @@ public class CredentialScrubberTests
     }
 
     [Fact]
+    public void Redacts_a_short_form_fill_secret_down_to_its_lower_floor()
+    {
+        // CD-6: a form-fill secret (a user-chosen PIN/short password) is redacted at the lower form floor — even at 4 chars,
+        // well below the connect floor a short PIN would otherwise slip under and leak. Below the form floor (1-3 chars) it
+        // stays inert (the documented over-redaction guard).
+        var atFloor = new string('7', CredentialScrubber.MinFormSecretScrubLength);        // 4 chars → redacted
+        var belowFloor = new string('3', CredentialScrubber.MinFormSecretScrubLength - 1); // 3 chars → inert
+        var scrubber = new CredentialScrubber(new StubSecretScope() { FormSecrets = [atFloor, belowFloor] });
+
+        var scrubbed = scrubber.Scrub($"pin {atFloor} and {belowFloor} here");
+
+        scrubbed.ShouldBe($"pin {_redacted} and {belowFloor} here");
+    }
+
+    [Fact]
     public void Exact_secret_in_a_param_position_is_redacted_once_not_doubly()
     {
         const string Secret = "tok_LEAKCANARY_longenough_123456";

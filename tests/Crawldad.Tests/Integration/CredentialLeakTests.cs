@@ -281,6 +281,26 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
           "result": "{ echoed: typed, echoedUrl: 'wss://x?token=' + typed }" }
         """;
 
+    // The async/checkpoint variant: the fill's read-back secret is snapshotted into BOTH the checkpoint cursor and the var
+    // snapshot, so the durable RunProgress checkpoint (the state a resumed run restores from) is exercised at the scrub
+    // boundary alongside the trace + result. The `fill.secret` sits inside the resumable loop body, so a resumed run re-runs
+    // it and re-resolves from the vault (verified deterministically at the unit level in RunSecretFillTests).
+    private const string _fillCheckpointLeakPayload =
+        """
+        { "name": "leak-fill-cp", "config": { "backend": "input.backend" },
+          "inputs": { "backend": { "type": "backend" }, "pw": { "type": "secretRef" } }, "vars": {},
+          "steps": [
+            { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement" } },
+            { "loop": { "maxIterations": 2, "while": "false", "do": [
+                { "fill": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate", "secret": "input.pw" } },
+                { "set": { "var": "typed", "value": "attr({ css: '#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate' }, 'value')" } },
+                { "checkpoint": { "name": "cp", "cursor": "typed", "resume": [] } },
+                { "log": { "level": "info", "message": "the field now holds ${typed}" } }
+            ] } }
+          ],
+          "result": "{ echoed: typed, echoedUrl: 'wss://x?token=' + typed }" }
+        """;
+
     private static JsonObject FakeBackend() => new()
     {
         ["adapter"] = "fake",
@@ -307,14 +327,35 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
     }
 
     [Fact]
+    public async Task A_short_fill_secret_below_the_connect_floor_still_leaks_into_no_sink()
+    {
+        // CD-6 short-secret guard: a 6-char PIN-shaped secret sits BELOW the connect-credential length floor (8), so under
+        // the old exact-scrub floor it would have leaked when read back and echoed. The lower form floor redacts it.
+        var host = await leak.EnsureAsync(chromium);
+        leak.Capturer.Clear();
+
+        var inputs = new JsonObject { ["backend"] = FakeBackend(), ["pw"] = LeakHost.ShortFillRef };
+        var root = await PostAsync(host, Body(_fillLeakPayload, inputs));
+
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+        var result = root.GetProperty("result");
+        result.GetProperty("echoed").GetString().ShouldBe(CredentialScrubber.Redaction);
+        result.GetProperty("echoedUrl").GetString().ShouldBe($"wss://x?token={CredentialScrubber.Redaction}");
+
+        await AssertRunLeaksNothingAsync(host, root, LeakHost.ShortFillSecretSentinel);
+    }
+
+    [Fact]
     public async Task An_async_fill_secret_run_keeps_the_secret_out_of_events_projections_sse_saga_and_envelopes()
     {
         var host = await leak.EnsureAsync(chromium);
         leak.Capturer.Clear();
 
         var inputs = new JsonObject { ["backend"] = FakeBackend(), ["pw"] = LeakHost.FillRef };
-        var body = Body(_fillLeakPayload, inputs);
-        body["async"] = true; // drive the durable executor saga: events, SSE, timeline, RunProgress, saga, envelopes all written
+        // A checkpoint payload: the read-back secret lands in the durable checkpoint cursor + var snapshot (scrubbed at write),
+        // so the resumable state a resumed run restores from is swept too.
+        var body = Body(_fillCheckpointLeakPayload, inputs);
+        body["async"] = true; // drive the durable executor saga: events, SSE, timeline, RunProgress checkpoint, saga, envelopes all written
 
         var accepted = await host.Scenario(x =>
         {
@@ -506,6 +547,11 @@ public sealed class LeakHost : IAsyncLifetime
     /// <summary>A benign form-fill secret for the real-Chromium functional parity (not a leak sentinel — this run is not swept).</summary>
     internal const string FunctionalFillSecret = "correct-horse-battery-staple-42";
 
+    /// <summary>A <b>short</b> (6-char) form-fill secret sentinel — a PIN/short-password shape below the connect-credential
+    /// length floor (8), so under the old floor it would have leaked. Distinctive (mixed-case, non-hex) to stay
+    /// collision-free in the raw sweep; it must be redacted by the lower CD-6 form floor.</summary>
+    internal const string ShortFillSecretSentinel = "LEAKpw";
+
     internal const string BrowserlessRef = "browserless-cred";
     internal const string BrowserbaseRef = "browserbase-cred";
     internal const string ConnectUrlRef = "browserbase-connecturl-cred";
@@ -516,6 +562,9 @@ public sealed class LeakHost : IAsyncLifetime
 
     /// <summary>The functional-parity form-fill secretRef (its vault value is <see cref="FunctionalFillSecret"/>).</summary>
     internal const string FunctionalFillRef = "functional-login-password";
+
+    /// <summary>The short-secret form-fill secretRef (its vault value is <see cref="ShortFillSecretSentinel"/>).</summary>
+    internal const string ShortFillRef = "short-login-pin";
 
     // A login page whose input echoes its typed value into #echo on the `input` event — so a real fill (which dispatches
     // that event and sets the value PROPERTY, not the HTML attribute) is verifiable via text(#echo) on real Chromium.
@@ -572,6 +621,7 @@ public sealed class LeakHost : IAsyncLifetime
             // ConfigurationSecretStore, so a tenant-namespaced miss (another tenant's key) genuinely fails to resolve.
             builder.UseSetting($"Secrets:{TestTenants.PrimaryId}:{FillRef}", FillSecretSentinel);
             builder.UseSetting($"Secrets:{TestTenants.PrimaryId}:{FunctionalFillRef}", FunctionalFillSecret);
+            builder.UseSetting($"Secrets:{TestTenants.PrimaryId}:{ShortFillRef}", ShortFillSecretSentinel);
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<TimeProvider>(new FakeClock());
