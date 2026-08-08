@@ -153,11 +153,21 @@ and the customer re-downloads it repeatedly. CD-3 `maxDownloadedBytes` + presign
 ### 2.2 Front door: **Azure Front Door Standard** + the 120-second sync rule
 
 - Front Door Standard (~$35/mo base + traffic) for TLS, WAF, anycast. Its 240 s cap is *fine*
-  because **we cap sync at 120 s ourselves**: `POST /runs` without `"async": true` is accepted only
-  if the effective deadline ≤ 120 s; otherwise **406/409 with a machine-readable steer**
-  (`use_async: true`) — or, better DX, auto-upgrade with a `202 + runId` and a `Prefer:
-  respond-async` note. Sync stays as the frictionless demo/short-job path (Hormozi: time-to-first-
-  value in one curl), async is the workhorse.
+  because **we cap sync at 120 s ourselves** — shipped in **CD-15**: a default `POST /runs`
+  (no `"async": true`) that is still executing at 120 s of wall clock is **auto-upgraded, not
+  failed** — the run keeps executing exactly as if `"async": true` had been sent, the caller
+  receives `202 { runId, status:"running" }` at the moment of upgrade and then follows the async
+  surface (`GET /runs/{id}`, SSE, cancel), and a run finishing inside 120 s keeps today's
+  synchronous response byte-for-byte. The window is a config knob
+  (`Crawldad:Limits:SyncUpgradeThresholdMs`, default **120 000 ms**); tune it to the front door but
+  keep it comfortably under 240 s. Sync stays as the frictionless demo/short-job path (Hormozi:
+  time-to-first-value in one curl), async is the workhorse.
+- **Deployment requirement (CD-15).** Whatever ingress fronts Crawldad must allow a request to run
+  **longer than `SyncUpgradeThresholdMs` plus headroom** (the upgrade fires at the threshold and the
+  `202` must reach the client), and stay **well under 240 s** — the universal Azure ceiling (Front
+  Door / Container Apps Envoy 240 s, App Service ~230 s). With the 120 s default, set the ingress
+  request/response timeout to **~180 s** (≥120 s + margin, <240 s): every sync request is then
+  answered — as a result or as an upgrade — before ingress can kill the connection.
 - **SSE**: heartbeat comment frame every 15 s (resets idle timers at Front Door, Envoy, and client
   proxies). Document a client reconnect-with-Last-Event-ID pattern — the design's
   backfill-from-stream (§11) already supports it perfectly.
@@ -314,8 +324,9 @@ exportable) — kills switching-cost fear, which *increases* willingness to comm
    a data-retention violation the moment retention is a sold feature.
 5. **CD-4 connectUrl live re-check** — blocks the GA security copy that Pro/Enterprise marketing
    leans on.
-6. **The 120-s sync cap + async steering** — not a ticket yet; file it. Cheap (StartRun validation
-   + response contract) and it de-risks the entire ingress layer.
+6. **The 120-s sync cap + async steering** — shipped as **CD-15**: a sync run crossing the window
+   auto-upgrades to `202 { runId, status:"running" }` and keeps executing on the async surface. It
+   de-risks the entire ingress layer.
 
 **Phase M1 — tier-differentiating:** CD-12 webhooks (Pro), CD-7 nightly canary → productized drift
 alerting (Scale's headline), CD-8 explicit screenshot node (Pro polish), CD-14 checkpoint authoring

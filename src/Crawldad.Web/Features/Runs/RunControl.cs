@@ -27,6 +27,7 @@ public sealed class RunControl
     private int _reason = _notStopped;
     private int _claimed;
     private CancellationTokenSource? _forcible;
+    private bool _forcibleForEveryReason;
 
     /// <summary>Atomically claims the run for the calling executor, returning true for the first caller only. Prevents two
     /// executors in a process (a durable redelivery and the startup recovery scan) from driving the same run at once (§11).</summary>
@@ -47,16 +48,26 @@ public sealed class RunControl
 
     /// <summary>The executor binds its deadline-cancellation source so a <see cref="RunStopReason.Deadline"/> stop can
     /// forcibly interrupt a run blocked mid-call (§8.4) — a user <see cref="RunStopReason.Cancelled"/> stop stays
-    /// cooperative, honoured between steps and never yanked mid-step (§11).</summary>
-    /// <param name="forcible">The linked cancellation source the executor's run observes.</param>
-    public void UseForcibleCancellation(CancellationTokenSource forcible) => _forcible = forcible;
+    /// cooperative, honoured between steps and never yanked mid-step (§11). A <b>CD-15 auto-upgraded</b> run passes
+    /// <paramref name="forEveryReason"/> <c>true</c>: its interpreter runs without an observer (the lean synchronous engine),
+    /// so it never sees a cooperative cancel between steps — every stop, cancel included, must forcibly cancel the source to
+    /// take effect.</summary>
+    /// <param name="forcible">The linked cancellation source the run observes.</param>
+    /// <param name="forEveryReason">When true, any stop reason (not just a deadline) forcibly cancels the source.</param>
+    public void UseForcibleCancellation(CancellationTokenSource forcible, bool forEveryReason = false)
+    {
+        _forcible = forcible;
+        _forcibleForEveryReason = forEveryReason;
+    }
 
     /// <summary>Requests a cooperative stop for <paramref name="reason"/>; the first request wins (idempotent thereafter).
-    /// A deadline additionally cancels the bound forcible source so a stuck run does not outrun its cap.</summary>
+    /// A deadline (or any reason when the bound source is <see cref="UseForcibleCancellation(CancellationTokenSource, bool)"/>
+    /// forcible-for-every-reason, CD-15) additionally cancels the bound source so a stuck run does not outrun its cap.</summary>
     /// <param name="reason">Why the run should stop.</param>
     public void Stop(RunStopReason reason)
     {
-        if (Interlocked.CompareExchange(ref _reason, (int)reason, _notStopped) == _notStopped && reason == RunStopReason.Deadline)
+        if (Interlocked.CompareExchange(ref _reason, (int)reason, _notStopped) == _notStopped
+            && (reason == RunStopReason.Deadline || _forcibleForEveryReason))
         {
             _forcible?.Cancel();
         }

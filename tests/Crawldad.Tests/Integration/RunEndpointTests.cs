@@ -89,6 +89,22 @@ public class RunEndpointTests(AppFixture fixture)
     }
 
     [Fact]
+    public async Task A_sync_run_under_the_window_writes_no_progress_row_so_get_is_404()
+    {
+        // CD-15: a run finishing within the sync-upgrade window (the default 120 s — trivially, for this run) stays fully
+        // synchronous. It writes no async RunProgress read model, so GET /runs/{id} is 404 exactly as before the sync cap.
+        var root = await PostAsync(Body(Runner.FragmentPayload(), FakeBackendInput("01/01/2024", "01/31/2024")));
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+        var runId = root.GetProperty("runId").GetGuid();
+
+        await Host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{runId}");
+            x.StatusCodeShouldBe(404);
+        });
+    }
+
+    [Fact]
     public async Task Unknown_backend_adapter_is_a_terminal_failure()
     {
         var inputs = FakeBackendInput();

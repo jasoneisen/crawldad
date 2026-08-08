@@ -88,6 +88,10 @@ public static class RunsModule
         services.AddSingleton<RunExecutor>();
         services.AddHostedService<RunRecoveryService>();
 
+        // The CD-15 sync auto-upgrade supervisor: a singleton that drives a synchronous run past the sync cap to its terminal
+        // state in-process after the endpoint returns 202, reusing the shared RunFinalization + the durable saga's deadline/recovery.
+        services.AddSingleton<SyncRunSupervisor>();
+
         // The WP3 observability surface (§13): the in-process SSE tail-wakeup hub (shared by the executor's appends and the
         // GET /runs/{id}/events endpoint) and the failure-screenshot blob store the interpreter captures into. Both are
         // singletons; the screenshot store's default is the in-memory implementation, with a real blob store slotting in

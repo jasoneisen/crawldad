@@ -189,8 +189,19 @@ public static class DurableHost
     /// <param name="fakeBackend">The backend registered under the <c>fake</c> adapter id.</param>
     /// <param name="resetData">Whether to reset Marten data after boot (false to inherit a prior host's data).</param>
     /// <param name="settings">Extra host settings to layer on (e.g. a low <c>Crawldad:Limits</c> cap), or null for none.</param>
+    public static Task<IAlbaHost> BuildAsync(
+        string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null) =>
+        BuildAsync(schema, (_, _) => fakeBackend, resetData, settings);
+
+    /// <summary>As <see cref="BuildAsync(string, IBrowserBackend, bool, IEnumerable{KeyValuePair{string, string?}})"/>, but the
+    /// <c>fake</c> backend is built by a DI factory — so a backend can resolve a host service (e.g. the <c>IRunSecretScope</c> a
+    /// CD-15 credential test's backend registers a secret into).</summary>
+    /// <param name="schema">The Marten/durable schema to run on.</param>
+    /// <param name="fakeBackendFactory">The keyed factory that builds the backend registered under the <c>fake</c> adapter id.</param>
+    /// <param name="resetData">Whether to reset Marten data after boot (false to inherit a prior host's data).</param>
+    /// <param name="settings">Extra host settings to layer on (e.g. a low <c>Crawldad:Limits</c> cap), or null for none.</param>
     public static async Task<IAlbaHost> BuildAsync(
-        string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null)
+        string schema, Func<IServiceProvider, object?, IBrowserBackend> fakeBackendFactory, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null)
     {
         var host = (await AlbaHost.For<Program>(builder =>
         {
@@ -203,7 +214,7 @@ public static class DurableHost
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<TimeProvider>(new FakeClock());
-                services.AddKeyedSingleton<IBrowserBackend>("fake", (_, _) => fakeBackend);
+                services.AddKeyedSingleton<IBrowserBackend>("fake", fakeBackendFactory);
             });
         })).AuthenticatedAsPrimaryTenant();
 

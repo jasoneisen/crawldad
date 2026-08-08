@@ -19,6 +19,19 @@ public class RunLimitsOptionsValidatorTests
     public void Accepts_a_disabled_queue_wait() => // 0 is the sentinel for "no bound", not an invalid value
         _validator.Validate(name: null, new RunLimitsOptions { MaxQueueWaitMs = 0 }).Succeeded.ShouldBeTrue();
 
+    [Fact]
+    public void Accepts_an_immediate_sync_upgrade() => // CD-15: 0 upgrades every sync run immediately (async-only), a valid posture
+        _validator.Validate(name: null, new RunLimitsOptions { SyncUpgradeThresholdMs = 0 }).Succeeded.ShouldBeTrue();
+
+    [Fact]
+    public void Rejects_a_negative_sync_upgrade_threshold()
+    {
+        var result = _validator.Validate(name: null, new RunLimitsOptions { SyncUpgradeThresholdMs = -1 });
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain(nameof(RunLimitsOptions.SyncUpgradeThresholdMs));
+    }
+
     [Theory]
     [InlineData(nameof(RunLimitsOptions.MaxStepsPerRun))]
     [InlineData(nameof(RunLimitsOptions.MaxDownloadedBytesPerRun))]

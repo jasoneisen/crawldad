@@ -443,6 +443,20 @@ reference's long timeouts are expressed per-node: attachments `waitForLoadState`
 timeout, §11) — deliberately *not* in the 40–60 s competitor range; default generous (e.g. 30 min),
 configurable, enforced by the orchestrator, not by Playwright.
 
+Distinct from both of the above is the **synchronous-response window** (CD-15,
+`Crawldad:Limits:SyncUpgradeThresholdMs`, default **120 s** — a different 120 s from the per-action
+`defaultTimeoutMs`): it bounds only how long a default `POST /runs` holds the caller's HTTP
+connection, not how long the run may execute. A run still executing at the window is **auto-upgraded,
+not failed** — it keeps executing on the durable executor exactly as an `"async": true` run would
+(under the same run-level wall clock above), the caller gets `202 { runId, status:"running" }` and
+follows the async surface (§10/§11), and a run finishing inside the window returns today's
+synchronous body unchanged. The window exists because every viable Azure ingress kills a longer sync
+request first (Front Door / Container Apps Envoy 240 s, App Service ~230 s; docs/PRODUCT.md §1.1/§2.2),
+so the connection is always answered — result or upgrade — before ingress can. Deliberate trade-off: because
+the run executes on its own cancellation source (so returning the 202 cannot cancel it), a client disconnect no
+longer cancels an in-flight sync run (pre-CD-15 it did, via the request token) — a run is bounded by the sync
+window and then the async wall-clock deadline above, not by the caller's connection.
+
 ---
 
 ## 9. Backend adapter interface
@@ -530,6 +544,11 @@ One request → one structured response (streaming variant in §11).
 
 // cancelled
 { "runId": "…", "status": "cancelled", "partial": <…>, "stats": { … } }
+
+// auto-upgraded (CD-15): a default (non-async) run still executing at the sync window (§8.4) — the run
+// keeps executing on the durable surface; the caller polls GET /runs/{id} (§11) for the terminal shape above
+// HTTP 202
+{ "runId": "…", "status": "running" }
 ```
 
 **Output shaping (tension #4): the payload declares the shape.** `result` is an object-literal
