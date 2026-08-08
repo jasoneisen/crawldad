@@ -80,7 +80,7 @@ public sealed class TenantIsolationFixture : IAsyncLifetime
 
         PayloadA = await DraftAsync(TestTenants.PrimaryKey, DemoPayload);
         SucceededRunA = await RunToCompletionAsync(TestTenants.PrimaryKey, new JsonObject { ["payloadId"] = PayloadA, ["inputs"] = Inputs(), ["async"] = true }, "succeeded");
-        FailedRunA = await RunToCompletionAsync(TestTenants.PrimaryKey, new JsonObject { ["payload"] = JsonNode.Parse(FailingPayload), ["inputs"] = Inputs(), ["async"] = true }, "failed");
+        FailedRunA = await RunToCompletionAsync(TestTenants.PrimaryKey, new JsonObject { ["payload"] = JsonNode.Parse(_failingPayload), ["inputs"] = Inputs(), ["async"] = true }, "failed");
 
         // Tenant B's own run, so B's data is non-empty and isolation is proven against populated state (not just "B sees nothing").
         await RunToCompletionAsync(TestTenants.SecondaryKey, new JsonObject { ["payload"] = JsonNode.Parse(DemoPayload), ["inputs"] = Inputs(), ["async"] = true }, "succeeded");
@@ -95,7 +95,7 @@ public sealed class TenantIsolationFixture : IAsyncLifetime
           "result": "'ok'" }
         """;
 
-    private const string FailingPayload =
+    private const string _failingPayload =
         """
         { "crawldad": "1", "name": "iso.fail", "config": { "backend": "input.backend" }, "vars": {},
           "steps": [
