@@ -99,7 +99,7 @@ public class DurableRunTests(DurableFixture fixture)
     private static async Task<IReadOnlyList<Type>> EventTypesAsync(IAlbaHost host, Guid runId)
     {
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         return [.. (await session.Events.FetchStreamAsync(runId)).Select(e => e.EventType)];
     }
 
@@ -370,7 +370,18 @@ public class DurableRunTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         var executor = host.Services.GetRequiredService<RunExecutor>();
 
-        await executor.ExecuteAsync(Guid.NewGuid(), CancellationToken.None); // no saga/progress — returns without effect
+        await executor.ExecuteAsync(Guid.NewGuid(), TestTenants.PrimaryId, CancellationToken.None); // no saga/progress — returns without effect
+    }
+
+    [Fact]
+    public async Task Executing_a_run_with_no_tenant_is_a_no_op()
+    {
+        var host = await fixture.EnsureAsync();
+        var executor = host.Services.GetRequiredService<RunExecutor>();
+
+        // A message with no tenant cannot resolve a run (CD-1): the executor fails closed — it never touches the default
+        // partition — and returns without effect (no crash).
+        await executor.ExecuteAsync(Guid.NewGuid(), tenantId: null, CancellationToken.None);
     }
 
     [Fact]
@@ -379,7 +390,7 @@ public class DurableRunTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         var runId = Guid.NewGuid();
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using (var session = store.LightweightSession())
+        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
             session.Store(new RunExecutorSaga { Id = runId, Script = "{}", Inputs = "{}" });
             session.Store(new RunProgress { Id = runId, Status = Crawldad.Contracts.Runs.RunStatus.Failed });
@@ -387,7 +398,7 @@ public class DurableRunTests(DurableFixture fixture)
         }
 
         // A redelivered ExecuteRun for a run already finished must not re-run it (idempotent recovery).
-        await host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, CancellationToken.None);
+        await host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, TestTenants.PrimaryId, CancellationToken.None);
     }
 
     [Fact]
@@ -396,7 +407,7 @@ public class DurableRunTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         var runId = Guid.NewGuid();
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using (var session = store.LightweightSession())
+        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
             session.Store(new RunExecutorSaga { Id = runId, Script = "{}", Inputs = "{}" });
             session.Store(new RunProgress { Id = runId, Status = Crawldad.Contracts.Runs.RunStatus.Running });
@@ -407,7 +418,7 @@ public class DurableRunTests(DurableFixture fixture)
         controls.GetOrAdd(runId).TryClaim().ShouldBeTrue(); // pre-claim as if another executor is driving it
 
         // The executor finds the run claimed and returns without driving it (no crash from the empty "{}" script).
-        await host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, CancellationToken.None);
+        await host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, TestTenants.PrimaryId, CancellationToken.None);
         controls.Remove(runId);
     }
 
@@ -430,7 +441,7 @@ public class DurableRunTests(DurableFixture fixture)
             ["priorCrawlComplete"] = false,
         };
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using (var session = store.LightweightSession())
+        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
             session.Store(new RunExecutorSaga { Id = runId, Script = SearchPayload(), Inputs = inputs.ToJsonString() });
             session.Store(new RunProgress { Id = runId, Status = Crawldad.Contracts.Runs.RunStatus.Running });
@@ -438,13 +449,13 @@ public class DurableRunTests(DurableFixture fixture)
         }
 
         using var handler = new CancellationTokenSource();
-        var drive = host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, handler.Token);
+        var drive = host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, TestTenants.PrimaryId, handler.Token);
         await gate.Reached.WaitAsync(TimeSpan.FromSeconds(20)); // blocked mid-crawl, past >= 1 checkpoint
 
         await handler.CancelAsync(); // the handler token fires (as on host shutdown) — NOT a deadline
         await drive; // returns without finalising
 
-        await using var read = store.LightweightSession();
+        await using var read = store.LightweightSession(TestTenants.PrimaryId);
         var progress = await read.LoadAsync<RunProgress>(runId);
         progress!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Running); // left running so the recovery scan re-drives it
         progress.Checkpoint.ShouldNotBeNull(); // its durable checkpoint survived
@@ -456,7 +467,7 @@ public class DurableRunTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         var runId = Guid.NewGuid();
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using (var session = store.LightweightSession())
+        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
             // Inputs stored as JSON null (a shape the endpoint never emits) exercises the executor's empty-inputs fallback.
             session.Store(new RunExecutorSaga { Id = runId, Script = """{ "crawldad": "1", "name": "n", "config": { "backend": "input.backend" }, "steps": [], "result": "'ok'" }""", Inputs = "null" });
@@ -464,9 +475,9 @@ public class DurableRunTests(DurableFixture fixture)
             await session.SaveChangesAsync();
         }
 
-        await host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, CancellationToken.None);
+        await host.Services.GetRequiredService<RunExecutor>().ExecuteAsync(runId, TestTenants.PrimaryId, CancellationToken.None);
 
-        await using var read = store.LightweightSession();
+        await using var read = store.LightweightSession(TestTenants.PrimaryId);
         var progress = await read.LoadAsync<RunProgress>(runId);
         progress!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Failed); // empty inputs → no backend → terminal
         progress.Failure!.Code.ShouldBe("invalid_backend_binding");

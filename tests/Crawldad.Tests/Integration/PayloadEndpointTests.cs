@@ -45,7 +45,7 @@ public class PayloadEndpointTests(AppFixture fixture)
 
         var payloadId = root.GetProperty("payloadId").GetGuid();
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
 
         var events = await session.Events.FetchStreamAsync(payloadId);
         events.Select(e => e.EventType).ShouldBe([typeof(PayloadDrafted)]);
@@ -65,6 +65,20 @@ public class PayloadEndpointTests(AppFixture fixture)
         var root = await PostAsync(Body(Fixture("scrape-full.json")), 200);
         root.GetProperty("name").GetString().ShouldBe("ljcmg.enforcement.scrape");
         root.GetProperty("revision").GetInt32().ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Draft_stamps_the_authenticated_tenant_actor_on_the_event()
+    {
+        // The event's actor comes from the authenticated principal (CD-1, §12), never a request body — SavePayloadRequest
+        // carries no 'by' field at all, so there is nothing to spoof; the stamped actor is the fixture's default tenant.
+        var root = await PostAsync(Body(Fixture("search-full.json")), 200);
+        var payloadId = root.GetProperty("payloadId").GetGuid();
+
+        var store = Host.Services.GetRequiredService<IDocumentStore>();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        var events = await session.Events.FetchStreamAsync(payloadId);
+        ((PayloadDrafted)events[0].Data).By.ShouldBe(TestTenants.PrimaryActor);
     }
 
     private static JsonObject Steps(string steps) =>

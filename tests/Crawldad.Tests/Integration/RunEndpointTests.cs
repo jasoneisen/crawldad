@@ -75,7 +75,7 @@ public class RunEndpointTests(AppFixture fixture)
 
         var runId = root.GetProperty("runId").GetGuid();
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
 
         var events = await session.Events.FetchStreamAsync(runId);
         events.Select(e => e.EventType).ShouldBe([typeof(RunStarted), typeof(RunSucceeded)]);
@@ -104,7 +104,7 @@ public class RunEndpointTests(AppFixture fixture)
 
         var runId = root.GetProperty("runId").GetGuid();
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var events = await session.Events.FetchStreamAsync(runId);
         events.Select(e => e.EventType).ShouldBe([typeof(RunStarted), typeof(RunFailed)]);
         (await session.LoadAsync<Run>(runId))!.Status.ShouldBe(RunLifecycle.Failed);
@@ -155,7 +155,7 @@ public class RunEndpointTests(AppFixture fixture)
 
         var runId = root.GetProperty("runId").GetGuid();
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var events = await session.Events.FetchStreamAsync(runId);
         ((RunStarted)events[0].Data).PayloadName.ShouldBe("unnamed");
     }

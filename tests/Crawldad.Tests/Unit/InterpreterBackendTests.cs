@@ -31,7 +31,8 @@ public class InterpreterBackendTests
             input,
             new StubRegistry(new ThrowingBackend()),
             new NoSinks(),
-            new FakeClock());
+            new FakeClock(),
+            TestTenants.InterpreterTenant);
 
         var outcome = await interpreter.RunAsync(CancellationToken.None);
 

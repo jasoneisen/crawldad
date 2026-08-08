@@ -44,6 +44,10 @@ Redaction marker: `[redacted]`. The word "token" without `=value` is never touch
 goldens are byte-identical), and a value below a short length floor is not exact-scrubbed (so a
 pathologically short "secret" can't mangle common substrings — the param rule still redacts it).
 
+A third input feeds the exact-match rule: the configured **tenant API keys** (CD-1) are registered as **always-on**
+secrets (process-wide, not per-run), so a leaked key is redacted anywhere it might surface. See "Authentication & tenant
+isolation" below.
+
 ## The per-run secret registry (exact-match lifetime)
 
 `Infrastructure/Security/IRunSecretScope.cs` (`AmbientRunSecretScope`). A scope is opened at the run's
@@ -110,10 +114,66 @@ discipline for non-credential **bulk PII** is re-asserted by
 known extracted value reaches the result body but appears in **no** trace event, SSE frame, or timeline
 row (the scrubber never touches it — its absence is the discipline itself, not a redaction).
 
+## Authentication & tenant isolation (CD-1)
+
+Built in CD-1 (issue #1). Every route requires an authenticated tenant — **no anonymous mutating or reading route
+survives** — the one exception being the `/health` liveness probe (it exposes no tenant data and must answer an
+unauthenticated load balancer). This replaces the reference's deliberate no-auth MVP posture (§12: "no auth in the
+reference is deliberate and must not be copied").
+
+**Mechanism — per-tenant API keys.** Machine-to-machine auth for a hosted API product: a per-tenant key presented as
+`Authorization: Bearer <key>` or `X-Api-Key: <key>`, validated by a custom ASP.NET `AuthenticationHandler` against a
+config-bound tenant directory (`Crawldad:Tenants` → `{id, apiKey, actor}`). No ASP.NET Identity / OIDC ceremony — a real
+IdP is a later ticket. Keys are **hash-compared**: `TenantRegistry` keeps only a SHA-256 of each configured key and
+compares with `CryptographicOperations.FixedTimeEquals` (no timing signal, no plaintext key retained in the long-lived
+auth path). A valid key yields a principal carrying the tenant id + actor as claims; `RequireAuthorizeOnAll` turns a
+missing/invalid key into a `401`. An **endpoint-enumeration test** discovers the live route table and asserts every route
+(bar `/health`) rejects an unauthenticated request, so a route added later without auth fails the test by default rather
+than escaping a hand-maintained list.
+
+**Actor from the principal, never the body.** Payload mutation events (`PayloadDrafted/Revised/Renamed/Archived`) carry a
+`by` actor stamped from the authenticated tenant's configured identity. The request contracts carry no `by` field at all —
+there is nothing to spoof (a test asserts the event's `by` equals the tenant's actor).
+
+**Tenancy model — Marten conjoined multi-tenancy (the pragmatic first slice).** `AllDocumentsAreMultiTenanted()` +
+`Events.TenancyStyle = Conjoined`: one shared schema, every event stream and document row qualified by a `tenant_id`, every
+session opened for a tenant. A cross-tenant read returns nothing → **`404` (not `403`)**, chosen so a tenant cannot even
+confirm another's resource exists. This isolates the event-sourced Payload/Run aggregates, their projections
+(`PayloadSummary`, `RunTimeline`), the SSE backfill stream, drift, and replay; the `RunProgress`/`RunExecutorSaga`
+documents are tenanted the same way. Listings are tenant-filtered by construction.
+
+The tenant flows into **every** session, including the ones outside the HTTP request scope (the parts the ticket flags as
+the risk):
+- **HTTP requests** — Wolverine's HTTP tenant detection (`opts.TenantId.IsClaimTypeNamed`) reads the tenant claim and opens
+  the injected Marten session for that tenant, and stamps the same tenant onto any message the endpoint publishes.
+- **The background run executor** (`RunExecutor`, which owns its own sessions, §14.2) — the tenant travels on the
+  `StartRun`/`ExecuteRun` message envelope (inherited from the tenanted HTTP publish and cascaded through the saga); the
+  executor reads `Envelope.TenantId` and opens every session under it (trace appends, checkpoints, `RunProgress`). A run
+  with no tenant **fails closed** (never touches the default partition).
+- **Checkpoint resume & the SSE backfill** — both open tenant-scoped sessions, so a resumed run stays in its partition and a
+  cross-tenant SSE stream reads nothing (→ 404, indistinguishable from an unknown run).
+- **Startup recovery** (`RunRecoveryService`) — conjoined tenancy scopes each query to its tenant, so recovery fans out over
+  every configured tenant, finds each one's interrupted runs, and re-publishes `ExecuteRun` tagged with that tenant.
+- **The async projection daemon** — by construction projects each event under its own `tenant_id`.
+
+**Upgrade path.** Conjoined tenancy is one database with no per-tenant provisioning. The design doc's "one
+`DatabaseSchemaName` per tenant" is a stronger isolation posture available later via Marten's schema-per-tenant or
+database-per-tenant models, at the cost of per-tenant migration/provisioning. The seam is the same tenant id — moving to it
+changes only the Marten store wiring, not the endpoints or the executor.
+
+**Per-run backend sessions & per-tenant storage.** Backend sessions are per-run by construction (each run `ConnectAsync`es a
+fresh session, disposed at run end) — never shared across runs or tenants; the isolation test asserts distinct session
+instances per run. The download/screenshot storage seams (`IDownloadSink`, `IScreenshotStore`) now carry the run's tenant so
+a real CD-2 adapter partitions storage per tenant (the tenant in the key/path structure) and the content-addressed
+idempotency probe is tenant-scoped — one tenant can neither read, overwrite, nor probe another's blob by content id; the
+fakes prove the partitioning. The content-addressed refs stay tenant-independent, so the wire result and immutable trace are
+byte-identical.
+
 ## Not in scope here
 
-Auth/authz (the tenant boundary is designed, §12, not yet built), PII crypto-shredding, and resource
-limits are tracked in `CRAWLDAD_DESIGN.md` §12 and are not part of the WP3 scrubbing boundary.
+PII crypto-shredding and resource limits are tracked in `CRAWLDAD_DESIGN.md` §12 and are not part of the WP3 scrubbing
+boundary. Per-tenant concurrency caps (CD-3), the slot queue (CD-16), real storage adapters (CD-2), and the BYO vault
+(CD-6) build on the CD-1 tenant seam but are their own tickets.
 
 ## Designed, not built: BYO key vault + `secretRef` form-fill credentials (post-P5)
 

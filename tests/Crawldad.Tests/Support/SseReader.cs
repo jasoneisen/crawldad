@@ -23,12 +23,15 @@ internal static class SseReader
     /// <param name="runId">The run to stream.</param>
     /// <param name="lastEventId">The <c>Last-Event-ID</c> to reconnect from, or null to stream from the start.</param>
     /// <param name="timeout">How long to wait for the run to terminate + the stream to close.</param>
+    /// <param name="apiKey">The tenant API key to authenticate with — the raw TestServer client bypasses Alba's default
+    /// header, so the SSE endpoint (CD-1) needs the bearer set here; defaults to the primary tenant.</param>
     /// <returns>The frames, in stream order.</returns>
-    public static async Task<List<Frame>> ReadToCloseAsync(IAlbaHost host, Guid runId, long? lastEventId, TimeSpan timeout)
+    public static async Task<List<Frame>> ReadToCloseAsync(IAlbaHost host, Guid runId, long? lastEventId, TimeSpan timeout, string apiKey = TestTenants.PrimaryKey)
     {
         using var client = host.GetTestServer().CreateClient();
         using var cts = new CancellationTokenSource(timeout);
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"/runs/{runId}/events", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("Authorization", TestTenants.Bearer(apiKey));
         if (lastEventId is not null)
         {
             request.Headers.TryAddWithoutValidation("Last-Event-ID", lastEventId.Value.ToString(CultureInfo.InvariantCulture));

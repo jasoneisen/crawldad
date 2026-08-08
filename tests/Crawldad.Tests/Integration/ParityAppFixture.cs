@@ -23,7 +23,7 @@ public sealed class ParityAppFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Host = await AlbaHost.For<Program>(builder =>
+        Host = (await AlbaHost.For<Program>(builder =>
         {
             builder.UseCrawldadTestDefaults("crawldad_parity");
             builder.ConfigureServices(services =>
@@ -36,7 +36,7 @@ public sealed class ParityAppFixture : IAsyncLifetime
                 services.AddKeyedSingleton<IBrowserBackend>("local", static (sp, _) =>
                     new FixtureChromiumBackend(sp.GetRequiredService<IPlaywrightProvider>(), Runner.FixturesRoot));
             });
-        });
+        })).AuthenticatedAsPrimaryTenant();
 
         await Host.ResetAllMartenDataAsync();
     }

@@ -80,7 +80,7 @@ public class PayloadVersioningTests(AppFixture fixture)
         (await ReadGet($"/payloads/{id}")).GetProperty("scriptHash").GetString().ShouldBe(newHash);
 
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var events = await session.Events.FetchStreamAsync(id);
         events.Select(e => e.EventType).ShouldBe([typeof(PayloadDrafted), typeof(PayloadRevised)]);
         ((PayloadRevised)events[1].Data).Note.ShouldBe("tweaked the result");
@@ -274,7 +274,7 @@ public class PayloadVersioningTests(AppFixture fixture)
 
         // The stored event's script is redacted at the persistence boundary.
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var drafted = (PayloadDrafted)(await session.Events.FetchStreamAsync(id))[0].Data;
         drafted.Script.ShouldNotContain(Secret);
         drafted.Script.ShouldContain("token=" + CredentialScrubber.Redaction);
@@ -296,7 +296,7 @@ public class PayloadVersioningTests(AppFixture fixture)
 
         // The stored PayloadRevised event redacts both the script and the note at the persistence boundary.
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var revised = (PayloadRevised)(await session.Events.FetchStreamAsync(id))[1].Data;
         revised.Script.ShouldNotContain(Secret);
         revised.Script.ShouldContain("token=" + CredentialScrubber.Redaction);
