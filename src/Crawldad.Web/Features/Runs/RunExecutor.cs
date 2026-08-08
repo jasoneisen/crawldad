@@ -210,53 +210,17 @@ public sealed class RunExecutor(
         return new ResumeState(stored.Name, stored.Sequence, stored.StepIndex, ParseJson(stored.CursorJson), ParseJson(stored.VarsJson));
     }
 
-    // Maps the interpreter outcome to the persisted disposition: append the scrubbed trace + terminal event and stamp the
-    // executor-owned RunProgress read model. A cooperative stop is a user cancel (cancelled + partial) unless the deadline
-    // fired (a terminal run_deadline_exceeded failure, §8.4).
+    // Maps the interpreter outcome to the persisted disposition through the shared RunFinalization (§11, shared with the
+    // CD-15 sync auto-upgrade supervisor): append the scrubbed trace + terminal event, stamp the executor-owned RunProgress
+    // read model, and free the slot BEFORE the terminal status commits (so a poller can immediately start another run, CD-3).
+    // outcome.Events is empty on this path — the observer already appended the trace live (§13) — so nothing is replayed. A
+    // cooperative stop is a user cancel (cancelled + partial) unless the deadline fired (a terminal run_deadline_exceeded, §8.4).
     private async Task FinalizeAsync(Guid runId, string tenantId, RunOutcome outcome, RunControl control, CancellationToken ct)
     {
         await using var session = store.LightweightSession(tenantId);
-
-        // The interpreter's trace events were already appended live through the observer (§13, in occurrence order), so
-        // outcome.Events is empty on this path — nothing to replay here; only the terminal event + read model remain.
         var progress = (await session.LoadAsync<RunProgress>(runId, ct))!;
-        progress.Stats = outcome.Stats;
-
-        switch (outcome.Status)
-        {
-            case RunStatus.Succeeded:
-                progress.Status = RunStatus.Succeeded;
-                progress.ResultJson = scrubber.ScrubJson(outcome.Result)!.Value.GetRawText(); // Result is non-null on success
-                session.Events.Append(runId, new RunSucceeded(outcome.Stats, clock.GetUtcNow()));
-                break;
-
-            case RunStatus.Failed:
-                var failure = RunEventScrubber.ScrubFailure(outcome.Failure!, scrubber);
-                progress.Status = RunStatus.Failed;
-                progress.Failure = failure;
-                session.Events.Append(runId, new RunFailed(failure, outcome.Stats, clock.GetUtcNow()));
-                break;
-
-            case RunStatus.Cancelled when control.StopReason == RunStopReason.Deadline:
-                var deadline = new RunFailureDetail("terminal", DeadlineExceededCode, "the run exceeded its wall-clock deadline (§8.4)", new RunStepRef(0, "run"));
-                progress.Status = RunStatus.Failed;
-                progress.Failure = deadline;
-                session.Events.Append(runId, new RunFailed(deadline, outcome.Stats, clock.GetUtcNow()));
-                break;
-
-            default: // RunStatus.Cancelled — a cooperative user cancel
-                progress.Status = RunStatus.Cancelled;
-                progress.PartialJson = scrubber.ScrubJson(outcome.Partial)?.GetRawText();
-                session.Events.Append(runId, new RunCancelled(outcome.Stats, clock.GetUtcNow()));
-                break;
-        }
-
-        // Free the admission slot as the run finalises — BEFORE the terminal status commits — so a caller that then observes
-        // "terminal" (poll or SSE) can immediately start another run without a transient false 429 (CD-3). The executor's
-        // outer finally repeats this idempotently, covering the non-finalised shutdown/exception paths.
-        admissionGate.Release(tenantId, runId);
-        session.Store(progress);
-        await session.SaveChangesAsync(ct);
+        RunFinalization.Apply(session, runId, tenantId, outcome, control.StopReason, progress, scrubber, admissionGate, clock);
+        await session.SaveChangesAsync(ct); // the executor's outer finally repeats the slot release idempotently on non-finalised paths
         signals.Notify(runId); // the terminal event closes any live SSE tail
     }
 

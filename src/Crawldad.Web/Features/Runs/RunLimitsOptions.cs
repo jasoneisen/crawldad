@@ -30,6 +30,13 @@ public sealed class RunLimitsOptions
     /// it disabled so time-in-queue is capped only where a deployment opts in.</summary>
     public const int DefaultMaxQueueWaitMs = 0;
 
+    /// <summary>The default synchronous-run wall-clock window in milliseconds (CD-15, docs/PRODUCT.md §2.2): how long a
+    /// default (non-<c>async</c>) <c>POST /runs</c> may hold the caller's HTTP connection before the run is <b>auto-upgraded
+    /// to async</b> — the caller gets <c>202 { runId, status:"running" }</c> and the run keeps executing on the durable
+    /// surface. 120 s sits comfortably under every Azure ingress ceiling (Front Door / Container Apps Envoy 240 s, App
+    /// Service ~230 s), so a sync request is answered — as a result or an upgrade — before any ingress kills the connection.</summary>
+    public const int DefaultSyncUpgradeThresholdMs = 120 * 1000;
+
     /// <summary>The most semantic steps one execution may run (§12) — <c>max_steps_exceeded</c> beyond it.</summary>
     public int MaxStepsPerRun { get; init; } = RunLimits.DefaultMaxSteps;
 
@@ -56,6 +63,16 @@ public sealed class RunLimitsOptions
     /// (CD-16), in milliseconds; 0 disables the bound. A global knob (no per-tenant override — the seam is the depth override
     /// plus this deployment default).</summary>
     public int MaxQueueWaitMs { get; init; } = DefaultMaxQueueWaitMs;
+
+    /// <summary>The synchronous-run wall-clock window in milliseconds (CD-15): how long a default (non-<c>async</c>)
+    /// <c>POST /runs</c> may hold the caller's HTTP connection before its still-executing run is <b>auto-upgraded to async</b>
+    /// (the caller gets <c>202 { runId, status:"running" }</c> and polls, exactly as if <c>async:true</c> had been sent).
+    /// A run finishing inside the window keeps today's synchronous <see cref="Contracts.Runs.RunResponse"/>, byte-for-byte.
+    /// The 120 s default sits under every Azure ingress ceiling (Front Door / Container Apps Envoy 240 s, App Service ~230 s),
+    /// so the connection is always answered — as a result or an upgrade — before ingress can kill it; a deployment tunes it
+    /// to its front door (well over the longest reasonable sync job, comfortably under the ingress cap). 0 upgrades every
+    /// sync run immediately (async-only posture).</summary>
+    public int SyncUpgradeThresholdMs { get; init; } = DefaultSyncUpgradeThresholdMs;
 
     /// <summary>Projects the four mid-run caps into the interpreter's <see cref="RunLimits"/>.</summary>
     internal RunLimits ToRunLimits() =>

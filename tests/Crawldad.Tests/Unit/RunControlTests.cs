@@ -63,6 +63,18 @@ public class RunControlTests
     }
 
     [Fact]
+    public void A_forcible_for_every_reason_source_is_cancelled_by_a_user_cancel()
+    {
+        var control = new RunControl();
+        using var forcible = new CancellationTokenSource();
+        control.UseForcibleCancellation(forcible, forEveryReason: true); // CD-15: an auto-upgraded run's observer-less interpreter
+
+        control.Stop(RunStopReason.Cancelled);
+
+        forcible.IsCancellationRequested.ShouldBeTrue(); // never sees a cooperative cancel between steps, so any stop is forcible
+    }
+
+    [Fact]
     public void A_deadline_stop_without_a_bound_source_is_a_no_op()
     {
         var control = new RunControl();

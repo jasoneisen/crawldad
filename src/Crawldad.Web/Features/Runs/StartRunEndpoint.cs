@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -48,10 +49,12 @@ public static class StartRunEndpoint
     /// <param name="bus">The message bus that kicks the executor saga (async/promotion) and the queue promotion trigger (§11/CD-16).</param>
     /// <param name="gate">The concurrent-run admission gate (CD-3): the atomic slot reservation.</param>
     /// <param name="queue">The durable FIFO admission queue (CD-16): the at-cap enqueue + depth guard.</param>
-    /// <param name="limitsOptions">The server-side resource-limit options (CD-3/§12).</param>
+    /// <param name="controls">The in-process run-control registry (§11): a sync run auto-upgraded past the sync cap claims its control here so cancel/the saga deadline reach it and the saga's <c>ExecuteRun</c> no-ops (CD-15).</param>
+    /// <param name="supervisor">The CD-15 sync auto-upgrade supervisor: drives an upgraded run's already-running interpreter to its terminal state after the 202.</param>
+    /// <param name="limitsOptions">The server-side resource-limit options (CD-3/CD-15/§12): the mid-run caps and the sync-upgrade window.</param>
     /// <param name="clock">The time seam for event timestamps and duration.</param>
     /// <param name="ct">Cancels the run.</param>
-    /// <returns><c>200</c> (sync terminal), <c>202</c> (async running, or queued at the cap), <c>400</c> (unrunnable pin), or <c>429</c> (queue full).</returns>
+    /// <returns><c>200</c> (sync terminal), <c>202</c> (async running, sync-cap upgraded, or queued at the cap), <c>400</c> (unrunnable pin), or <c>429</c> (queue full).</returns>
     [WolverinePost("/runs")]
     public static async Task<IResult> Handle(
         StartRunRequest request,
@@ -63,6 +66,8 @@ public static class StartRunEndpoint
         IMessageBus bus,
         IRunAdmissionGate gate,
         RunQueue queue,
+        IRunControlRegistry controls,
+        SyncRunSupervisor supervisor,
         IOptions<RunLimitsOptions> limitsOptions,
         TimeProvider clock,
         CancellationToken ct)
@@ -70,6 +75,10 @@ public static class StartRunEndpoint
         // The server-side mid-run caps (CD-3/§12) the synchronous interpreter enforces; the async executor derives its own
         // from the same options. A payload cannot raise them — they are config, not payload fields.
         var limits = limitsOptions.Value.ToRunLimits();
+
+        // The synchronous wall-clock window (CD-15): a default POST /runs holding its connection past this is auto-upgraded to
+        // async (202 + poll) instead of dying behind an Azure ingress timeout. A config knob (default 120 s), never a payload field.
+        var syncThresholdMs = limitsOptions.Value.SyncUpgradeThresholdMs;
 
         if (request.PayloadId is Guid payloadId)
         {
@@ -95,19 +104,19 @@ public static class StartRunEndpoint
             using var pinnedDocument = JsonDocument.Parse(pinned.Script);
             return await DispatchAsync(
                 request, pinnedDocument.RootElement, pinned.Script, pinned.ScriptHash, payloadId, revision,
-                session, registry, sinks, scrubber, secretScope, bus, gate, queue, limits, clock, ct);
+                session, registry, sinks, scrubber, secretScope, bus, gate, queue, controls, supervisor, limits, syncThresholdMs, clock, ct);
         }
 
         return await DispatchAsync(
             request, request.Payload, request.Payload.GetRawText(), ComputeScriptHash(request.Payload), null, null,
-            session, registry, sinks, scrubber, secretScope, bus, gate, queue, limits, clock, ct);
+            session, registry, sinks, scrubber, secretScope, bus, gate, queue, controls, supervisor, limits, syncThresholdMs, clock, ct);
     }
 
     // Routes the resolved payload through the single admission decision (CD-3/CD-16, §Pv.3): admit a slot and run now
     // (sync inline or async executor), or — at the cap — queue the run (or 429 past the tenant's queue depth). Admission runs
     // AFTER pin resolution (so a bad pin is still a 400, not a queue) and identically for both modes. Slot release is
     // exception-safe end to end: the inline path always releases in a finally; the async hand-off releases only if it throws
-    // before the executor owns the slot.
+    // before the executor owns the slot; a sync run auto-upgraded past the sync cap (CD-15) hands its slot to the supervisor.
     private static async Task<IResult> DispatchAsync(
         StartRunRequest request,
         JsonElement payload,
@@ -123,7 +132,10 @@ public static class StartRunEndpoint
         IMessageBus bus,
         IRunAdmissionGate gate,
         RunQueue queue,
+        IRunControlRegistry controls,
+        SyncRunSupervisor supervisor,
         RunLimits limits,
+        int syncThresholdMs,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -158,21 +170,66 @@ public static class StartRunEndpoint
             return await StartBackgroundRunAsync(runId, payload, script, scriptHash, payloadId, payloadRevision, request.Inputs, session, scrubber, bus, clock, ct);
         }
 
-        // The synchronous slot is held for the whole inline run and freed exception-safely the instant it finishes — including
-        // a throw from the secret scope / input parsing inside ExecuteInlineAsync (NIT-1: the release wraps the entire body).
+        return await RunAdmittedSyncAsync(
+            runId, tenantId, payload, script, scriptHash, payloadId, payloadRevision, request.Inputs,
+            session, registry, sinks, scrubber, secretScope, bus, gate, controls, supervisor, limits, syncThresholdMs, clock, ct);
+    }
+
+    // The admitted synchronous path (CD-15): the interpreter runs inline and is raced against the sync-upgrade window. A run
+    // that finishes within the window holds its slot for its own duration and is freed here exception-safely (the exact pre-CD-15
+    // lifetime), then promotes the tenant's next queued run. A run that outruns the window is auto-upgraded — its slot, secret
+    // scope, and running interpreter pass to the supervisor, which frees the slot (and promotes) when the run finalises — so
+    // this path must NOT free it.
+    private static async Task<IResult> RunAdmittedSyncAsync(
+        Guid runId,
+        string tenantId,
+        JsonElement payload,
+        string script,
+        string scriptHash,
+        Guid? payloadId,
+        int? payloadRevision,
+        JsonElement inputs,
+        IDocumentSession session,
+        IBrowserBackendRegistry registry,
+        IDownloadSinkRegistry sinks,
+        CredentialScrubber scrubber,
+        IRunSecretScope secretScope,
+        IMessageBus bus,
+        IRunAdmissionGate gate,
+        IRunControlRegistry controls,
+        SyncRunSupervisor supervisor,
+        RunLimits limits,
+        int syncThresholdMs,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        var upgraded = false;
         IResult response;
         try
         {
-            response = await ExecuteInlineAsync(runId, payload, scriptHash, payloadId, payloadRevision, request.Inputs, session, registry, sinks, scrubber, secretScope, limits, clock, ct);
+            var capResult = await ExecuteWithSyncCapAsync(
+                runId, payload, script, scriptHash, payloadId, payloadRevision, inputs,
+                session, registry, sinks, scrubber, secretScope, bus, controls, supervisor, limits, syncThresholdMs, clock, ct);
+            upgraded = capResult.Upgraded;
+            response = capResult.Response;
         }
         finally
         {
-            gate.Release(tenantId, runId);
+            // Free the slot for the inline (non-upgraded) path — including an unexpected throw before any 202 was sent (upgraded
+            // is still false). An upgraded run's slot is the supervisor's now, so leave it held.
+            if (!upgraded)
+            {
+                gate.Release(tenantId, runId);
+            }
         }
 
         // The freed slot promotes the tenant's oldest queued run (a no-op when none is queued) — published AFTER the release so
-        // the promotion finds the slot free.
-        await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
+        // the promotion finds the slot free. An upgraded run promotes from its supervisor at finalisation instead.
+        if (!upgraded)
+        {
+            await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
+        }
+
         return response;
     }
 
@@ -204,21 +261,32 @@ public static class StartRunEndpoint
 
         var input = JsonValues.FromJson(request.Inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
         var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
-        var inputsJson = request.Inputs.ValueKind == JsonValueKind.Undefined ? "{}" : request.Inputs.GetRawText();
 
-        var queued = new QueuedRunRequest(runId, payloadName, scriptHash, script, inputsJson, [.. input.Keys], payloadId, payloadRevision, ReadDeadlineMs(payload));
+        var queued = new QueuedRunRequest(runId, payloadName, scriptHash, script, InputsJson(request.Inputs), [.. input.Keys], payloadId, payloadRevision, ReadDeadlineMs(payload));
         var position = await queue.EnqueueAsync(session, bus, queued, scrubber, ct);
 
         return Results.Accepted($"/runs/{runId}", new RunStateResponse(runId, RunStatus.Queued, null, null, null, null, Position: position));
     }
 
-    // The synchronous run path (P1–P4, unchanged): open the per-run secret scope, pin RunStarted, interpret, and persist the
-    // scrubbed trace + terminal event — all in the request's one transaction. Byte-for-byte the prior behaviour, so every
-    // acceptance and parity golden stands. The admitted slot is held for the whole inline run and freed by DispatchAsync's
-    // finally (CD-3/NIT-1) — a sync run occupies a slot only for its own duration, unlike an async run the executor releases.
-    private static async Task<IResult> ExecuteInlineAsync(
+    // The outcome of the synchronous path: the response to return, and whether the run was auto-upgraded to async (so the
+    // caller leaves the slot/promotion to the supervisor rather than freeing it inline).
+    private readonly record struct SyncCapResult(IResult Response, bool Upgraded);
+
+    // The synchronous run path with the CD-15 sync cap. The interpreter runs INLINE exactly as P1–P4 (no observer, lean
+    // stream, one transaction), then is raced against the sync-upgrade wall-clock window:
+    //   • finishes within the window → today's terminal RunResponse, byte-for-byte (200); the slot is freed by DispatchAsync;
+    //   • window elapses first       → AUTO-UPGRADE (§8.4/CD-15): pin the run onto the async surface + kick the durable saga,
+    //     hand the STILL-RUNNING interpreter to the supervisor, and return 202 { runId, status:"running" }.
+    // Task.WhenAny resolves to EXACTLY ONE of the two, so a run finishing at the window boundary never yields both a 200 body
+    // and a 202. The interpreter runs on its own cancellation source (never the request's), so returning 202 cannot cancel it —
+    // the deliberate trade-off is that a client disconnect no longer cancels an in-flight sync run (pre-CD-15 it did, via the
+    // request token): a run is now bounded by the sync window then the async wall-clock deadline (§8.4), not by the connection.
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The run's CancellationTokenSource and secret scope are disposed in the finally on the inline/fault paths, and TRANSFERRED to the SyncRunSupervisor on auto-upgrade (which disposes them once the run finalises) — never leaked.")]
+    [SuppressMessage("Performance", "CA1849:Call async methods when in an async method", Justification = "On the non-transferred path this finally runs no cancellation callbacks (the forcible binding happens only on the transferred/upgrade path this block skips), so Cancel() does not block; the async CancelAsync would add an async-finally state-machine branch no exceptional test path can reach.")]
+    private static async Task<SyncCapResult> ExecuteWithSyncCapAsync(
         Guid runId,
         JsonElement payload,
+        string script,
         string scriptHash,
         Guid? payloadId,
         int? payloadRevision,
@@ -228,33 +296,81 @@ public static class StartRunEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        IMessageBus bus,
+        IRunControlRegistry controls,
+        SyncRunSupervisor supervisor,
         RunLimits limits,
+        int syncThresholdMs,
         TimeProvider clock,
         CancellationToken ct)
     {
+        // The interpreter may outlive this request — an auto-upgrade detaches it (CD-15) — and a pinned/replay run's payload is
+        // a JsonElement over a `using var JsonDocument` (Handle / RunReplayEndpoint) disposed the instant Handle returns the 202.
+        // Read from a GC-backed Clone the detached interpreter owns, never the request's document, so a pinned/replay run
+        // crossing the window cannot fault with ObjectDisposedException.
+        payload = payload.Clone();
+
         var input = JsonValues.FromJson(inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
         var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
 
-        // Open the per-run secret scope for the whole run: the backend adapter registers the resolved credential into it
-        // at connect (§12), so the sinks below scrub even free-form text that echoes the raw secret. Disposal clears it.
-        using var runSecrets = secretScope.Begin();
+        // The per-run secret scope (§12) and the interpreter's own cancellation source span the WHOLE run. Both are disposed
+        // here on the inline path; on upgrade they are TRANSFERRED to the supervisor (it disposes them once the run finalises),
+        // tracked by `transferred` so this finally never tears down a run the supervisor now owns.
+        var secretScopeHandle = secretScope.Begin();
+        var runCts = new CancellationTokenSource();
+        var transferred = false;
+        try
+        {
+            // Pin RunStarted (not yet committed): the inline path commits it with the terminal event; the upgrade path commits
+            // it with the seeded RunProgress. Scrubbed exactly as before (§12). The session is already tenant-scoped (CD-1).
+            session.Events.StartStream<Run>(
+                runId,
+                RunEventScrubber.Scrub(new RunStarted(payloadName, scriptHash, clock.GetUtcNow(), [.. input.Keys], payloadId, payloadRevision), scrubber));
 
-        session.Events.StartStream<Run>(
-            runId,
-            RunEventScrubber.Scrub(new RunStarted(payloadName, scriptHash, clock.GetUtcNow(), [.. input.Keys], payloadId, payloadRevision), scrubber));
+            // The lean synchronous interpreter — no observer, no screenshot store, threaded the run's tenant — the exact P1–P4
+            // construction, so a run finishing within the window is byte-identical. Started (not awaited) so it can be raced.
+            var execution = new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId, limits: limits).RunAsync(runCts.Token);
 
-        // The session is already tenant-scoped by Wolverine's HTTP tenant detection, so its tenant is the run's tenant —
-        // thread it to the interpreter so a synchronous run's downloads/screenshots land in this tenant's storage (CD-1).
-        var outcome = await new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId, limits: limits).RunAsync(ct);
+            using var capCts = new CancellationTokenSource();
+            var finishedWithinWindow = await Task.WhenAny(execution, Task.Delay(syncThresholdMs, capCts.Token)) == execution;
+            if (finishedWithinWindow)
+            {
+                await capCts.CancelAsync(); // finished under the cap — stop the window timer
+                var response = await FinalizeInlineAsync(runId, await execution, session, scrubber, clock, ct);
+                return new SyncCapResult(response, Upgraded: false);
+            }
 
-        // The interpreter's trace events (LogEmitted/RunAttemptFailed) land between RunStarted and the terminal event,
-        // in occurrence order — each scrubbed at this single append chokepoint, so nothing credential-bearing is persisted.
+            var upgrade = await UpgradeToAsyncAsync(
+                runId, session.TenantId!, payload, script, scriptHash, payloadId, payloadRevision, inputs, payloadName,
+                execution, session, bus, controls, supervisor, runCts, secretScopeHandle, ct);
+            transferred = true;
+            return upgrade;
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                // Inline completion, or a fault before the 202 (e.g. an upgrade commit that threw): the supervisor never took
+                // ownership, so tear the run's own lifetimes down here. Cancel first to stop the interpreter if it still runs;
+                // scrubbing on the inline path has already happened by now, so clearing the secret scope is safe.
+                controls.Remove(runId);
+                runCts.Cancel();
+                secretScopeHandle.Dispose();
+                runCts.Dispose();
+            }
+        }
+    }
+
+    // The fast-path terminal finalisation (P1–P4, byte-for-byte): append the interpreter's buffered coarse trace events
+    // (LogEmitted/RunAttemptFailed, in occurrence order) and the terminal event to the run's stream in the request's one
+    // transaction, then return the §10 RunResponse. Each string is scrubbed at this single append chokepoint (§12).
+    private static async Task<IResult> FinalizeInlineAsync(Guid runId, RunOutcome outcome, IDocumentSession session, CredentialScrubber scrubber, TimeProvider clock, CancellationToken ct)
+    {
         foreach (var traceEvent in outcome.Events)
         {
             session.Events.Append(runId, RunEventScrubber.Scrub(traceEvent, scrubber));
         }
 
-        // Scrub the failure once, then use the same value for the persisted event and the §10 response.
         var failure = outcome.Failure is null ? null : RunEventScrubber.ScrubFailure(outcome.Failure, scrubber);
         object finished = outcome.Status == RunStatus.Succeeded
             ? new RunSucceeded(outcome.Stats, clock.GetUtcNow())
@@ -264,6 +380,46 @@ public static class StartRunEndpoint
         await session.SaveChangesAsync(ct);
 
         return Results.Ok(new RunResponse(runId, outcome.Status, scrubber.ScrubJson(outcome.Result), failure, outcome.Stats));
+    }
+
+    // Auto-upgrades a synchronous run that outran the sync cap onto the async surface (CD-15) WITHOUT restarting it. Claim the
+    // run's in-process control FIRST — before the saga's ExecuteRun can be handled — so the executor finds it already claimed
+    // and no-ops (never a duplicate interpreter), and bind the interpreter's source as forcible-for-every-reason so a POST
+    // /cancel or the saga's wall-clock deadline (§8.4) forcibly stops the observer-less run. Then seed the pollable RunProgress
+    // + commit RunStarted in one transaction and kick the durable saga (its RunDeadline is the deadline backstop; a restart
+    // re-runs it from scratch). Finally hand the still-running interpreter to the supervisor and return 202. Mirrors the native
+    // async StartBackgroundRunAsync — the only difference is that the interpreter is already running, so ExecuteRun no-ops.
+    private static async Task<SyncCapResult> UpgradeToAsyncAsync(
+        Guid runId,
+        string tenantId,
+        JsonElement payload,
+        string script,
+        string scriptHash,
+        Guid? payloadId,
+        int? payloadRevision,
+        JsonElement inputs,
+        string payloadName,
+        Task<RunOutcome> execution,
+        IDocumentSession session,
+        IMessageBus bus,
+        IRunControlRegistry controls,
+        SyncRunSupervisor supervisor,
+        CancellationTokenSource runCts,
+        IDisposable secretScopeHandle,
+        CancellationToken ct)
+    {
+        var control = controls.GetOrAdd(runId);
+        _ = control.TryClaim(); // a brand-new control — always succeeds; claiming before the saga starts makes ExecuteRun a no-op
+        control.UseForcibleCancellation(runCts, forEveryReason: true);
+
+        session.Store(new RunProgress { Id = runId, Status = RunStatus.Running });
+        await session.SaveChangesAsync(ct);
+        await bus.PublishAsync(new StartRun(runId, payloadName, scriptHash, script, InputsJson(inputs), payloadId, payloadRevision, ReadDeadlineMs(payload)));
+
+        supervisor.Adopt(new SyncRunHandoff(runId, tenantId, execution, control, runCts, secretScopeHandle));
+        return new SyncCapResult(
+            Results.Accepted($"/runs/{runId}", new RunStateResponse(runId, RunStatus.Running, null, null, null, null)),
+            Upgraded: true);
     }
 
     // The async run path (§11): pin RunStarted + seed the running RunProgress read model + kick the durable executor saga,
@@ -285,7 +441,6 @@ public static class StartRunEndpoint
     {
         var input = JsonValues.FromJson(inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
         var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
-        var inputsJson = inputs.ValueKind == JsonValueKind.Undefined ? "{}" : inputs.GetRawText();
 
         session.Events.StartStream<Run>(
             runId,
@@ -293,7 +448,7 @@ public static class StartRunEndpoint
         session.Store(new RunProgress { Id = runId, Status = RunStatus.Running });
         await session.SaveChangesAsync(ct);
 
-        await bus.PublishAsync(new StartRun(runId, payloadName, scriptHash, script, inputsJson, payloadId, payloadRevision, ReadDeadlineMs(payload)));
+        await bus.PublishAsync(new StartRun(runId, payloadName, scriptHash, script, InputsJson(inputs), payloadId, payloadRevision, ReadDeadlineMs(payload)));
 
         return Results.Accepted($"/runs/{runId}", new RunStateResponse(runId, RunStatus.Running, null, null, null, null));
     }
@@ -301,6 +456,10 @@ public static class StartRunEndpoint
     // The run wall-clock cap (§8.4): config.deadlineMs when set, else the generous default.
     private static int ReadDeadlineMs(JsonElement payload) =>
         payload.GetProperty("config").TryGetProperty("deadlineMs", out var deadline) ? deadline.GetInt32() : DefaultDeadlineMs;
+
+    // The run inputs as persistable JSON: an absent (undefined) inputs value becomes the empty object.
+    private static string InputsJson(JsonElement inputs) =>
+        inputs.ValueKind == JsonValueKind.Undefined ? "{}" : inputs.GetRawText();
 
     private static string ComputeScriptHash(JsonElement payload) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(payload.GetRawText())));

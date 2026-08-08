@@ -211,6 +211,21 @@ fuel, per-tenant concurrent runs), with at-cap admission queueing rather than re
 storage adapters (CD-2) and the BYO vault (CD-6) build on the CD-1 tenant seam but are their own
 tickets.
 
+**Synchronous-run ingress cap (CD-15, shipped 2026-08-08).** A default `POST /runs` is capped at 120 s
+of wall clock (`Crawldad:Limits:SyncUpgradeThresholdMs`) and, on crossing it, is **auto-upgraded** to
+the async surface (`202 { runId, status:"running" }`, then `GET`/SSE/cancel). The rationale is an
+availability/ingress one: every viable Azure ingress kills a longer request first — Azure Front Door
+and Container Apps' Envoy ingress cancel at **240 s**, App Service at **~230 s** — so a 30-minute sync
+run is architecturally dead behind any of them, and an unbounded sync connection is itself a
+connection-holding DoS vector; the 120 s cap (comfortably under 240 s) ensures every sync request is
+answered — result or upgrade — before ingress intervenes. The **credential-scrubbing boundary above is
+unchanged across the upgrade**: an upgraded run is finalised by a background supervisor, and the run's
+ambient per-run secret scope (the exact-match set) is kept open until that finalisation and disposed
+only then — so the scrubber redacts the upgraded run's events and result exactly as it does an inline
+run's (the CD-15 leak test asserts no sink leaks a registered secret across the request→background
+handoff). Deployment note: set the ingress request timeout above the window + headroom yet well under
+240 s (~180 s with the 120 s default); see `docs/PRODUCT.md` §2.2.
+
 ## Designed, not built: BYO key vault + `secretRef` form-fill credentials (post-P5)
 
 The first login-gated target needs a credential typed into a **form** (`fill`), not a backend

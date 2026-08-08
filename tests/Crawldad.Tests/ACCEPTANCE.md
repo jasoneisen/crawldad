@@ -147,6 +147,25 @@ Every Phase 5 observability + durable surface swept for both a credential sentin
   unbounded (CPU-count) parallelism makes those concurrent schema migrations contend and flake. A cap of 2 keeps the suite
   fast while the host builds do not race. Do not raise it without re-checking migration contention.
 
+## CD-15 — synchronous-run cap + auto-upgrade to async (shipped 2026-08-08)
+
+**Why (ingress rationale).** The default synchronous `POST /runs` holds the caller's HTTP connection for the whole run, but
+every viable Azure ingress kills a long request first — Azure Front Door and Container Apps' Envoy ingress cancel at **240 s**,
+App Service at **~230 s** (`docs/PRODUCT.md` §1.1/§2.2). So Crawldad caps synchronous execution at **120 s of wall clock**
+(`Crawldad:Limits:SyncUpgradeThresholdMs`, default 120 000 ms) and, on crossing it, **auto-upgrades the run to async rather than
+failing it**: the same run keeps executing on the durable surface, the caller gets `202 { runId, status:"running" }` at the
+moment of upgrade, and then follows `GET /runs/{id}` / SSE / cancel. Deployment must set the ingress request timeout above the
+window + headroom yet comfortably under 240 s (~180 s with the 120 s default). Tests drive a tiny window and hold the run open
+past it with a deterministic gate (never a sleep), so the upgrade is provoked without a real 120 s wait.
+
+| # | Done-when criterion | Proven by | Status |
+|---|---|---|---|
+| **(a)** | A sync run finishing **inside** the window is byte-identical to today (goldens unchanged); it writes no async read model. | The whole P1–P4 acceptance suite (`RunEndpointTests`, `ScrapeRecordAcceptanceTests`, `SearchAcceptanceTests`) still runs sync at the default window and is unchanged. Plus `RunEndpointTests.A_sync_run_under_the_window_writes_no_progress_row_so_get_is_404` — a fast sync run stays fully synchronous (no `RunProgress`, so `GET /runs/{id}` is 404). | **PROVEN** (the fast path is the exact pre-CD-15 inline code). |
+| **(b)** | A sync run **crossing** the window returns `202 {runId, status:"running"}` and subsequently completes with the same terminal result async would have (golden via `GET /runs/{id}`). | `SyncCapTests.A_sync_run_crossing_the_window_returns_202_running_then_completes_with_the_golden` — a default (non-async) POST held past a tiny window is auto-upgraded (202 running, no result), `GET` reports it running mid-flight, and after release it completes with the **byte-identical** full-crawl golden. `An_upgraded_run_replays_its_buffered_log_into_a_lean_stream_pollable_over_sse` proves the lean synchronous engine's buffered log is replayed into the (pollable + SSE-tailable) stream. | **PROVEN** against the fake. |
+| **(c)** | The upgraded run **follows the existing async surface** — cancel, the wall-clock deadline (§8.4), and SSE all hold. | `SyncCapTests.An_upgraded_run_can_be_cancelled` (a forcible cancel of the observer-less run reaches `cancelled` with the fake session torn down cleanly), `An_upgraded_run_honours_the_wall_clock_deadline` (the saga's `RunDeadline` caps it to terminal `run_deadline_exceeded`), and the SSE assertions in the (b) log test. `An_upgraded_run_that_faults_unexpectedly_fails_terminally` covers the unexpected-fault path (terminal `internal_error`, never a stuck "running"). | **PROVEN** against the fake. |
+| **(d)** | The §12 credential boundary holds across the request→background handoff. | `SyncCapTests.An_upgraded_run_keeps_a_run_secret_out_of_every_sink` — a backend registers a run secret at connect, the run echoes it into a log + result, is upgraded, and is finalised by the background supervisor; the secret still appears in **no** sink (result scrubbed to `[redacted]`, event stream, SSE) — proving the run's ambient secret scope is in effect at background finalisation, not just inline. | **PROVEN** against the fake (with a secret-registering backend). |
+| **(e)** | The window is a config knob with a documented 120 s default; the ingress rationale is in the docs. | `RunLimitsOptionsValidatorTests` (`Accepts_an_immediate_sync_upgrade`, `Rejects_a_negative_sync_upgrade_threshold`); the tests drive the knob via `Crawldad:Limits:SyncUpgradeThresholdMs`. Docs: `docs/PRODUCT.md` §2.2 (deployment timeout), `CRAWLDAD_DESIGN.md` §8.4/§10, `SECURITY.md`. | **PROVEN** + documented. |
+
 ## Zero live third-party traffic — guaranteed, not assumed
 
 The fast loop (`dotnet test`, and CI's `Category!=LiveCanary`) makes **no** third-party network request. Note
