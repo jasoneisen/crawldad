@@ -11,8 +11,12 @@ namespace Crawldad.Web.Features.Runs;
 /// run reaches <b>byte-for-byte the same terminal disposition</b> a native async run would. It appends the interpreter's
 /// buffered coarse trace events (empty on the executor path — its observer already appended them live; non-empty on the
 /// upgrade path — the lean synchronous engine buffered them) and the terminal event to the run's Marten stream, stamps the
-/// executor-owned <see cref="RunProgress"/> read model with the scrubbed disposition (§12), and frees the run's admission
-/// slot (CD-3) — all on a caller-owned session, which the caller commits and then notifies subscribers from.
+/// executor-owned <see cref="RunProgress"/> read model with the scrubbed disposition (§12), frees the run's admission
+/// slot (CD-3), and <b>deletes the run's <see cref="RunExecutorSaga"/></b> (CD-5) — all on a caller-owned session, which the
+/// caller commits and then notifies subscribers from. Because the saga delete rides the <b>same transaction</b> as the
+/// terminal disposition, a finished run's script+inputs are reclaimed atomically with the run reaching terminal: no separate
+/// cleanup message that a crash (or a spent, already-fired deadline) could lose, and no window in which the saga lingers
+/// (SECURITY.md "Durable state at rest"). A non-finalised run is never deleted, so its saga survives for resume.
 /// </summary>
 internal static class RunFinalization
 {
@@ -81,5 +85,10 @@ internal static class RunFinalization
         // "terminal" can immediately start another run without a transient false 429 (CD-3). Idempotent (callers repeat it).
         gate.Release(tenantId, runId);
         session.Store(progress);
+
+        // Complete the durable orchestration saga by deleting it IN THIS SAME TRANSACTION as the terminal disposition (CD-5):
+        // the run's script+inputs are reclaimed atomically with it reaching terminal, so they never linger and no crash window
+        // exists between the terminal commit and cleanup. A no-op if there is no saga (the sync fast-path never starts one).
+        session.Delete<RunExecutorSaga>(runId);
     }
 }

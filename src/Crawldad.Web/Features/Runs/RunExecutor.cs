@@ -19,23 +19,18 @@ namespace Crawldad.Web.Features.Runs;
 public static class ExecuteRunHandler
 {
     /// <summary>Drives one run (or resumes it) to a terminal state, under the message's tenant (CD-1). When the run reaches a
-    /// terminal state it (a) signals <see cref="RunFinished"/> so the durable <see cref="RunExecutorSaga"/> is completed at once
-    /// — reclaiming its <c>script</c>+<c>inputs</c> from <c>mt_doc_runexecutorsaga</c> rather than letting them linger (§14.2) —
-    /// and (b) triggers promotion of the tenant's oldest queued run (CD-16). Both are durable, tenant-tagged, no-op-if-nothing-
-    /// applies triggers; a run merely interrupted for recovery frees no slot and reached no terminal state, so neither fires.</summary>
+    /// terminal state (freeing its slot — and, atomically, deleting its saga in <see cref="RunFinalization"/>), it triggers
+    /// promotion of the tenant's oldest queued run (CD-16) — a durable, no-op-if-nothing-queued trigger; a run merely
+    /// interrupted for recovery frees no slot and triggers nothing.</summary>
     /// <param name="command">The run to execute.</param>
     /// <param name="executor">The run executor.</param>
-    /// <param name="bus">The bus the saga-completion signal and queue promotion trigger are published on.</param>
+    /// <param name="bus">The bus the queue promotion trigger is published on.</param>
     /// <param name="envelope">The message envelope — its tenant id scopes every session the executor opens for this run.</param>
     /// <param name="ct">The handler cancellation token (cancelled on host shutdown).</param>
     public static async Task Handle(ExecuteRun command, RunExecutor executor, IMessageBus bus, Envelope envelope, CancellationToken ct)
     {
         if (await executor.ExecuteAsync(command.RunId, envelope.TenantId, ct))
         {
-            // The run committed its terminal disposition: complete its saga promptly (the RunDeadline is the crash-safe
-            // backstop) and promote the tenant's next queued run. Both ride the tenant (CD-1) so they resolve the run's saga
-            // and the tenant's queue.
-            await bus.PublishAsync(new RunFinished(command.RunId), new DeliveryOptions { TenantId = envelope.TenantId });
             await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = envelope.TenantId });
         }
     }

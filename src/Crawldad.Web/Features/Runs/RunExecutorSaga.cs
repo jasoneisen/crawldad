@@ -1,5 +1,3 @@
-using Crawldad.Contracts.Runs;
-using Marten;
 using Wolverine;
 using Wolverine.Persistence.Sagas;
 
@@ -18,7 +16,7 @@ namespace Crawldad.Web.Features.Runs;
 /// <param name="Inputs">The run inputs JSON (credentials are by-reference only, so this is safe to persist).</param>
 /// <param name="PayloadId">The pinned managed payload, or null for an inline run.</param>
 /// <param name="PayloadRevision">The pinned revision, or null for an inline run.</param>
-/// <param name="DeadlineMs">The run wall-clock cap in milliseconds (§8.4), scheduled as the saga timeout.</param>
+/// <param name="DeadlineMs">The run wall-clock cap in milliseconds (§8.4), scheduled as the deadline delay.</param>
 public sealed record StartRun(
     [property: SagaIdentity] Guid RunId,
     string PayloadName,
@@ -35,34 +33,43 @@ public sealed record StartRun(
 /// <param name="RunId">The run to execute (or resume).</param>
 public sealed record ExecuteRun(Guid RunId);
 
-/// <summary>The run's wall-clock deadline (§8.4) as a Wolverine saga timeout: scheduled by <see cref="RunExecutorSaga.StartOrHandle"/>
-/// and, when it elapses, routed back to the saga (auto-ignored if the saga is already gone). Marked with the saga id so it
-/// correlates to its run. Wolverine scheduled messages are never cancelled when a run finishes early, so the same timeout
-/// doubles as the saga's janitor (see <see cref="RunExecutorSaga.Handle(RunDeadline, IDocumentSession, IRunControlRegistry, CancellationToken)"/>).</summary>
-/// <param name="RunId">The run/saga id.</param>
-/// <param name="DeadlineDelay">How long after start the deadline fires.</param>
-public sealed record RunDeadline([property: SagaIdentity] Guid RunId, TimeSpan DeadlineDelay) : TimeoutMessage(DeadlineDelay);
+/// <summary>The run's wall-clock deadline (§8.4): a durable <b>scheduled</b> message the saga's <see cref="RunExecutorSaga.StartOrHandle"/>
+/// delays by the run's <c>deadlineMs</c>. It is deliberately <b>not</b> a saga timeout — its only job is to ask the still-running
+/// run's in-process control to stop (<see cref="RunDeadlineHandler"/>), so it never loads or writes the saga. When it fires for a
+/// run that already finished, its control is gone and the message is a harmless no-op; the saga was already deleted by the
+/// terminal finaliser (<see cref="RunFinalization"/>), so nothing else is needed.</summary>
+/// <param name="RunId">The run to stop if it is still running at its deadline.</param>
+public sealed record RunDeadline(Guid RunId);
 
-/// <summary>The prompt "the run reached a terminal state" signal (§14.2, CRAWLDAD_DESIGN.md §14.2): published by the shared
-/// terminal finalisers (the executor's <see cref="ExecuteRunHandler"/> and the CD-15 <see cref="SyncRunSupervisor"/>) once a
-/// run commits its terminal disposition, so the saga is <see cref="Saga.MarkCompleted"/>-ed at once — bounding the at-rest
-/// retention of the run's <c>script</c>+<c>inputs</c> in <c>mt_doc_runexecutorsaga</c> to the run's own duration rather than
-/// letting it linger. Marked with the saga id. Idempotent: a redelivery (or arrival after the deadline janitor already
-/// reclaimed the saga) hits <see cref="RunExecutorSaga.NotFound(RunFinished)"/> and no-ops.</summary>
-/// <param name="RunId">The finished run/saga id.</param>
-public sealed record RunFinished([property: SagaIdentity] Guid RunId);
+/// <summary>The durable-queue handler for a run's wall-clock deadline (§8.4): asks the still-running run's in-process control to
+/// stop (a terminal <c>run_deadline_exceeded</c> failure the executor then finalises). A plain handler, not a saga handler — it
+/// touches only the in-process <see cref="IRunControlRegistry"/>, never the saga document, so it can never race the terminal
+/// finaliser's saga delete. If the run already finished, its control is gone and this is a no-op (the deadline is spent
+/// harmlessly). First-writer-wins in <see cref="RunControl"/> means a late deadline never overrides a user cancel in flight.</summary>
+public static class RunDeadlineHandler
+{
+    /// <summary>Stops the run if it is still being driven at its deadline; a no-op once it has finished.</summary>
+    /// <param name="command">The elapsed deadline (its run id).</param>
+    /// <param name="controls">The in-process run-control registry.</param>
+    public static void Handle(RunDeadline command, IRunControlRegistry controls)
+    {
+        if (controls.TryGet(command.RunId, out var control))
+        {
+            control.Stop(RunStopReason.Deadline);
+        }
+    }
+}
 
 /// <summary>
 /// The run executor saga (§11/§14.2), the net-new durable-orchestration piece. Marten-backed saga storage (automatic via
 /// the host's <c>IntegrateWithWolverine()</c>) holds the immutable run definition; the mutable execution state — checkpoint,
 /// status, result — lives in the executor-owned <see cref="RunProgress"/> document so the long-running executor's own-session
 /// writes never contend with Wolverine's saga persistence. <see cref="StartOrHandle"/> pins the run and kicks the durable
-/// <see cref="ExecuteRun"/> plus the wall-clock <see cref="RunDeadline"/>; the run's terminal completion reclaims the saga two
-/// ways so its <c>script</c>+<c>inputs</c> never linger indefinitely (SECURITY.md "Durable state at rest"): promptly on the
-/// finaliser's <see cref="RunFinished"/> (<see cref="Handle(RunFinished)"/>), and — as the crash-safe backstop — on the
-/// already-scheduled <see cref="RunDeadline"/> (<see cref="Handle(RunDeadline, IDocumentSession, IRunControlRegistry, CancellationToken)"/>),
-/// which also enforces the deadline itself. Because messaging is durable, the orchestration survives process restarts and the
-/// run resumes from its last checkpoint.
+/// <see cref="ExecuteRun"/> plus the delayed wall-clock <see cref="RunDeadline"/>. The saga is <b>completed by deletion in the
+/// same transaction as the run's terminal disposition</b> (<see cref="RunFinalization.Apply"/> does <c>session.Delete</c>), so a
+/// finished run's <c>script</c>+<c>inputs</c> never linger and there is no separate cleanup step that a crash could lose
+/// (SECURITY.md "Durable state at rest"). Because messaging is durable, the orchestration survives process restarts and the run
+/// resumes from its last checkpoint (its saga survives precisely because a non-finalised run is never deleted).
 /// </summary>
 public sealed class RunExecutorSaga : Saga
 {
@@ -91,11 +98,13 @@ public sealed class RunExecutorSaga : Saga
     /// <summary>Starts the saga — <b>idempotently</b>. Named <c>StartOrHandle</c> (not <c>Start</c>) so Wolverine generates the
     /// load-first saga path: it pulls the run id from the <see cref="SagaIdentity"/> on <see cref="StartRun.RunId"/>, loads any
     /// existing saga, and only inserts when none exists. A first delivery pins the definition and cascades the durable
-    /// <see cref="ExecuteRun"/> plus the wall-clock <see cref="RunDeadline"/>; a <b>redelivered or duplicate</b> <see cref="StartRun"/>
-    /// for the same run loads the already-started saga (its <see cref="ScriptHash"/> is set) and returns no messages — a genuine
-    /// no-op, never a second saga, a re-kicked executor, a second deadline timer, or the duplicate-key
+    /// <see cref="ExecuteRun"/> plus the delayed wall-clock <see cref="RunDeadline"/>; a <b>redelivered or duplicate</b>
+    /// <see cref="StartRun"/> for a run whose saga is still present loads that saga (its <see cref="ScriptHash"/> is set) and
+    /// returns no messages — a genuine no-op, never a second saga, a re-kicked executor, a second deadline, or the duplicate-key
     /// <c>DocumentAlreadyExistsException</c> a straight <c>Insert</c> would throw. This closes the latent saga-starter race a
-    /// redelivered <c>StartRun</c>/<c>PromoteQueued</c> load could otherwise trip (Wolverine's at-least-once delivery).</summary>
+    /// redelivered <c>StartRun</c>/<c>PromoteQueued</c> load could otherwise trip (Wolverine's at-least-once delivery); the
+    /// outbox makes saga-insert and inbox-ack atomic, so a redelivery only occurs for a run whose original insert rolled back
+    /// (its saga is genuinely absent) and never for one that already finished.</summary>
     /// <param name="command">The resolved run definition.</param>
     /// <returns>The cascading messages on a fresh start, or none on an idempotent redelivery.</returns>
     public OutgoingMessages StartOrHandle(StartRun command)
@@ -116,55 +125,11 @@ public sealed class RunExecutorSaga : Saga
         Script = command.Script;
         Inputs = command.Inputs;
 
-        return new OutgoingMessages
-        {
-            new ExecuteRun(command.RunId),
-            new RunDeadline(command.RunId, TimeSpan.FromMilliseconds(command.DeadlineMs)),
-        };
-    }
-
-    /// <summary>Enforces the wall-clock deadline (§8.4) <b>and</b> doubles as the saga's crash-safe janitor (§14.2). The
-    /// already-scheduled deadline always fires — Wolverine never cancels a scheduled message when a run finishes early — so it
-    /// checks the run's authoritative disposition in <see cref="RunProgress"/>:
-    /// <list type="bullet">
-    /// <item>the run is already terminal (or its progress is gone): its work is done, so <see cref="Saga.MarkCompleted"/> the
-    /// saga — bounding the at-rest retention of its <c>script</c>+<c>inputs</c> to <c>deadlineMs</c> with zero new messages. This
-    /// is the backstop for a crash between the terminal commit and the finaliser's <see cref="RunFinished"/>: the durable timeout
-    /// reclaims the saga after the restart.</item>
-    /// <item>the run is still being driven: it has reached its wall-clock deadline, so ask its control to stop (a terminal
-    /// <c>run_deadline_exceeded</c> failure, §8.4). The saga is <b>not</b> completed here — its <c>script</c>+<c>inputs</c> are
-    /// still the resume source if the run is mid-recovery (the resume invariant); the executor then publishes
-    /// <see cref="RunFinished"/>, which completes the saga.</item>
-    /// </list></summary>
-    /// <param name="_">The elapsed deadline (routing only).</param>
-    /// <param name="session">The message's tenant-scoped Marten session — reads the authoritative <see cref="RunProgress"/>.</param>
-    /// <param name="controls">The in-process run-control registry.</param>
-    /// <param name="ct">Cancels the progress read.</param>
-    public async Task Handle(RunDeadline _, IDocumentSession session, IRunControlRegistry controls, CancellationToken ct)
-    {
-        var progress = await session.LoadAsync<RunProgress>(Id, ct);
-        if (progress is null || progress.Status != RunStatus.Running)
-        {
-            MarkCompleted();
-            return;
-        }
-
-        if (controls.TryGet(Id, out var control))
-        {
-            control.Stop(RunStopReason.Deadline);
-        }
-    }
-
-    /// <summary>Prompt cleanup (§14.2): the shared terminal finaliser signals the run reached a terminal state, so complete the
-    /// saga now — its <c>script</c>+<c>inputs</c> are no longer a resume source. This covers every saga-bearing terminal path,
-    /// including a run the deadline itself stopped (whose already-spent timeout can no longer act as the janitor).</summary>
-    /// <param name="_">The finished-run signal (routing only; the run is this saga).</param>
-    public void Handle(RunFinished _) => MarkCompleted();
-
-    /// <summary>The idempotent no-op for a <see cref="RunFinished"/> whose saga is already gone — the deadline janitor won the
-    /// race, or this is a redelivery. Without it Wolverine would throw <c>UnknownSagaException</c> for the missing saga.</summary>
-    /// <param name="_">The finished-run signal (routing only).</param>
-    public static void NotFound(RunFinished _)
-    {
+        // Kick the executor now and schedule the wall-clock deadline as a plain delayed message (not a saga timeout) — the
+        // deadline never needs the saga, only the run's in-process control (RunDeadlineHandler), so it can never race the
+        // finaliser's saga delete.
+        var outgoing = new OutgoingMessages { new ExecuteRun(command.RunId) };
+        outgoing.Delay(new RunDeadline(command.RunId), TimeSpan.FromMilliseconds(command.DeadlineMs));
+        return outgoing;
     }
 }

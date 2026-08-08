@@ -81,10 +81,9 @@ public sealed class SyncRunSupervisor(
     /// (and self-remove) before it is added, so no entry ever leaks.</summary>
     private readonly ConcurrentDictionary<Guid, Task> _inFlight = new();
 
-    /// <summary>Set once host shutdown begins: the post-terminal signals (the saga-completing <see cref="RunFinished"/> and the
-    /// queue-promotion nudge) are both idempotent and durably re-derivable — the saga's scheduled deadline reclaims it and the
-    /// startup recovery scan re-triggers promotion — so during shutdown they are skipped rather than published onto a stopping
-    /// bus (#26).</summary>
+    /// <summary>Set once host shutdown begins: the freed slot's queue-promotion nudge is idempotent and durably re-triggered by
+    /// the startup recovery scan, so during shutdown it is skipped rather than published onto a stopping bus (#26). Saga cleanup
+    /// is unaffected — the finaliser already deleted the saga in the terminal transaction (CD-5), before this skip.</summary>
     private volatile bool _shuttingDown;
 
     /// <summary>Adopts an upgraded run's in-flight execution and drives it to a terminal state in the background. The caller
@@ -100,7 +99,7 @@ public sealed class SyncRunSupervisor(
         {
             var outcome = await ResolveOutcomeAsync(handoff);
             await FinalizeAsync(handoff, outcome);
-            await AnnounceTerminalAsync(handoff.RunId, handoff.TenantId);
+            await PromoteAsync(handoff.TenantId);
         }
         finally
         {
@@ -157,25 +156,22 @@ public sealed class SyncRunSupervisor(
         signals.Notify(handoff.RunId); // the terminal event closes any live SSE tail
     }
 
-    // Announces the upgraded run's terminal state (§14.2/CD-16): completes its durable saga at once via RunFinished — the same
-    // prompt cleanup the native async executor does, reclaiming the saga's script+inputs rather than letting them linger until
-    // the deadline — and promotes the tenant's oldest queued run into the freed slot (a no-op when none is queued). The request
-    // that started this run is long gone, so both publish on a fresh scope's bus, mirroring the startup recovery service.
-    private async Task AnnounceTerminalAsync(Guid runId, string tenantId)
+    // The freed slot promotes the tenant's oldest queued run (a no-op when none is queued, CD-16). The upgraded run's saga was
+    // already deleted in the finaliser's terminal transaction (CD-5), so this is only about draining the queue. The request that
+    // started this run is long gone, so publish on a fresh scope's bus — mirroring the startup recovery service's pattern.
+    private async Task PromoteAsync(string tenantId)
     {
         if (_shuttingDown)
         {
-            // Host shutdown in progress (#26): skip both rather than resolve a scope + publish onto a stopping bus. The run's
-            // terminal RunProgress already committed in the finaliser, so the saga's already-scheduled RunDeadline reclaims it
-            // on the next host, and the startup recovery scan re-triggers PromoteQueued for every tenant with a non-empty queue
-            // — both are durably re-derivable, so this is a deliberate, idempotent skip, not a swallowed error.
+            // Host shutdown in progress (#26): skip the nudge rather than resolve a scope + publish onto a stopping bus. The
+            // slot was already freed in the finaliser, and the startup recovery scan re-triggers PromoteQueued for every tenant
+            // with a non-empty queue — so this is a deliberate, idempotent skip, not a swallowed error.
             return;
         }
 
         using var scope = scopeFactory.CreateScope();
-        var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
-        await bus.PublishAsync(new RunFinished(runId), new DeliveryOptions { TenantId = tenantId });
-        await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
+        await scope.ServiceProvider.GetRequiredService<IMessageBus>()
+            .PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
     }
 
     /// <summary>Hosted-service start (#26): nothing to warm up — the supervisor only adopts tails handed to it by the endpoint.</summary>

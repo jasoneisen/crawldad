@@ -227,9 +227,10 @@ public static class DurableHost
         return host;
     }
 
-    /// <summary>Polls until the run's <see cref="RunExecutorSaga"/> document is gone (CD-5): once the run is terminal the shared
-    /// finaliser's <c>RunFinished</c> — or, as the crash-safe backstop, the already-scheduled <c>RunDeadline</c> — completes the
-    /// saga, so its <c>script</c>+<c>inputs</c> stop lingering at rest (SECURITY.md "Durable state at rest").</summary>
+    /// <summary>Polls until the run's <see cref="RunExecutorSaga"/> document is gone (CD-5): the shared finaliser deletes it in
+    /// the same transaction as the run's terminal disposition, so its <c>script</c>+<c>inputs</c> stop lingering at rest
+    /// (SECURITY.md "Durable state at rest"). Returns as soon as the run reaches terminal — there is no separate cleanup step to
+    /// wait on.</summary>
     /// <param name="host">The host to poll.</param>
     /// <param name="runId">The run whose saga should be reclaimed.</param>
     /// <param name="timeout">How long to wait before giving up.</param>

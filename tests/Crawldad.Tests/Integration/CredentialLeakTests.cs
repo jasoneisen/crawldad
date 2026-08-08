@@ -250,9 +250,9 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         // The scrubbed sinks (events, projections, run-progress, SSE, timeline, screenshots, logs, response) stay clean too.
         await AssertRunLeaksNothingAsync(host, root, LeakHost.DurableSecretSentinel);
 
-        // CD-5: the RunExecutorSaga no longer LINGERS after the run finished — the shared terminal finaliser publishes
-        // RunFinished, which MarkCompleted()s the saga (the scheduled RunDeadline is the crash-safe backstop), so its
-        // inputs+script are reclaimed rather than sitting at rest indefinitely. Poll until it is gone (was: asserted lingering).
+        // CD-5: the RunExecutorSaga no longer LINGERS after the run finished — the shared terminal finaliser deletes it in the
+        // SAME transaction as the run's terminal disposition, so its inputs+script are reclaimed atomically rather than sitting
+        // at rest indefinitely. Poll until it is gone (was: asserted lingering).
         await DurableHost.WaitUntilSagaGoneAsync(host, runId, TimeSpan.FromSeconds(20));
 
         // The durable at-rest surfaces still hold the run definition BY REFERENCE — the StartRun envelope carries inputs+script,
