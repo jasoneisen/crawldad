@@ -43,7 +43,7 @@ public sealed class ApiKeyOptions : AuthenticationSchemeOptions;
 /// </summary>
 internal sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyOptions>
 {
-    private const string BearerPrefix = "Bearer ";
+    private const string _bearerPrefix = "Bearer ";
     private readonly TenantRegistry _tenants;
 
     public ApiKeyAuthenticationHandler(IOptionsMonitor<ApiKeyOptions> options, ILoggerFactory logger, UrlEncoder encoder, TenantRegistry tenants)
@@ -74,9 +74,9 @@ internal sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKey
     private bool TryReadKey([NotNullWhen(true)] out string? key)
     {
         var authorization = Request.Headers.Authorization.ToString();
-        if (authorization.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase))
+        if (authorization.StartsWith(_bearerPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            key = authorization[BearerPrefix.Length..].Trim();
+            key = authorization[_bearerPrefix.Length..].Trim();
             return key.Length > 0;
         }
 
