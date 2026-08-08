@@ -188,11 +188,18 @@ public static class DurableHost
     /// <param name="schema">The Marten/durable schema to run on.</param>
     /// <param name="fakeBackend">The backend registered under the <c>fake</c> adapter id.</param>
     /// <param name="resetData">Whether to reset Marten data after boot (false to inherit a prior host's data).</param>
-    public static async Task<IAlbaHost> BuildAsync(string schema, IBrowserBackend fakeBackend, bool resetData = true)
+    /// <param name="settings">Extra host settings to layer on (e.g. a low <c>Crawldad:Limits</c> cap), or null for none.</param>
+    public static async Task<IAlbaHost> BuildAsync(
+        string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null)
     {
         var host = (await AlbaHost.For<Program>(builder =>
         {
             builder.UseCrawldadTestDefaults(schema);
+            foreach (var (key, value) in settings ?? [])
+            {
+                builder.UseSetting(key, value);
+            }
+
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<TimeProvider>(new FakeClock());

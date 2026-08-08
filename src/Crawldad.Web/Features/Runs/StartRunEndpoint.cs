@@ -56,6 +56,7 @@ public static class StartRunEndpoint
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
         IMessageBus bus,
+        IRunAdmissionGate gate,
         IOptions<RunLimitsOptions> limitsOptions,
         TimeProvider clock,
         CancellationToken ct)
@@ -88,16 +89,18 @@ public static class StartRunEndpoint
             using var pinnedDocument = JsonDocument.Parse(pinned.Script);
             return await DispatchAsync(
                 request, pinnedDocument.RootElement, pinned.Script, pinned.ScriptHash, payloadId, revision,
-                session, registry, sinks, scrubber, secretScope, bus, limits, clock, ct);
+                session, registry, sinks, scrubber, secretScope, bus, gate, limits, clock, ct);
         }
 
         return await DispatchAsync(
             request, request.Payload, request.Payload.GetRawText(), ComputeScriptHash(request.Payload), null, null,
-            session, registry, sinks, scrubber, secretScope, bus, limits, clock, ct);
+            session, registry, sinks, scrubber, secretScope, bus, gate, limits, clock, ct);
     }
 
-    // Routes the resolved payload to the synchronous inline path (default) or the async executor-saga path.
-    private static Task<IResult> DispatchAsync(
+    // Routes the resolved payload through the single admission gate (CD-3/§Pv.3), then to the synchronous inline path
+    // (default) or the async executor-saga path. Admission runs AFTER pin resolution (so a bad pin is still a 400, not a
+    // 429) and identically for both paths — the slot is held from here until the run reaches terminal.
+    private static async Task<IResult> DispatchAsync(
         StartRunRequest request,
         JsonElement payload,
         string script,
@@ -110,17 +113,34 @@ public static class StartRunEndpoint
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
         IMessageBus bus,
+        IRunAdmissionGate gate,
         RunLimits limits,
         TimeProvider clock,
-        CancellationToken ct) =>
-        request.Async
-            ? StartBackgroundRunAsync(payload, script, scriptHash, payloadId, payloadRevision, request.Inputs, session, scrubber, bus, clock, ct)
-            : ExecuteInlineAsync(payload, scriptHash, payloadId, payloadRevision, request.Inputs, session, registry, sinks, scrubber, secretScope, limits, clock, ct);
+        CancellationToken ct)
+    {
+        // The request's Marten session is already scoped to the authenticated tenant (CD-1), so its tenant is the run's.
+        var tenantId = session.TenantId!;
+        var runId = Guid.NewGuid();
+
+        var admission = gate.TryAdmit(tenantId, runId);
+        if (!admission.Admitted)
+        {
+            // At the tenant's concurrent-run cap: reject 429 with the machine-readable code (CD-16 replaces this with a queue).
+            return Results.Json(admission.Rejection, statusCode: StatusCodes.Status429TooManyRequests);
+        }
+
+        return request.Async
+            ? await StartBackgroundRunAsync(runId, payload, script, scriptHash, payloadId, payloadRevision, request.Inputs, session, scrubber, bus, clock, ct)
+            : await ExecuteInlineAsync(runId, tenantId, payload, scriptHash, payloadId, payloadRevision, request.Inputs, session, registry, sinks, scrubber, secretScope, gate, limits, clock, ct);
+    }
 
     // The synchronous run path (P1–P4, unchanged): open the per-run secret scope, pin RunStarted, interpret, and persist the
     // scrubbed trace + terminal event — all in the request's one transaction. Byte-for-byte the prior behaviour, so every
-    // acceptance and parity golden stands.
+    // acceptance and parity golden stands. The admitted slot is held for the whole inline run and freed in the finally
+    // (CD-3) — a sync run occupies a slot only for its own duration, unlike an async run the executor releases.
     private static async Task<IResult> ExecuteInlineAsync(
+        Guid runId,
+        string tenantId,
         JsonElement payload,
         string scriptHash,
         Guid? payloadId,
@@ -131,11 +151,11 @@ public static class StartRunEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        IRunAdmissionGate gate,
         RunLimits limits,
         TimeProvider clock,
         CancellationToken ct)
     {
-        var runId = Guid.NewGuid();
         var input = JsonValues.FromJson(inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
         var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
 
@@ -143,37 +163,45 @@ public static class StartRunEndpoint
         // at connect (§12), so the sinks below scrub even free-form text that echoes the raw secret. Disposal clears it.
         using var runSecrets = secretScope.Begin();
 
-        session.Events.StartStream<Run>(
-            runId,
-            RunEventScrubber.Scrub(new RunStarted(payloadName, scriptHash, clock.GetUtcNow(), [.. input.Keys], payloadId, payloadRevision), scrubber));
-
-        // The session is already tenant-scoped by Wolverine's HTTP tenant detection, so its tenant is the run's tenant —
-        // thread it to the interpreter so a synchronous run's downloads/screenshots land in this tenant's storage (CD-1).
-        var outcome = await new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId, limits: limits).RunAsync(ct);
-
-        // The interpreter's trace events (LogEmitted/RunAttemptFailed) land between RunStarted and the terminal event,
-        // in occurrence order — each scrubbed at this single append chokepoint, so nothing credential-bearing is persisted.
-        foreach (var traceEvent in outcome.Events)
+        try
         {
-            session.Events.Append(runId, RunEventScrubber.Scrub(traceEvent, scrubber));
+            session.Events.StartStream<Run>(
+                runId,
+                RunEventScrubber.Scrub(new RunStarted(payloadName, scriptHash, clock.GetUtcNow(), [.. input.Keys], payloadId, payloadRevision), scrubber));
+
+            // The session is already tenant-scoped by Wolverine's HTTP tenant detection, so its tenant is the run's tenant —
+            // thread it to the interpreter so a synchronous run's downloads/screenshots land in this tenant's storage (CD-1).
+            var outcome = await new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId, limits: limits).RunAsync(ct);
+
+            // The interpreter's trace events (LogEmitted/RunAttemptFailed) land between RunStarted and the terminal event,
+            // in occurrence order — each scrubbed at this single append chokepoint, so nothing credential-bearing is persisted.
+            foreach (var traceEvent in outcome.Events)
+            {
+                session.Events.Append(runId, RunEventScrubber.Scrub(traceEvent, scrubber));
+            }
+
+            // Scrub the failure once, then use the same value for the persisted event and the §10 response.
+            var failure = outcome.Failure is null ? null : RunEventScrubber.ScrubFailure(outcome.Failure, scrubber);
+            object finished = outcome.Status == RunStatus.Succeeded
+                ? new RunSucceeded(outcome.Stats, clock.GetUtcNow())
+                : new RunFailed(failure!, outcome.Stats, clock.GetUtcNow());
+            session.Events.Append(runId, finished);
+
+            await session.SaveChangesAsync(ct);
+
+            return Results.Ok(new RunResponse(runId, outcome.Status, scrubber.ScrubJson(outcome.Result), failure, outcome.Stats));
         }
-
-        // Scrub the failure once, then use the same value for the persisted event and the §10 response.
-        var failure = outcome.Failure is null ? null : RunEventScrubber.ScrubFailure(outcome.Failure, scrubber);
-        object finished = outcome.Status == RunStatus.Succeeded
-            ? new RunSucceeded(outcome.Stats, clock.GetUtcNow())
-            : new RunFailed(failure!, outcome.Stats, clock.GetUtcNow());
-        session.Events.Append(runId, finished);
-
-        await session.SaveChangesAsync(ct);
-
-        return Results.Ok(new RunResponse(runId, outcome.Status, scrubber.ScrubJson(outcome.Result), failure, outcome.Stats));
+        finally
+        {
+            gate.Release(tenantId, runId); // free the slot the moment the inline run finishes (success or failure)
+        }
     }
 
     // The async run path (§11): pin RunStarted + seed the running RunProgress read model + kick the durable executor saga,
     // then return 202 immediately. No interpreter runs in the request (no secret scope here — the executor opens its own,
     // §12), so this returns before the run does any work. RunStarted is scrubbed exactly as the sync path scrubs it.
     private static async Task<IResult> StartBackgroundRunAsync(
+        Guid runId,
         JsonElement payload,
         string script,
         string scriptHash,
@@ -186,7 +214,6 @@ public static class StartRunEndpoint
         TimeProvider clock,
         CancellationToken ct)
     {
-        var runId = Guid.NewGuid();
         var input = JsonValues.FromJson(inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
         var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
         var inputsJson = inputs.ValueKind == JsonValueKind.Undefined ? "{}" : inputs.GetRawText();

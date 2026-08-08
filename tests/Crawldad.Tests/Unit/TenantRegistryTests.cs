@@ -13,8 +13,8 @@ public class TenantRegistryTests
     private static TenantRegistry Registry(params TenantDescriptor[] tenants) =>
         new(Options.Create(new TenantOptions { Tenants = tenants }));
 
-    private static TenantDescriptor Tenant(string id = "t1", string key = "key-0123456789abcdef", string actor = "actor@x") =>
-        new() { Id = id, ApiKey = key, Actor = actor };
+    private static TenantDescriptor Tenant(string id = "t1", string key = "key-0123456789abcdef", string actor = "actor@x", int? maxConcurrentRuns = null) =>
+        new() { Id = id, ApiKey = key, Actor = actor, MaxConcurrentRuns = maxConcurrentRuns };
 
     [Fact]
     public void Authenticates_a_configured_key_to_its_tenant_and_actor()
@@ -68,4 +68,8 @@ public class TenantRegistryTests
         Should.Throw<InvalidOperationException>(() => Registry(
             Tenant(id: "alpha", key: "shared-key-0123456789"),
             Tenant(id: "beta", key: "shared-key-0123456789")));
+
+    [Fact]
+    public void Rejects_a_concurrent_run_override_below_one() => // CD-3: a 0/negative slot cap is a boot-time misconfiguration
+        Should.Throw<InvalidOperationException>(() => Registry(Tenant(maxConcurrentRuns: 0)));
 }

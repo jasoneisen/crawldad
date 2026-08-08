@@ -62,8 +62,10 @@ public static class RunsModule
 
         // The server-side resource limits (CD-3/§12): the config knobs bound from Crawldad:Limits. The four mid-run caps
         // flow into the interpreter as RunLimits (derived per-consumer from these options); the concurrent-runs admission
-        // gate (limit 5) reads MaxConcurrentRunsPerTenant. A payload can never raise them.
+        // gate (limit 5) reads MaxConcurrentRunsPerTenant. A payload can never raise them. The gate is a singleton so its
+        // per-tenant slot counts span every request and the background executor — the one seam CD-16 will replace to queue.
         services.AddOptions<RunLimitsOptions>().BindConfiguration(RunLimitsOptions.Section);
+        services.AddSingleton<IRunAdmissionGate, RunAdmissionGate>();
 
         // The durable-execution surface (§11/§14.2): the background executor that drives the saga's runs (owning its own
         // Marten sessions) and the in-process stop-signal registry the cancel endpoint + saga deadline raise. The saga and
