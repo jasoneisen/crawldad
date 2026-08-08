@@ -1,9 +1,29 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Crawldad.Web.Infrastructure.Security;
 using Microsoft.Extensions.Logging;
 
 namespace Crawldad.Tests.Support;
+
+/// <summary>An <see cref="ISecretStoreRegistry"/> with a single keyed vault adapter — the CD-6 analogue of Runner's
+/// <c>SingleBackendRegistry</c>, so an interpreter unit test can drive a <c>fill.secret</c> against one in-memory vault.</summary>
+/// <param name="vault">The vault kind (e.g. <see cref="SecretVaults.Config"/>).</param>
+/// <param name="store">The vault adapter registered under that kind.</param>
+internal sealed class SingleSecretVaultRegistry(string vault, ISecretStore store) : ISecretStoreRegistry
+{
+    public bool TryResolve(string requested, [NotNullWhen(true)] out ISecretStore? resolved)
+    {
+        if (string.Equals(requested, vault, StringComparison.Ordinal))
+        {
+            resolved = store;
+            return true;
+        }
+
+        resolved = null;
+        return false;
+    }
+}
 
 /// <summary>
 /// An <see cref="IRunSecretScope"/> whose <see cref="Current"/> is a fixed set, so a unit test can drive the
@@ -15,9 +35,17 @@ internal sealed class StubSecretScope(params string[] secrets) : IRunSecretScope
 {
     public IReadOnlyCollection<string> Current { get; } = secrets;
 
+    /// <summary>The form-fill secrets (CD-6) the scrubber sees at the lower form floor; defaults to none.</summary>
+    public IReadOnlyCollection<string> FormSecrets { get; init; } = [];
+
     public IDisposable Begin() => new NoopScope();
 
     public void Register(string secret)
+    {
+        // Inert: the fixed set is supplied at construction.
+    }
+
+    public void RegisterFormSecret(string secret)
     {
         // Inert: the fixed set is supplied at construction.
     }
@@ -32,11 +60,38 @@ internal sealed class StubSecretScope(params string[] secrets) : IRunSecretScope
 }
 
 /// <summary>An <see cref="ISecretStore"/> mapping references to secrets — the leak suite maps a distinct sentinel per
-/// credential mode (a browserless token, a browserbase apiKey).</summary>
+/// credential mode (a browserless token, a browserbase apiKey). Both resolution surfaces read the same map (the form-fill
+/// path is tenant-scoped in production, but a test map keys by reference); the leak suite's form-fill variant exercises the
+/// <b>real</b> <see cref="ConfigurationSecretStore"/> tenant scoping via configuration instead.</summary>
 /// <param name="secrets">Reference → secret map.</param>
 internal sealed class MapSecretStore(IReadOnlyDictionary<string, string> secrets) : ISecretStore
 {
-    public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) => Task.FromResult(secrets[credentialRef]);
+    public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) =>
+        secrets.TryGetValue(credentialRef, out var secret) ? Task.FromResult(secret) : throw new SecretNotFoundException(credentialRef);
+
+    public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct) =>
+        secrets.TryGetValue(reference, out var secret) ? Task.FromResult(secret) : throw new SecretNotFoundException(reference);
+}
+
+/// <summary>An <see cref="ISecretStore"/> returning one fixed secret and <b>counting</b> tenant-scoped resolutions — so a
+/// test can prove a <c>fill.secret</c> re-resolves from the vault on a checkpoint resume (rather than restoring a persisted
+/// value).</summary>
+/// <param name="secret">The value every resolution returns.</param>
+internal sealed class CountingVault(string secret) : ISecretStore
+{
+    /// <summary>How many times the form-fill (tenant-scoped) resolution has been called.</summary>
+    public int Calls { get; private set; }
+
+    /// <summary>Resets the call count (between the fresh run and the resumed run).</summary>
+    public void Reset() => Calls = 0;
+
+    public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) => Task.FromResult(secret);
+
+    public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct)
+    {
+        Calls++;
+        return Task.FromResult(secret);
+    }
 }
 
 /// <summary>

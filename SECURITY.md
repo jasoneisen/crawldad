@@ -75,7 +75,13 @@ no-op on ordinary text:
 
 Redaction marker: `[redacted]`. The word "token" without `=value` is never touched (so the acceptance
 goldens are byte-identical), and a value below a short length floor is not exact-scrubbed (so a
-pathologically short "secret" can't mangle common substrings — the param rule still redacts it).
+pathologically short "secret" can't mangle common substrings — the param rule still redacts it). A
+**form-fill secret** (a CD-6 `fill.secret`) is exact-scrubbed at a **lower floor** than a connect
+credential: a connect credential is machine-generated and long (floor 8), but a form credential is
+user-chosen and may be short — a PIN, a short password — and its whole purpose is protection, so it is
+redacted down to length 4 (a 1–3 char form "secret" stays inert, the documented over-redaction guard).
+A short PIN read back from the page after a fill and echoed into a `log`/`result` is therefore still
+redacted — the short-secret case is swept in `CredentialLeakTests`.
 
 A third input feeds the exact-match rule: the configured **tenant API keys** (CD-1) are registered as **always-on**
 secrets (process-wide, not per-run), so a leaked key is redacted anywhere it might surface. See "Authentication & tenant
@@ -88,8 +94,9 @@ isolation" below.
 (`RunExecutor.DriveAsync`, WP2) for an async run, where it spans the whole execution including retries
 and a checkpoint resume (a fresh `ConnectAsync` re-registers the resolved credential naturally, so a
 resumed run rebuilds its scrub set with no persisted secret). The connecting adapter **registers the
-resolved secret** (a token, an apiKey, and the apiKey-embedding `connectUrl`) into it; every sink's
-scrubber consults it. The current scope is ambient (`AsyncLocal`), so it flows down the run's async call
+resolved secret** (a token, an apiKey, and the apiKey-embedding `connectUrl`) into it; a CD-6
+`fill.secret` **registers its vault-resolved secret** into the same scope at action time (re-resolved,
+never persisted, on a resumed run's re-executed fill); every sink's scrubber consults it. The current scope is ambient (`AsyncLocal`), so it flows down the run's async call
 chain, concurrent runs never see one another's secrets, and **no secret outlives its run**: disposing the
 scope at run end clears the registered secrets, and the scrubber itself holds only a reference to the
 seam — never a secret. A short length floor guards the exact-match rule.
@@ -99,7 +106,7 @@ seam — never a secret. A short length floor guards the exact-match rule.
 | Sink | Chokepoint | Note |
 |---|---|---|
 | **Connect exceptions** | the adapters (`Real/Browserless…`, `Real/Browserbase…`) | any provider fault becomes a hand-written, secret-free `BrowserConnectException` (WP1); the raw `wss://…?token=` URL is never wrapped in. |
-| **Marten events** | `Features/Runs/RunEventScrubber`, at both append paths: the `POST /runs` append (`StartRunEndpoint`, sync) and the executor's own-session append (`RunExecutor.ExecutorObserver`, async, WP2) | Every event is scrubbed before append: `RunStarted` (payload name + input key names), `LogEmitted`, `RunFailed`, and the WP3 step trace (`Navigated`/`Clicked`/`Extracted`/`Downloaded`/`StepFailed`/`RunSessionOpened`). Input *values* are never persisted; `Extracted` carries a shape ref, `Downloaded` a blob ref, `StepFailed` a screenshot ref — metadata only (§12). |
+| **Marten events** | `Features/Runs/RunEventScrubber`, at both append paths: the `POST /runs` append (`StartRunEndpoint`, sync) and the executor's own-session append (`RunExecutor.ExecutorObserver`, async, WP2) | Every event is scrubbed before append: `RunStarted` (payload name + input key names), `LogEmitted`, `RunFailed`, and the WP3 step trace (`Navigated`/`Clicked`/`Filled`/`Extracted`/`Downloaded`/`StepFailed`/`RunSessionOpened`) — a CD-6 `Filled` carries `secret:<refName>` (the reference name), never the typed secret. Input *values* are never persisted; `Extracted` carries a shape ref, `Downloaded` a blob ref, `StepFailed` a screenshot ref — metadata only (§12). |
 | **Payload events** | `Features/Payloads/PayloadScript.Scrub` at save (`DraftPayloadEndpoint`/`RevisePayloadEndpoint`) | a payload's script *is* the stored artifact (§14.1), so it is scrubbed **before** the `PayloadDrafted`/`PayloadRevised` event is built and hashed — the immutable event store can never receive a credential. A well-formed payload (credentials are by reference) scrubs to a no-op, so the stored bytes stay executable and golden-identical. |
 | **Projections** | — (by construction) | the `Run` snapshot, the `RunTimeline` read model (§13), and the `PayloadSummary` list derive purely from already-scrubbed events, so they inherit the guarantee; they add no un-scrubbed field (`PayloadSummary` carries no script body at all). |
 | **Logs** | `Infrastructure/Security/ScrubbingLoggerFactory` (decorates `ILoggerFactory` in `HostConfiguration`) | every category's logger — application, Wolverine, Marten, ASP.NET — scrubs its rendered message before any sink writes it. Central, not per-call-site. |
@@ -263,8 +270,8 @@ PII crypto-shredding is tracked in `CRAWLDAD_DESIGN.md` §12 and is not part of 
 boundary. The §12 resource limits (CD-3) and per-tenant slot queue (CD-16) shipped 2026-08-08: five
 server-side limits a payload cannot raise (max steps, max downloaded bytes, max events, expression
 fuel, per-tenant concurrent runs), with at-cap admission queueing rather than rejection. Real
-storage adapters (CD-2) and the BYO vault (CD-6) build on the CD-1 tenant seam but are their own
-tickets.
+storage adapters (CD-2) shipped; the BYO vault + `secretRef` form-fill credentials (CD-6) shipped
+2026-08-08 — see "BYO key vault + `secretRef` form-fill credentials" below.
 
 **Synchronous-run ingress cap (CD-15, shipped 2026-08-08).** A default `POST /runs` is capped at 120 s
 of wall clock (`Crawldad:Limits:SyncUpgradeThresholdMs`) and, on crossing it, is **auto-upgraded** to
@@ -281,27 +288,69 @@ run's (the CD-15 leak test asserts no sink leaks a registered secret across the 
 handoff). Deployment note: set the ingress request timeout above the window + headroom yet well under
 240 s (~180 s with the 120 s default); see `docs/PRODUCT.md` §2.2.
 
-## Designed, not built: BYO key vault + `secretRef` form-fill credentials (post-P5)
+## BYO key vault + `secretRef` form-fill credentials (CD-6, shipped 2026-08-08)
 
-The first login-gated target needs a credential typed into a **form** (`fill`), not a backend
-binding — and today the only by-reference machinery is `credentialRef` → `ISecretStore` at connect.
-Passing a password as a plain run input is not acceptable: checkpoint resume (§11) keeps inputs
-durably at rest — in the `StartRun` envelope and the `RunExecutorSaga` document ("Durable state at
-rest" above) — invisible to the scrubber (which redacts registered run secrets and credential-shaped
-params, not arbitrary values). The designed answer, agreed 2026-08-07:
+The first login-gated target needs a credential typed into a **form** (`fill`), not a backend binding.
+Passing a password as a plain run input is not acceptable: checkpoint resume (§11) keeps inputs durably
+at rest — in the `StartRun` envelope and the `RunExecutorSaga` document ("Durable state at rest" above)
+— invisible to the scrubber (which redacts registered run secrets and credential-shaped params, not
+arbitrary values). CD-6 ships the four commitments below; each has a test, and a leak sweep proves the
+resolved secret is absent from every sink and every at-rest surface while the reference *is* present.
 
-- **BYO vault.** `ISecretStore` becomes a keyed-adapter registry (the same pattern as backends and
-  storage targets): `config` (today's `Secrets:{ref}` backing), then `azure-keyvault` /
-  `aws-secretsmanager` / `hashicorp-vault` / a customer HTTP endpoint. The customer's vault is the
-  sole custodian; a vault binding is declared like a `storageTarget` (`{kind, name, options}`).
-- **`secretRef` input type.** The input's value is the *reference string only*. Durable messages,
-  events, projections, and payloads carry the ref, never the secret — a Crawldad operator compromise
-  leaks references, not credentials.
-- **Secrets stay out of the expression value space.** A dedicated secret-valued action field (e.g.
-  `fill: { sel, secret: "input.loginPassword" }`), never `${…}` interpolation — otherwise a secret
-  could be `push`ed, `log`ged, or shaped into a `result`, and no after-the-fact scrubber should be
-  asked to catch that.
-- **Resolve at action time; register in the run scope.** Resolution happens in interpreter memory at
-  the `fill`, registering the value into `IRunSecretScope` exactly as connecting adapters do — every
-  sink scrubs it for free, it never outlives the run, and checkpoint resume re-resolves it naturally
-  (the same path backend credentials take at `ConnectAsync`).
+- **BYO vault (keyed-adapter registry).** `ISecretStore` is now selected by kind through
+  `ISecretStoreRegistry` (`Infrastructure/Security/ISecretStore.cs`) — the same keyed-service pattern as
+  `IBrowserBackendRegistry` / `IDownloadSinkRegistry`. Only `config` (secrets from `IConfiguration`)
+  ships; a real `azure-keyvault` / `aws-secretsmanager` / `hashicorp-vault` / customer-HTTP adapter is
+  one `AddKeyedSingleton` line, no change to the interpreter. The config adapter carries **two key
+  layouts**, one per resolution surface:
+  - backend **connect** (`ResolveAsync`): `Secrets:{credentialRef}` — process-global (an operator's account credential);
+  - form-fill **secretRef** (`ResolveForTenantAsync`): **`Secrets:{tenant}:{reference}` — namespaced per tenant**, and
+    the tenant is the authenticated principal's (never payload data), so a tenant can only ever resolve its own
+    references (a cross-tenant reference simply misses). *Tests:* `SecretStoreTests` (tenant-scoped resolve, cross-tenant
+    miss, connect/form-fill non-collision), `BrowserBackendRegistrationTests.Registers_the_config_secret_vault_behind_the_keyed_registry`.
+- **`secretRef` input type.** A new `inputs` type whose value is the **reference string only**. It is
+  kept **out of the run's eval scope entirely** (the interpreter excludes it), so no expression can
+  surface even the reference — the secret itself is never placed in any scope. Durable messages, events,
+  projections, and payloads carry the ref, never the secret. *Tests:* `SecretRefValidationTests`
+  (schema accepts the type; consumed only by `fill.secret`), `RunSecretFillTests.A_secretRef_input_is_absent_from_the_expression_scope`.
+- **Secrets stay out of the expression value space.** A dedicated secret-valued action field —
+  `fill: { sel, secret: "input.loginPassword" }` — a **restricted reference** (`input.<name>` naming a
+  `secretRef` input), never a `${…}` Expr. The save-time walker enforces the boundary structurally: a
+  `secretRef` named anywhere in an expression/template is `secret_ref_in_expression`, and a `fill.secret`
+  that is not a bare `input.<secretRef>` reference is `fill_secret_not_secret_ref` — so a secret can
+  never be `push`ed, `log`ged, or shaped into a `result`. The evaluator is *structurally* unable to touch
+  a resolved secret: it is produced only inside `FillAsync` and handed straight to the field + the secret
+  scope, never bound into a var. *Tests:* `SecretRefValidationTests` (both directions + the `fill` value-XOR-secret
+  schema), `RunSecretFillTests.A_fill_secret_referencing_a_non_secretRef_input_is_terminal_at_run_time` (the inline-run
+  enforcement — an inline `POST /runs` skips the save-time walk, so the interpreter re-checks).
+- **Resolve at action time; register in the run scope.** Resolution happens in interpreter memory at the
+  `fill` (via the vault registry, tenant-scoped), registering the value into `IRunSecretScope` exactly as
+  connecting adapters do — every sink scrubs it for free, it **never outlives the run**, and a
+  checkpoint-resumed run **re-resolves it naturally** (the fill re-executes; the same path backend
+  credentials take at `ConnectAsync`), so the resolved value is never persisted in a checkpoint, the
+  saga, an event, or an envelope. The `fill` trace event (§13 `Filled`) carries `secret:<refName>` — the
+  reference name, never the value. **Fail-fast semantics:** an unknown reference **at run start** is an
+  input concern (a missing required `secretRef` input surfaces as `secret_ref_missing` at the fill); an
+  unknown reference **at action time** (the vault holds no secret) is a terminal `secret_unresolved` at
+  the fill, naming only the safe reference. *Tests:* the leak sweep below;
+  `RunSecretFillTests` (resolve→register→type into the field, `Filled` carries the ref name not the
+  secret, both fail-fast codes, and — with a call-counting vault + a checkpoint — a fill.secret in a
+  **resumed** segment **re-resolves from the vault** while the resolved value is absent from the
+  checkpoint state and the `ResumeState`); `CredentialLeakTests.Fill_secret_types_the_resolved_secret_into_a_real_form_field`
+  (RealChromium parity — fake ≡ real).
+
+**The leak sweep (the phase gate).** `CredentialLeakTests.A_fill_secret_run_leaks_the_typed_secret_into_no_sink`
+and `…An_async_fill_secret_run_keeps_the_secret_out_of_events_projections_sse_saga_and_envelopes` drive a
+`fill.secret` run (sync inline and async through the executor saga) whose vault secret is a distinctive
+sentinel resolved **only** through the vault (never echoed as a plain input). The payload types it into a
+form field, reads it back, and adversarially echoes it into a `log` and the shaped `result`; the sweep
+then asserts the sentinel appears in **no** event, projection/document row, raw table byte, log line,
+response body, SSE frame, `RunTimeline` row, or screenshot — and, for the async run (which places the
+read-back secret into a **checkpoint** cursor + var snapshot, scrubbed into the durable `RunProgress`
+checkpoint), in **no** `RunExecutorSaga` document or Wolverine envelope body — while the **reference**
+(`login-password`) *is* present at rest (it travels as the input value). `…A_short_fill_secret_below_the_connect_floor_still_leaks_into_no_sink`
+re-runs the sweep with a 6-char PIN-shaped secret (below the connect floor, so it would have leaked under
+the old floor), proving the lower form floor redacts it. Proving the by-reference boundary holds for
+form-fill credentials — of any length — at the sinks and at rest, not just for connect credentials.
+A boot-time guard rejects a `:` in a tenant id (`TenantRegistry`), closing the theoretical
+`Secrets:{tenant}:{ref}` prefix ambiguity on operator misconfiguration.

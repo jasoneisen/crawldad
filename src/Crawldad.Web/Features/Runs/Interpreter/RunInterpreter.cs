@@ -4,6 +4,7 @@ using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
+using Crawldad.Web.Infrastructure.Security;
 using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Web.Features.Runs.Interpreter;
@@ -42,8 +43,12 @@ internal sealed class RunInterpreter
 
     private readonly JsonElement _payload;
     private readonly IReadOnlyDictionary<string, object?> _input;
+    private readonly IReadOnlyDictionary<string, object?> _scopeInput;
+    private readonly IReadOnlySet<string> _secretRefNames;
     private readonly IBrowserBackendRegistry _registry;
     private readonly IDownloadSinkRegistry _sinks;
+    private readonly ISecretStoreRegistry? _secretStores;
+    private readonly IRunSecretScope? _secretScope;
     private readonly TimeProvider _clock;
     private readonly string _tenant;
     private readonly IRunObserver? _observer;
@@ -86,6 +91,12 @@ internal sealed class RunInterpreter
     /// <param name="limits">The server-side per-run resource caps (CD-3/§12): max steps, total downloaded bytes, event count,
     /// and the per-evaluation expression budget. Null uses <see cref="RunLimits.Default"/> (the interpreter unit harness);
     /// the sync endpoint and the async executor both pass the resolved configured caps.</param>
+    /// <param name="secretStores">The CD-6 secret-vault registry a <c>fill.secret</c> resolves its <c>secretRef</c> against at
+    /// action time; both real run paths supply it. Null (the unit harness) makes a <c>fill.secret</c> a terminal
+    /// <c>secret_store_unavailable</c> — a plain-<c>value</c> fill never touches it.</param>
+    /// <param name="secretScope">The per-run secret registry a resolved <c>fill.secret</c> value is registered into for
+    /// exact-match scrubbing (§12), exactly as the connecting adapters register their credential. Opened by the run's entry
+    /// point; the interpreter only registers into the ambient scope.</param>
     public RunInterpreter(
         JsonElement payload,
         IReadOnlyDictionary<string, object?> input,
@@ -96,12 +107,16 @@ internal sealed class RunInterpreter
         IRunObserver? observer = null,
         ResumeState? resume = null,
         IScreenshotStore? screenshots = null,
-        RunLimits? limits = null)
+        RunLimits? limits = null,
+        ISecretStoreRegistry? secretStores = null,
+        IRunSecretScope? secretScope = null)
     {
         _payload = payload;
         _input = input;
         _registry = registry;
         _sinks = sinks;
+        _secretStores = secretStores;
+        _secretScope = secretScope;
         _clock = clock;
         _tenant = tenant;
         _observer = observer;
@@ -109,8 +124,37 @@ internal sealed class RunInterpreter
         _screenshots = screenshots;
         _limits = limits ?? RunLimits.Default;
         _checkpointSeq = resume?.Sequence ?? 0; // keep checkpoint sequence monotonic across a resume
-        _scope = new RunScope(input, _limits.ExpressionStepBudget); // input-only scope for backend resolution; execution rebuilds it per attempt
+
+        // CD-6: a secretRef input's value is a reference, consumed only by fill.secret. Keep secretRef inputs OUT of the eval
+        // scope so no expression can read even the reference — the secret itself is never placed in any scope at all. The
+        // declared secretRef names come from the payload's `inputs`, so this holds for inline runs too (no save-time walk).
+        _secretRefNames = SecretRefInputs.Names(payload);
+        _scopeInput = ScopeVisibleInput(input, _secretRefNames);
+
+        _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget); // input-only scope for backend resolution; execution rebuilds it per attempt
         _dispatch = BuildDispatch();
+    }
+
+    // The scope-visible run input: the supplied input minus every secretRef (CD-6), so `input` in an expression can never
+    // surface a secretRef's value OR reference. Returns the same map when no secretRef was supplied (the common case).
+    private static IReadOnlyDictionary<string, object?> ScopeVisibleInput(
+        IReadOnlyDictionary<string, object?> input, IReadOnlySet<string> secretRefNames)
+    {
+        if (secretRefNames.Count == 0 || !secretRefNames.Any(input.ContainsKey))
+        {
+            return input;
+        }
+
+        var visible = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (key, value) in input)
+        {
+            if (!secretRefNames.Contains(key))
+            {
+                visible[key] = value;
+            }
+        }
+
+        return visible;
     }
 
     /// <summary>Runs the payload to a success or a typed failure (never throws for a modelled failure).</summary>
@@ -179,7 +223,7 @@ internal sealed class RunInterpreter
         {
             try
             {
-                _scope = new RunScope(_input, _limits.ExpressionStepBudget); // FRESH scope per attempt — re-evaluate vars, same session
+                _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget); // FRESH scope per attempt — re-evaluate vars, same session (secretRefs excluded, CD-6)
                 _scope.Bind(_page);
                 if (_resume is null)
                 {
@@ -506,8 +550,64 @@ internal sealed class RunInterpreter
     private async ValueTask FillAsync(JsonElement body, CancellationToken ct)
     {
         var handle = await ResolveSelectorAsync(body, ct);
+
+        // CD-6: a fill.secret types a vault-resolved secret, resolved HERE at action time and never routed through the
+        // expression value space (a plain-value fill takes the ordinary Expr path). The secret is registered into the run's
+        // secret scope (so every sink scrubs it) and typed straight into the field — it is never bound into any scope var.
+        if (body.TryGetProperty("secret", out var secretRef))
+        {
+            var (refName, secret) = await ResolveFillSecretAsync(secretRef.GetString()!, ct);
+            await handle.FillAsync(secret, ct);
+            await StepAsync(new Filled($"secret:{refName}", _clock.GetUtcNow()), ct); // §13/CD-6: the ref NAME, never the secret
+            return;
+        }
+
         var value = ExpressionValues.ToStringValue(await ExprAsync(body.GetProperty("value"), ct));
         await handle.FillAsync(value, ct);
+    }
+
+    // Resolves a fill.secret's `input.<name>` reference to its live secret (CD-6): validate the restricted reference shape,
+    // read the (reference-only) secretRef input value, resolve it against the tenant-scoped vault, and register the resolved
+    // value into the run's secret scope so every sink redacts it — exactly as a connecting adapter registers its credential.
+    // Re-runs each time the fill executes, so a checkpoint-resumed run re-resolves naturally and no secret is ever persisted.
+    private async ValueTask<(string RefName, string Secret)> ResolveFillSecretAsync(string reference, CancellationToken ct)
+    {
+        if (!CrawldadExpression.Parse(reference).TryGetInputMemberReference(out var refName) || !_secretRefNames.Contains(refName))
+        {
+            throw new InterpreterException(
+                InterpreterErrorCodes.FillSecretNotSecretRef, $"fill.secret must reference a declared secretRef input via 'input.<name>' (got '{reference}')");
+        }
+
+        if (_input.GetValueOrDefault(refName) is not string vaultReference || vaultReference.Length == 0)
+        {
+            throw new InterpreterException(
+                InterpreterErrorCodes.SecretRefMissing, $"secretRef input '{refName}' was not supplied (no reference to resolve)");
+        }
+
+        if (_secretStores is null || _secretScope is null)
+        {
+            // Defensive: both real run paths wire these; the unit harness that omits them never runs a fill.secret payload.
+            throw new InterpreterException(InterpreterErrorCodes.UnknownSecretVault, "no secret vault is configured for fill.secret resolution");
+        }
+
+        if (!_secretStores.TryResolve(SecretVaults.Config, out var vault))
+        {
+            throw new InterpreterException(InterpreterErrorCodes.UnknownSecretVault, $"no secret vault is registered for kind '{SecretVaults.Config}'");
+        }
+
+        string secret;
+        try
+        {
+            secret = await vault.ResolveForTenantAsync(vaultReference, _tenant, ct);
+        }
+        catch (SecretNotFoundException ex)
+        {
+            // Fail-fast at the fill (§8.3 terminal): name only the safe reference, never the secret or the tenant-qualified key.
+            throw new InterpreterException(InterpreterErrorCodes.SecretUnresolved, $"secretRef input '{refName}' could not be resolved: {ex.Message}");
+        }
+
+        _secretScope.RegisterFormSecret(secret); // exact-match scrub (lower form floor) for the run's lifetime, including this fill's own trace event
+        return (refName, secret);
     }
 
     private async ValueTask ClearAsync(JsonElement body, CancellationToken ct)

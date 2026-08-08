@@ -103,6 +103,29 @@ public sealed class CrawldadTemplate
         return into;
     }
 
+    /// <summary>
+    /// The top-level <c>input</c> keys this template reads through its <c>${…}</c> interpolations via a direct
+    /// <c>input.&lt;key&gt;</c> / <c>input["key"]</c> access (CD-6): backs the semantic walker's rejection of a
+    /// <c>secretRef</c> input anywhere in the expression value space. A pure static walk.
+    /// </summary>
+    /// <returns>The distinct referenced <c>input</c> key names.</returns>
+    public IReadOnlySet<string> InputMemberReferences()
+    {
+        var into = new HashSet<string>(StringComparer.Ordinal);
+        if (_segments is not null)
+        {
+            foreach (var segment in _segments)
+            {
+                if (segment.Expression is not null)
+                {
+                    into.UnionWith(segment.Expression.InputMemberReferences());
+                }
+            }
+        }
+
+        return into;
+    }
+
     private async ValueTask<string> RenderSegmentsAsync(IEvalScope scope, CancellationToken ct)
     {
         var sb = new StringBuilder();

@@ -63,6 +63,7 @@ public static class StartRunEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        ISecretStoreRegistry secretStores,
         IMessageBus bus,
         IRunAdmissionGate gate,
         RunQueue queue,
@@ -104,12 +105,12 @@ public static class StartRunEndpoint
             using var pinnedDocument = JsonDocument.Parse(pinned.Script);
             return await DispatchAsync(
                 request, pinnedDocument.RootElement, pinned.Script, pinned.ScriptHash, payloadId, revision,
-                session, registry, sinks, scrubber, secretScope, bus, gate, queue, controls, supervisor, limits, syncThresholdMs, clock, ct);
+                session, registry, sinks, scrubber, secretScope, secretStores, bus, gate, queue, controls, supervisor, limits, syncThresholdMs, clock, ct);
         }
 
         return await DispatchAsync(
             request, request.Payload, request.Payload.GetRawText(), ComputeScriptHash(request.Payload), null, null,
-            session, registry, sinks, scrubber, secretScope, bus, gate, queue, controls, supervisor, limits, syncThresholdMs, clock, ct);
+            session, registry, sinks, scrubber, secretScope, secretStores, bus, gate, queue, controls, supervisor, limits, syncThresholdMs, clock, ct);
     }
 
     // Routes the resolved payload through the single admission decision (CD-3/CD-16, §Pv.3): admit a slot and run now
@@ -129,6 +130,7 @@ public static class StartRunEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        ISecretStoreRegistry secretStores,
         IMessageBus bus,
         IRunAdmissionGate gate,
         RunQueue queue,
@@ -172,7 +174,7 @@ public static class StartRunEndpoint
 
         return await RunAdmittedSyncAsync(
             runId, tenantId, payload, script, scriptHash, payloadId, payloadRevision, request.Inputs,
-            session, registry, sinks, scrubber, secretScope, bus, gate, controls, supervisor, limits, syncThresholdMs, clock, ct);
+            session, registry, sinks, scrubber, secretScope, secretStores, bus, gate, controls, supervisor, limits, syncThresholdMs, clock, ct);
     }
 
     // The admitted synchronous path (CD-15): the interpreter runs inline and is raced against the sync-upgrade window. A run
@@ -194,6 +196,7 @@ public static class StartRunEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        ISecretStoreRegistry secretStores,
         IMessageBus bus,
         IRunAdmissionGate gate,
         IRunControlRegistry controls,
@@ -209,7 +212,7 @@ public static class StartRunEndpoint
         {
             var capResult = await ExecuteWithSyncCapAsync(
                 runId, payload, script, scriptHash, payloadId, payloadRevision, inputs,
-                session, registry, sinks, scrubber, secretScope, bus, controls, supervisor, limits, syncThresholdMs, clock, ct);
+                session, registry, sinks, scrubber, secretScope, secretStores, bus, controls, supervisor, limits, syncThresholdMs, clock, ct);
             upgraded = capResult.Upgraded;
             response = capResult.Response;
         }
@@ -296,6 +299,7 @@ public static class StartRunEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        ISecretStoreRegistry secretStores,
         IMessageBus bus,
         IRunControlRegistry controls,
         SyncRunSupervisor supervisor,
@@ -329,7 +333,7 @@ public static class StartRunEndpoint
 
             // The lean synchronous interpreter — no observer, no screenshot store, threaded the run's tenant — the exact P1–P4
             // construction, so a run finishing within the window is byte-identical. Started (not awaited) so it can be raced.
-            var execution = new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId, limits: limits).RunAsync(runCts.Token);
+            var execution = new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId, limits: limits, secretStores: secretStores, secretScope: secretScope).RunAsync(runCts.Token);
 
             using var capCts = new CancellationTokenSource();
             var finishedWithinWindow = await Task.WhenAny(execution, Task.Delay(syncThresholdMs, capCts.Token)) == execution;

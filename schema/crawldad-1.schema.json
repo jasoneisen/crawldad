@@ -17,7 +17,7 @@
         "required": ["type"],
         "additionalProperties": false,
         "properties": {
-          "type": { "enum": ["string", "number", "boolean", "date", "array", "object", "backend", "storageTarget"] },
+          "type": { "enum": ["string", "number", "boolean", "date", "array", "object", "backend", "storageTarget", "secretRef"] },
           "required": { "type": "boolean" },
           "default": true
         }
@@ -156,8 +156,10 @@
           "properties": { "selector": { "$ref": "#/$defs/sel" }, "in": { "type": "string" }, "timeoutMs": { "type": "integer" } } } } },
 
         { "required": ["fill"], "additionalProperties": false, "properties": { "fill": {
-          "type": "object", "required": ["selector", "value"], "additionalProperties": false,
-          "properties": { "selector": { "$ref": "#/$defs/sel" }, "value": { "type": "string" }, "in": { "type": "string" } } } } },
+          "type": "object", "required": ["selector"], "additionalProperties": false,
+          "description": "Type into a field (§5.1). Exactly one value source: `value` (an Expr, ordinary data) XOR `secret` (a `input.<name>` reference to a secretRef input, CD-6). A `secret` is resolved from the vault at fill time and never enters the expression value space; `value` and `secret` are mutually exclusive.",
+          "properties": { "selector": { "$ref": "#/$defs/sel" }, "value": { "type": "string" }, "secret": { "type": "string", "description": "A `input.<name>` reference to a secretRef input; resolved from the vault at fill time (never interpolated, never an Expr)." }, "in": { "type": "string" } },
+          "oneOf": [ { "required": ["value"] }, { "required": ["secret"] } ] } } },
 
         { "required": ["clear"], "additionalProperties": false, "properties": { "clear": {
           "type": "object", "required": ["selector"], "additionalProperties": false,

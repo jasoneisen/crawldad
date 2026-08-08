@@ -9,8 +9,11 @@ namespace Crawldad.Web.Infrastructure.Security;
 /// row, a log line, or a response body. Two complementary rules:
 /// <list type="number">
 ///   <item><b>Exact secret</b> — any credential resolved for the <em>current run</em> (registered into
-///   <see cref="IRunSecretScope"/> by the connecting adapter) is replaced wherever it appears, catching free-form text a
-///   query-param rule cannot recognise (a <c>log</c> message echoing an input, an exception, a scraped page).</item>
+///   <see cref="IRunSecretScope"/> by the connecting adapter, or by a CD-6 <c>fill.secret</c> at action time) is replaced
+///   wherever it appears, catching free-form text a query-param rule cannot recognise (a <c>log</c> message echoing an
+///   input, an exception, a scraped page, a form value read back after a fill). Connect credentials use
+///   <see cref="MinExactScrubLength"/>; a form-fill secret — user-chosen and possibly short — uses the lower
+///   <see cref="MinFormSecretScrubLength"/>.</item>
 ///   <item><b>Known credential params</b> — the values of <c>apiKey</c>, <c>token</c>, and <c>signingKey</c>
 ///   (case-insensitive) are redacted anywhere they appear as <c>name=value</c>, which covers a <c>ws://</c>/<c>wss://</c>
 ///   connect URL's query (Browserless <c>?token=…</c>; the live Browserbase <c>?signingKey=…</c> per-session JWT — the
@@ -41,11 +44,22 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
     public const string Redaction = "[redacted]";
 
     /// <summary>
-    /// A registered run secret is exact-scrubbed only when at least this long. Real credentials (tokens, API keys,
-    /// connect URLs) are far longer; the floor stops a pathologically short "secret" from mangling every occurrence of a
-    /// common substring. The query-param rule still redacts <c>token=x</c> regardless of length.
+    /// A registered <b>connect</b> credential (and the always-on tenant keys) is exact-scrubbed only when at least this
+    /// long. Real connect credentials (tokens, API keys, connect URLs) are far longer; the floor stops a pathologically
+    /// short "secret" from mangling every occurrence of a common substring. The query-param rule still redacts
+    /// <c>token=x</c> regardless of length.
     /// </summary>
     internal const int MinExactScrubLength = 8;
+
+    /// <summary>
+    /// A registered <b>form-fill</b> secret (a CD-6 <c>fill.secret</c>) is exact-scrubbed at this much lower floor: a form
+    /// credential is user-chosen and may be short (a 4-digit PIN, a short password), and its whole purpose is protection,
+    /// so it is redacted even when a connect credential of the same length would not be. The floor of 4 still avoids the
+    /// worst over-redaction (a 1–3 character "secret" — pathological, not a real credential — would redact common short
+    /// substrings and is a documented limitation; deliberately over-redacting the user's own short secret in their own
+    /// output is a strictly safer failure than leaking it).
+    /// </summary>
+    internal const int MinFormSecretScrubLength = 4;
 
     // name=value for the three known credential params, case-insensitive. The value runs until a delimiter that ends a
     // query param / token in prose — whitespace, '&', '#', quotes, or a bracket — and excludes '[' ']' so the redaction
@@ -69,6 +83,16 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
         foreach (var secret in secretScope.Current)
         {
             if (secret.Length >= MinExactScrubLength)
+            {
+                result = result.Replace(secret, Redaction, StringComparison.Ordinal);
+            }
+        }
+
+        // Form-fill secrets (CD-6 fill.secret): redacted at the lower form floor so a short user-chosen credential (a PIN,
+        // a short password) read back from the page and echoed into free-form text is still caught by exact match.
+        foreach (var secret in secretScope.FormSecrets)
+        {
+            if (secret.Length >= MinFormSecretScrubLength)
             {
                 result = result.Replace(secret, Redaction, StringComparison.Ordinal);
             }

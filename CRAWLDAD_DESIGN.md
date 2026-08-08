@@ -133,8 +133,9 @@ SQL-in-JSON or CEL-in-YAML, and unlike BrowserQL's whole-document string.
   "name": "ljcmg.enforcement.search", // logical identity of the managed payload (persistent, versioned)
 
   "inputs": {                         // typed parameters bound at run time
-    "<name>": { "type": "string|number|boolean|date|array|object|backend|storageTarget",
+    "<name>": { "type": "string|number|boolean|date|array|object|backend|storageTarget|secretRef",
                 "required": false, "default": <literal> }
+    // a `secretRef` value is a vault REFERENCE only (never the secret); consumed solely by `fill.secret` (CD-6/§12)
   },
 
   "config": { /* session config — §8.1 */ },

@@ -44,7 +44,7 @@ public static class RunsModule
         // schema knows the types and old runs stay readable (§14.3 event-schema versioning).
         options.Events.AddEventTypes([
             typeof(RunSessionOpened), typeof(StepStarted), typeof(Navigated), typeof(Clicked),
-            typeof(Waited), typeof(Extracted), typeof(Downloaded), typeof(StepFailed),
+            typeof(Waited), typeof(Extracted), typeof(Downloaded), typeof(StepFailed), typeof(Filled),
         ]);
 
         // The RunTimeline observability read model (§13): the ordered step list + durations + refs + region, folded from the
@@ -117,7 +117,16 @@ public static class RunsModule
     private static void AddRealBrowserBackends(IServiceCollection services)
     {
         services.AddHttpClient(); // IHttpClientFactory for the browserbase session-create call
-        services.AddSingleton<ISecretStore, ConfigurationSecretStore>();
+
+        // The secret-vault seam (§12/CD-6): a keyed-adapter registry, the same pattern as backends and storage targets. The
+        // `config` adapter (secrets from IConfiguration) is the only one shipped; a real azure-keyvault/aws-secretsmanager/
+        // hashicorp-vault/HTTP adapter is one AddKeyedSingleton line later. The plain ISecretStore singleton (the backend-connect
+        // path) and the keyed `config` vault (the CD-6 form-fill secretRef path) share the one ConfigurationSecretStore instance,
+        // so both resolution surfaces read the same Secrets section.
+        services.AddSingleton<ConfigurationSecretStore>();
+        services.AddSingleton<ISecretStore>(static sp => sp.GetRequiredService<ConfigurationSecretStore>());
+        services.AddKeyedSingleton<ISecretStore>(SecretVaults.Config, static (sp, _) => sp.GetRequiredService<ConfigurationSecretStore>());
+        services.AddSingleton<ISecretStoreRegistry, KeyedSecretStoreRegistry>();
 
         // The credential-scrubbing boundary (§12, WP3): the per-run secret registry the adapters register the resolved
         // credential into, and the single scrubber every sink (events, response, logs) consults. Registered here so any

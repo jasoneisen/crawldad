@@ -8,4 +8,6 @@ namespace Crawldad.Tests.Support;
 internal sealed class FixedSecretStore(string secret) : ISecretStore
 {
     public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) => Task.FromResult(secret);
+
+    public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct) => Task.FromResult(secret);
 }

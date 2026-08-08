@@ -38,6 +38,17 @@ public sealed record Navigated(string Url, DateTimeOffset At);
 /// <param name="At">When the click fired (through the <see cref="TimeProvider"/> seam).</param>
 public sealed record Clicked(string SelectorText, DateTimeOffset At);
 
+/// <summary>
+/// A secret was typed into a form field (§13 <c>Filled</c>/CD-6): emitted by a <c>fill.secret</c> so the trace records that a
+/// login field was filled — <b>never the secret</b>. <see cref="Target"/> is <c>secret:&lt;refName&gt;</c> (the secretRef input
+/// name, which is safe — it is a reference, not the secret), so the resolved value is structurally absent from the event by
+/// construction, not merely scrubbed after the fact. Emitted only on the durable executor path (an observer is present); a
+/// plain value <c>fill</c> emits no trace event, so existing runs are unchanged.
+/// </summary>
+/// <param name="Target">The fill target descriptor — <c>secret:&lt;refName&gt;</c>, the secretRef input name (never the value).</param>
+/// <param name="At">When the field was filled (through the <see cref="TimeProvider"/> seam).</param>
+public sealed record Filled(string Target, DateTimeOffset At);
+
 /// <summary>A wait completed (§13 <c>Waited</c>): a <c>waitFor</c>/<c>waitForLoadState</c>/<c>waitForRequest</c>. <see cref="Kind"/>
 /// names what was awaited (e.g. <c>selector:visible</c>/<c>loadState:networkidle</c>/<c>request</c>); <see cref="Ms"/> is the
 /// elapsed wait (through the clock seam — 0 under a frozen test clock).</summary>

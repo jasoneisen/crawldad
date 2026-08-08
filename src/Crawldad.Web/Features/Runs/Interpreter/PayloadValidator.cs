@@ -14,6 +14,32 @@ namespace Crawldad.Web.Features.Runs.Interpreter;
 /// <param name="StepKind">The offending node's head key.</param>
 internal sealed record PayloadIssue(string Path, string Code, string Message, int StepIndex, string StepKind);
 
+/// <summary>The declared <c>secretRef</c> inputs of a payload (§4/CD-6): the single parse of the <c>inputs</c> block shared
+/// by the interpreter (which excludes them from the eval scope and resolves them at <c>fill.secret</c>) and the semantic
+/// walker (which rejects them anywhere in the expression value space), so the two never disagree on what is a secret.</summary>
+internal static class SecretRefInputs
+{
+    /// <summary>The <c>secretRef</c>-typed input names, or an empty set when none are declared.</summary>
+    /// <param name="payload">The payload document.</param>
+    public static IReadOnlySet<string> Names(JsonElement payload)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (payload.TryGetProperty("inputs", out var inputs) && inputs.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var declared in inputs.EnumerateObject())
+            {
+                if (declared.Value.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String
+                    && string.Equals(type.GetString(), "secretRef", StringComparison.Ordinal))
+                {
+                    names.Add(declared.Name);
+                }
+            }
+        }
+
+        return names;
+    }
+}
+
 /// <summary>The canonical set of recognised node head keys (§5/§6) — the single source of truth shared by the
 /// interpreter's dispatch, the structural validator, and (by construction) <c>schema/crawldad-1.schema.json</c>. A head
 /// outside this set is <c>unknown_node</c>. Run-time validation uses this set, so any executable head missing from it

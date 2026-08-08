@@ -51,6 +51,24 @@ internal static class InterpreterErrorCodes
 
     /// <summary>A <c>download.to</c>'s <c>kind</c> has no registered <see cref="Crawldad.Web.Infrastructure.Storage.IDownloadSink"/>.</summary>
     public const string UnknownDownloadSink = "unknown_download_sink";
+
+    /// <summary>Save-time (§12/CD-6): a <c>secretRef</c> input was referenced in an expression/template — a secretRef may be
+    /// consumed only by <c>fill.secret</c>, keeping the secret structurally out of the expression value space.</summary>
+    public const string SecretRefInExpression = "secret_ref_in_expression";
+
+    /// <summary>Save-time + run-time (CD-6): a <c>fill.secret</c> did not name a declared <c>secretRef</c> input (a malformed
+    /// reference, or one pointing at an input of another type).</summary>
+    public const string FillSecretNotSecretRef = "fill_secret_not_secret_ref";
+
+    /// <summary>Run-time (CD-6): a <c>fill.secret</c>'s <c>secretRef</c> input was not supplied at run start (no reference to resolve).</summary>
+    public const string SecretRefMissing = "secret_ref_missing";
+
+    /// <summary>Run-time (CD-6): the <c>secretRef</c>'s vault kind has no registered <see cref="Crawldad.Web.Infrastructure.Security.ISecretStore"/> adapter.</summary>
+    public const string UnknownSecretVault = "unknown_secret_vault";
+
+    /// <summary>Run-time (CD-6): the vault held no secret for the run's (tenant-scoped) reference — a fail-fast at the <c>fill</c>,
+    /// naming only the (safe) reference, never the secret.</summary>
+    public const string SecretUnresolved = "secret_unresolved";
 }
 
 /// <summary>

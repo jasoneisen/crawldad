@@ -50,6 +50,11 @@ public class TenantRegistryTests
         Should.Throw<InvalidOperationException>(() => Registry(Tenant(id: "  ")));
 
     [Fact]
+    public void Rejects_a_tenant_id_containing_a_colon() =>
+        // CD-6: a ':' in a tenant id would make the Secrets:{tenant}:{ref} vault namespace ambiguous.
+        Should.Throw<InvalidOperationException>(() => Registry(Tenant(id: "acme:evil")));
+
+    [Fact]
     public void Rejects_a_tenant_with_no_actor() =>
         Should.Throw<InvalidOperationException>(() => Registry(Tenant(actor: "")));
 

@@ -105,6 +105,16 @@ public class RunEventScrubberTests
     }
 
     [Fact]
+    public void Filled_scrubs_its_target_descriptor_defensively()
+    {
+        // A CD-6 Filled carries `secret:<refName>` — safe by construction — but the target is scrubbed like any free text,
+        // so even a ref name colliding with a registered secret cannot surface.
+        var scrubbed = (Filled)RunEventScrubber.Scrub(new Filled($"secret:{_secret}", _at), Scrubber());
+
+        scrubbed.Target.ShouldBe($"secret:{_redacted}");
+    }
+
+    [Fact]
     public void Extracted_scrubs_the_key_and_value_ref()
     {
         var scrubbed = (Extracted)RunEventScrubber.Scrub(new Extracted($"k-{_secret}", "string(3)", _at), Scrubber());
