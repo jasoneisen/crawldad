@@ -466,11 +466,23 @@ public class SlotQueueTests
         var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
 
         // Promotion of a run whose progress already left 'queued' (a concurrent cancel/timeout won the claim): the reserved
-        // slot is RELEASED and nothing is promoted — no leak.
+        // slot is RELEASED (no leak) and the call returns true so the handler re-drains the next queued run (SHOULD-FIX-3).
         var lost = await SeedQueuedAsync(store, clock, RunStatus.Running); // QueuedRun present but progress not queued
-        (await queue.PromoteOldestAsync(bus, TestTenants.PrimaryId, CancellationToken.None)).ShouldBeFalse();
+        (await queue.PromoteOldestAsync(bus, TestTenants.PrimaryId, CancellationToken.None)).ShouldBeTrue();
         gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(0);
         await DeleteQueuedAsync(store, lost);
+
+        // Promotion whose claim throws mid-flight (a QueuedRun with no RunProgress row — a corrupt/partial state): the reserved
+        // slot is RELEASED (not leaked) and the failure propagates for a retry (SHOULD-FIX-2 exception-safety).
+        var broken = Guid.NewGuid();
+        await using (var seed = store.LightweightSession(TestTenants.PrimaryId))
+        {
+            seed.Store(new QueuedRun { Id = broken, Sequence = 1, Script = "{}", Inputs = "{}", QueuedAt = clock.GetUtcNow() });
+            await seed.SaveChangesAsync();
+        }
+        await Should.ThrowAsync<Exception>(async () => await queue.PromoteOldestAsync(bus, TestTenants.PrimaryId, CancellationToken.None));
+        gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(0); // released on the throw path
+        await DeleteQueuedAsync(store, broken);
 
         // Position of a run that is not queued is null (the read-race guard).
         await using (var session = store.QuerySession(TestTenants.PrimaryId))
@@ -492,54 +504,53 @@ public class SlotQueueTests
 
     // ----- an enqueue landing with a free slot nudges its own promotion (SHOULD-FIX-2) -
 
-    // Seeds a queued run whose stored definition is actually runnable (a no-backend payload that fails cleanly once promoted).
-    private static async Task<Guid> SeedRunnableQueuedAsync(IDocumentStore store, TimeProvider clock)
+    // A no-backend async run POSTed at the cap, expected to QUEUE (202 "queued"); returns its id. Its payload has no steps and
+    // no backend, so once promoted it fails fast (invalid_backend_binding) without touching the gated fake — a clean promotion probe.
+    private static async Task<Guid> StartQueuedNoBackendAsync(IAlbaHost host)
     {
-        var runId = Guid.NewGuid();
-        await using var session = store.LightweightSession(TestTenants.PrimaryId);
-        session.Events.StartStream<Run>(runId, new RunQueued("strand", "hash", clock.GetUtcNow(), [], null, null));
-        session.Store(new QueuedRun
+        var accepted = await host.Scenario(x =>
         {
-            Id = runId,
-            Sequence = 1,
-            Script = """{ "crawldad": "1", "name": "strand", "config": { "backend": "input.backend" }, "steps": [], "result": "'x'" }""",
-            Inputs = "{}",
-            DeadlineMs = 30_000,
-            QueuedAt = clock.GetUtcNow(),
+            x.Post.Json(new JsonObject
+            {
+                ["payload"] = JsonNode.Parse("""{ "crawldad": "1", "config": { "backend": "input.backend", "deadlineMs": 30000 }, "steps": [], "result": "'x'" }"""),
+                ["async"] = true,
+            }).ToUrl("/runs");
+            x.StatusCodeShouldBe(202);
         });
-        session.Store(new RunProgress { Id = runId, Status = RunStatus.Queued });
-        await session.SaveChangesAsync();
-        return runId;
+        var root = (await accepted.ReadAsJsonAsync<JsonElement>()).Clone();
+        root.GetProperty("status").GetString().ShouldBe("queued");
+        return root.GetProperty("runId").GetGuid();
     }
 
     [Fact]
     public async Task An_enqueue_landing_with_a_free_slot_nudges_its_own_promotion()
     {
         var holder = new GateHolder();
+        var gate = new RunGate("CapHome");
         await using var host = await HostAsync("crawldad_slotq_strand", holder);
-        var store = host.Services.GetRequiredService<IDocumentStore>();
-        var clock = host.Services.GetRequiredService<TimeProvider>();
+        var admissionGate = (RunAdmissionGate)host.Services.GetRequiredService<IRunAdmissionGate>();
 
-        // The stranding state SHOULD-FIX-2 guards: a run is queued but no slot is occupied (a slot freed without promoting it,
-        // and the freeing run's PromoteQueued found the queue empty).
-        var stranded = await SeedRunnableQueuedAsync(store, clock);
+        // A blocked run holds the one slot — and, as the first request, fully starts the host so RunRecoveryService has already
+        // scanned the (empty) schema. Everything enqueued after this is therefore enqueued via the endpoint AFTER recovery, so
+        // recovery never promotes it (the seeding-into-a-live-host artifact that made an earlier version of this test flaky).
+        var blocked = await StartBlockedAsync(host, holder, gate);
+        var queued = await StartQueuedNoBackendAsync(host); // queues behind the blocker
 
-        // A new run arrives; fairness makes it queue behind the stranded run. Because a slot is actually free, the enqueue
-        // nudges a promotion — un-stranding the waiting run.
-        await host.Scenario(x =>
-        {
-            x.Post.Json(new JsonObject
-            {
-                ["payload"] = JsonNode.Parse("""{ "crawldad": "1", "config": { "backend": "input.backend" }, "steps": [], "result": "'x'" }"""),
-                ["async"] = true,
-            }).ToUrl("/runs");
-            x.StatusCodeShouldBe(202);
-        });
+        // Reproduce the exact stranding state deterministically: free the slot in-memory WITHOUT a terminal event (so no
+        // PromoteQueued fires). Now a slot is free, a run is queued, and nothing is scheduled to promote it.
+        admissionGate.Release(TestTenants.PrimaryId, blocked);
 
-        // The stranded run starts on its own and reaches a terminal state (no backend → it fails, but it RAN).
-        var terminal = await DurableHost.PollUntilTerminalAsync(host, stranded, TimeSpan.FromSeconds(30));
+        // A new run arrives; fairness makes it queue behind the stranded run (202 "queued" proves the enqueue path). Because a
+        // slot is now genuinely free, the enqueue nudges a promotion — the branch under test — the stranded run's ONLY trigger.
+        var arriving = await StartQueuedNoBackendAsync(host);
+
+        var terminal = await DurableHost.PollUntilTerminalAsync(host, queued, TimeSpan.FromSeconds(30));
         terminal.GetProperty("status").GetString().ShouldBe("failed");
-        terminal.GetProperty("failure").GetProperty("code").GetString().ShouldBe("invalid_backend_binding");
+        terminal.GetProperty("failure").GetProperty("code").GetString().ShouldBe("invalid_backend_binding"); // it RAN (no backend → fails)
+
+        gate.Release(); // cleanup: let the blocker reach its cancel check
+        await CancelAsync(host, blocked);
+        await DrainAsync(host, blocked, arriving);
     }
 
     // ----- FIFO counter self-seeds above a restart's high-water mark (SHOULD-FIX-3) -

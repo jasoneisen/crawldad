@@ -234,7 +234,8 @@ public sealed class RunQueue(
     /// <param name="bus">The bus <see cref="StartRun"/> is published on.</param>
     /// <param name="tenantId">The tenant whose queue to drain (from the trigger's envelope).</param>
     /// <param name="ct">Cancels the work.</param>
-    /// <returns>True when a run was promoted (drain the next); false when nothing was queued, no slot was free, or the claim was lost.</returns>
+    /// <returns>True when the caller should re-drain — a run was promoted (fill the next free slot) OR the claim was lost and the
+    /// reserved slot is free again (promote the next queued run into it); false when nothing was queued or no slot was free.</returns>
     public async Task<bool> PromoteOldestAsync(IMessageBus bus, string tenantId, CancellationToken ct)
     {
         QueuedRun? oldest;
@@ -245,7 +246,7 @@ public sealed class RunQueue(
 
         if (oldest is null)
         {
-            return false; // nothing queued
+            return false; // nothing queued — no drain
         }
 
         if (!gate.TryAdmit(tenantId, oldest.Id))
@@ -253,23 +254,37 @@ public sealed class RunQueue(
             return false; // no free slot (or already reserved by a concurrent promotion) — leave it queued for the next trigger
         }
 
-        var startedAt = clock.GetUtcNow();
-        var waitMs = (long)(startedAt - oldest.QueuedAt).TotalMilliseconds;
-        var won = await TryClaimTerminalAsync(tenantId, oldest.Id, new RunDequeued(startedAt, waitMs), p =>
+        // The slot is reserved. Every non-win exit — a lost claim OR a throw — MUST release it, else it leaks permanently (a
+        // retry's TryAdmit refuses the already-counted run). A lost claim frees the slot, so the caller re-drains the next run.
+        try
         {
-            p.Status = RunStatus.Running;
-            p.QueueWaitMs = waitMs;
-        }, ct);
+            var startedAt = clock.GetUtcNow();
+            var waitMs = (long)(startedAt - oldest.QueuedAt).TotalMilliseconds;
+            var won = await TryClaimTerminalAsync(tenantId, oldest.Id, new RunDequeued(startedAt, waitMs), p =>
+            {
+                p.Status = RunStatus.Running;
+                p.QueueWaitMs = waitMs;
+            }, ct);
 
-        if (!won)
+            if (won)
+            {
+                // Kick the executor saga exactly as an immediate async run does — the wall-clock deadline (§8.4) is scheduled
+                // from HERE (promotion), so time spent queued never counts against it.
+                await bus.PublishAsync(new StartRun(oldest.Id, oldest.PayloadName, oldest.ScriptHash, oldest.Script, oldest.Inputs, oldest.PayloadId, oldest.PayloadRevision, oldest.DeadlineMs));
+            }
+            else
+            {
+                gate.Release(tenantId, oldest.Id); // a concurrent cancel/timeout claimed it first — free the reserved slot
+            }
+        }
+        catch
         {
-            gate.Release(tenantId, oldest.Id); // a concurrent cancel/timeout terminal-ised it first — free the reserved slot
-            return false;
+            gate.Release(tenantId, oldest.Id); // the claim or the StartRun publish threw — free the reserved slot before the retry
+            throw;
         }
 
-        // Kick the executor saga exactly as an immediate async run does — the wall-clock deadline (§8.4) is scheduled from HERE
-        // (promotion), so time spent queued never counts against it.
-        await bus.PublishAsync(new StartRun(oldest.Id, oldest.PayloadName, oldest.ScriptHash, oldest.Script, oldest.Inputs, oldest.PayloadId, oldest.PayloadRevision, oldest.DeadlineMs));
+        // A promotion attempt ran: the reserved slot is now held by a promoted run (fill the NEXT free slot) or freed again by
+        // a lost claim (whose winner deleted the queue row, so the next drain sees the following run). Re-drain either way.
         return true;
     }
 
