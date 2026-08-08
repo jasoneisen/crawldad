@@ -89,7 +89,10 @@ public static class RunsModule
 
         // The CD-15 sync auto-upgrade supervisor: a singleton that drives a synchronous run past the sync cap to its terminal
         // state in-process after the endpoint returns 202, reusing the shared RunFinalization + the durable saga's deadline/recovery.
+        // Also a hosted service (#26) whose StopAsync drains the in-flight tails on shutdown — the SAME singleton the endpoint
+        // adopts into, so the drain sees exactly those tails — before the provider (and its singleton store/bus) is disposed.
         services.AddSingleton<SyncRunSupervisor>();
+        services.AddHostedService(static sp => sp.GetRequiredService<SyncRunSupervisor>());
 
         // The WP3 observability surface (§13): the in-process SSE tail-wakeup hub, shared by the executor's appends and the
         // GET /runs/{id}/events endpoint. The failure-screenshot blob store (IScreenshotStore) and the download-sink seam

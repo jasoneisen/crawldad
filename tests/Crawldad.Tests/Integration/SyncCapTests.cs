@@ -325,6 +325,46 @@ public class SyncCapTests(SyncCapFixture fixture)
         string.Join('\n', frames.Select(f => f.Data)).ShouldNotContain(Secret);
     }
 
+    // ----- host shutdown drains the in-flight supervised tail (#26) -----------
+
+    [Fact]
+    public async Task Host_shutdown_drains_an_in_flight_upgraded_run_without_a_disposed_service_fault()
+    {
+        // A DEDICATED host on its own schema: this test drives the supervisor's shutdown drain, so it must not share the
+        // collection's one long-lived host. A gate holds the run past the sync window so it auto-upgrades and is adopted.
+        var holder = new GateHolder();
+        var gate = new RunGate("pg=2");
+        holder.Arm(gate);
+        await using var host = await DurableHost.BuildAsync(
+            "crawldad_synccap_drain", new GatedFakeBackend(Runner.FixturesRoot, holder), settings: LowThreshold());
+
+        // A default (async:false) run the gate holds past the window → 202 running, adopted by the supervisor and now
+        // provably mid-execution (blocked at the pagination gate) — its finalisation tail is exactly what a fire-and-forget
+        // would race against host disposal.
+        var runId = await UpgradeAsync(host, SearchBody("caphome-resume"));
+        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(20));
+
+        // Invoke the supervisor's shutdown drain — the exact call the host makes on StopAsync — WHILE the tail is in flight.
+        // It blocks on the gated interpreter, so kick it without awaiting, then release the gate so the run finalises INSIDE
+        // the drain window: the tail commits through the still-live singleton store, and StopAsync returns only once it is done.
+        var supervisor = host.Services.GetRequiredService<SyncRunSupervisor>();
+        var drain = supervisor.StopAsync(CancellationToken.None);
+        gate.Release();
+        await drain; // returns cleanly — the drain awaited the tail while the store/bus were live, so no ObjectDisposedException
+
+        // The tail finalised during the drain: a single GET (no poll — the drain guarantees it is already terminal) shows the
+        // golden terminal state, durably persisted. The queue-promotion nudge was skipped (durably recovered), not raced onto
+        // a stopping bus. The host itself was not stopped, so its endpoints still answer; `await using` tears it down cleanly.
+        var terminal = await host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{runId}");
+            x.StatusCodeShouldBe(200);
+        });
+        var state = (await terminal.ReadAsJsonAsync<JsonElement>()).Clone();
+        state.GetProperty("status").GetString().ShouldBe("succeeded");
+        AssertMatchesFullGolden(state.GetProperty("result"));
+    }
+
     // ----- helpers -----------------------------------------------------------
 
     private static async Task<Guid> UpgradeAsync(IAlbaHost host, JsonObject body)

@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Infrastructure.Security;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Wolverine;
 
 namespace Crawldad.Web.Features.Runs;
@@ -38,6 +40,14 @@ internal sealed record SyncRunHandoff(
 /// the run is done. The endpoint also created the run's <see cref="RunExecutorSaga"/> at upgrade, so the wall-clock deadline
 /// (its <see cref="RunDeadline"/> timeout) and restart recovery (a re-run from scratch) reuse the existing durable machinery —
 /// this in-process supervisor is the happy-path completion; the saga is its backstop.
+/// <para>
+/// It is also an <see cref="IHostedService"/> (#26): every adopted tail is tracked, and <see cref="StopAsync"/> drains the
+/// in-flight ones — bounded — on host shutdown. That runs while the singleton store and the bus are still live (a hosted
+/// service stops <em>before</em> the provider is disposed), so a tail's finalisation commits cleanly instead of an untracked
+/// fire-and-forget task racing a disposing provider (the intermittent <c>ObjectDisposedException</c> teardown flake, #26). A
+/// run still executing when the drain window elapses stays <c>running</c> and is durably recovered by the startup recovery
+/// scan on the next host — the same backstop a hard crash already relies on.
+/// </para>
 /// </summary>
 /// <param name="store">The Marten store (the supervisor opens its own tenant-scoped session, like the executor).</param>
 /// <param name="scrubber">The credential scrubber (§12): every persisted string funnels through it at finalisation.</param>
@@ -53,18 +63,34 @@ public sealed class SyncRunSupervisor(
     RunEventSignals signals,
     IRunControlRegistry controls,
     IServiceScopeFactory scopeFactory,
-    TimeProvider clock)
+    TimeProvider clock) : IHostedService
 {
     /// <summary>The terminal failure code for an upgraded run whose interpreter faulted unexpectedly after the 202 (the sync
     /// path would have surfaced this as a 500; on the async surface it must become a terminal failure, never a stuck run).</summary>
     public const string InternalErrorCode = "internal_error";
 
-    /// <summary>Adopts an upgraded run's in-flight execution and drives it to a terminal state in the background. Fire-and-
-    /// forget by design: the caller has already returned <c>202</c>, and the durable <see cref="RunExecutorSaga"/> created at
-    /// upgrade is the restart/deadline backstop. Invoked on the request's execution context so the run's ambient secret
-    /// scope flows to the finaliser (§12).</summary>
+    /// <summary>How long <see cref="StopAsync"/> waits for the in-flight tails to finalise before it lets the host proceed to
+    /// dispose the provider. Bounded so a run still executing at shutdown cannot hang teardown — it is left <c>running</c> and
+    /// durably recovered on the next host. Comfortably under the generic host's default 30 s shutdown timeout, so the drain
+    /// gives up gracefully rather than being force-cancelled mid-commit.</summary>
+    private static readonly TimeSpan _drainTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>The adopted tails still driving a run to its terminal state, keyed by run id, so host shutdown can drain them
+    /// (#26). A run is added at <see cref="Adopt"/> and removes itself when its tail ends; the upgrade invariant — its
+    /// interpreter outran the sync window, so it is provably still running at adoption — guarantees the tail cannot complete
+    /// (and self-remove) before it is added, so no entry ever leaks.</summary>
+    private readonly ConcurrentDictionary<Guid, Task> _inFlight = new();
+
+    /// <summary>Set once host shutdown begins: the freed slot's queue-promotion nudge is idempotent and durably re-triggered by
+    /// the startup recovery scan, so during shutdown it is skipped rather than published onto a stopping bus (#26).</summary>
+    private volatile bool _shuttingDown;
+
+    /// <summary>Adopts an upgraded run's in-flight execution and drives it to a terminal state in the background. The caller
+    /// has already returned <c>202</c>, and the durable <see cref="RunExecutorSaga"/> created at upgrade is the restart/deadline
+    /// backstop; unlike a bare fire-and-forget, the tail is <b>tracked</b> so host shutdown can drain it (#26). Invoked on the
+    /// request's execution context so the run's ambient secret scope flows to the finaliser (§12).</summary>
     /// <param name="handoff">The upgraded run's identity + its running interpreter + the lifetimes to own to the end.</param>
-    internal void Adopt(SyncRunHandoff handoff) => _ = DriveToTerminalAsync(handoff);
+    internal void Adopt(SyncRunHandoff handoff) => _inFlight[handoff.RunId] = DriveToTerminalAsync(handoff);
 
     private async Task DriveToTerminalAsync(SyncRunHandoff handoff)
     {
@@ -86,6 +112,7 @@ public sealed class SyncRunSupervisor(
             signals.Remove(handoff.RunId);
             handoff.SecretScope.Dispose();
             handoff.RunCts.Dispose();
+            _inFlight.TryRemove(handoff.RunId, out _); // stop tracking: this tail is done, so shutdown need not drain it (#26)
         }
     }
 
@@ -132,8 +159,42 @@ public sealed class SyncRunSupervisor(
     // this run is long gone, so publish on a fresh scope's bus — mirroring the startup recovery service's pattern.
     private async Task PromoteAsync(string tenantId)
     {
+        if (_shuttingDown)
+        {
+            // Host shutdown in progress (#26): skip the nudge rather than resolve a scope + publish onto a stopping bus. The
+            // slot was already freed in the finaliser, and the startup recovery scan re-triggers PromoteQueued for every tenant
+            // with a non-empty queue — so this is a deliberate, idempotent skip, not a swallowed error.
+            return;
+        }
+
         using var scope = scopeFactory.CreateScope();
         await scope.ServiceProvider.GetRequiredService<IMessageBus>()
             .PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
+    }
+
+    /// <summary>Hosted-service start (#26): nothing to warm up — the supervisor only adopts tails handed to it by the endpoint.</summary>
+    /// <param name="cancellationToken">Unused.</param>
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>Hosted-service stop = <b>drain</b> (#26). Marks shutdown (so tails skip the promotion nudge) and awaits the
+    /// in-flight tails so their finalisation commits through the still-live singleton store <em>before</em> the host disposes
+    /// the provider — the fix for the fire-and-forget teardown race. Bounded by <see cref="_drainTimeout"/>: a run still
+    /// executing when the window elapses is left <c>running</c> and durably recovered by the next host's recovery scan (the
+    /// same backstop a hard crash relies on), so a stuck run can never hang shutdown. Best-effort: the race outcome is not
+    /// inspected — either the tails finished (the common case) or the window won, and both let teardown proceed.</summary>
+    /// <param name="cancellationToken">The host's shutdown token (the drain is separately bounded, so it is not awaited on).</param>
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _shuttingDown = true;
+
+        var draining = _inFlight.Values.ToArray();
+        if (draining.Length == 0)
+        {
+            return; // nothing adopted is still in flight — the common teardown, and every host that ran no upgraded run
+        }
+
+        using var drainWindow = new CancellationTokenSource();
+        await Task.WhenAny(Task.WhenAll(draining), Task.Delay(_drainTimeout, drainWindow.Token));
+        await drainWindow.CancelAsync(); // the drain finished first — stop the bounding timer (a no-op if the window already won)
     }
 }
