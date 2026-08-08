@@ -3,6 +3,7 @@ using Crawldad.Contracts.Payloads;
 using Crawldad.Web.Infrastructure.Security;
 using Marten;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Payloads;
@@ -11,8 +12,8 @@ namespace Crawldad.Web.Features.Payloads;
 /// <c>POST /payloads/{id}/revise</c> (§14.1): appends a new script revision to a managed payload. The revised script runs
 /// the SAME scrub-then-validate gate as a draft (<see cref="PayloadScript"/> + <see cref="PayloadValidation"/>), so every
 /// persisted revision is executable and credential-free (§12). An unknown payload is a <c>404</c>; an archived payload is
-/// a <c>400</c> (cannot revise); an invalid script is a <c>400</c> with the structured error list. No actor is recorded
-/// (identity is post-MVP, from the principal not the body — §12).
+/// a <c>400</c> (cannot revise); an invalid script is a <c>400</c> with the structured error list. The event's actor is
+/// stamped from the authenticated tenant, never the request body (§12).
 /// </summary>
 public static class RevisePayloadEndpoint
 {
@@ -21,6 +22,7 @@ public static class RevisePayloadEndpoint
     /// <param name="request">The revised payload + optional note.</param>
     /// <param name="session">The request-scoped Marten session.</param>
     /// <param name="scrubber">Redacts credential material from the persisted script and note (§12).</param>
+    /// <param name="tenant">The authenticated tenant — its actor identity is stamped on the event (§12).</param>
     /// <param name="clock">The time seam for the event timestamp.</param>
     /// <param name="ct">Cancels the save.</param>
     /// <returns><c>200</c> with the new head <see cref="PayloadResponse"/>, <c>404</c> when unknown, or <c>400</c> when archived/invalid.</returns>
@@ -30,6 +32,7 @@ public static class RevisePayloadEndpoint
         RevisePayloadRequest request,
         IDocumentSession session,
         CredentialScrubber scrubber,
+        [FromServices] TenantContext tenant,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -53,7 +56,7 @@ public static class RevisePayloadEndpoint
         }
 
         var note = request.Note is null ? null : scrubber.Scrub(request.Note);
-        var revised = new PayloadRevised(scrubbed.Script, scrubbed.ScriptHash, note, clock.GetUtcNow());
+        var revised = new PayloadRevised(scrubbed.Script, scrubbed.ScriptHash, note, clock.GetUtcNow(), tenant.Actor);
         session.Events.Append(id, revised);
         await session.SaveChangesAsync(ct);
 

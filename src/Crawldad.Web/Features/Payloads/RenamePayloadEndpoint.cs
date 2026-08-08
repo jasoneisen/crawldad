@@ -2,6 +2,7 @@ using Crawldad.Contracts.Payloads;
 using Crawldad.Web.Infrastructure.Security;
 using Marten;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Payloads;
@@ -9,7 +10,8 @@ namespace Crawldad.Web.Features.Payloads;
 /// <summary>
 /// <c>POST /payloads/{id}/rename</c> (§14.1): changes a managed payload's logical name (metadata only — the script hash is
 /// unchanged, but the head revision advances). An unknown payload is a <c>404</c>; an archived payload is a <c>400</c>; an
-/// empty name is a <c>400</c> ProblemDetails via <see cref="RenamePayloadRequestValidator"/>. No actor is recorded (§12).
+/// empty name is a <c>400</c> ProblemDetails via <see cref="RenamePayloadRequestValidator"/>. The event's actor is stamped
+/// from the authenticated tenant, never the request body (§12).
 /// </summary>
 public static class RenamePayloadEndpoint
 {
@@ -18,6 +20,7 @@ public static class RenamePayloadEndpoint
     /// <param name="request">The new name.</param>
     /// <param name="session">The request-scoped Marten session.</param>
     /// <param name="scrubber">Redacts credential material from the persisted name (§12).</param>
+    /// <param name="tenant">The authenticated tenant — its actor identity is stamped on the event (§12).</param>
     /// <param name="clock">The time seam for the event timestamp.</param>
     /// <param name="ct">Cancels the save.</param>
     /// <returns><c>200</c> with the new head <see cref="PayloadResponse"/>, <c>404</c> when unknown, or <c>400</c> when archived.</returns>
@@ -27,6 +30,7 @@ public static class RenamePayloadEndpoint
         RenamePayloadRequest request,
         IDocumentSession session,
         CredentialScrubber scrubber,
+        [FromServices] TenantContext tenant,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -41,7 +45,7 @@ public static class RenamePayloadEndpoint
             return PayloadProblems.Archived();
         }
 
-        var renamed = new PayloadRenamed(scrubber.Scrub(request.Name), clock.GetUtcNow());
+        var renamed = new PayloadRenamed(scrubber.Scrub(request.Name), clock.GetUtcNow(), tenant.Actor);
         session.Events.Append(id, renamed);
         await session.SaveChangesAsync(ct);
 
