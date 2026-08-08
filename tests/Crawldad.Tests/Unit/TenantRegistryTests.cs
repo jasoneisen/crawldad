@@ -13,8 +13,8 @@ public class TenantRegistryTests
     private static TenantRegistry Registry(params TenantDescriptor[] tenants) =>
         new(Options.Create(new TenantOptions { Tenants = tenants }));
 
-    private static TenantDescriptor Tenant(string id = "t1", string key = "key-0123456789abcdef", string actor = "actor@x", int? maxConcurrentRuns = null) =>
-        new() { Id = id, ApiKey = key, Actor = actor, MaxConcurrentRuns = maxConcurrentRuns };
+    private static TenantDescriptor Tenant(string id = "t1", string key = "key-0123456789abcdef", string actor = "actor@x", int? maxConcurrentRuns = null, int? maxQueueDepth = null) =>
+        new() { Id = id, ApiKey = key, Actor = actor, MaxConcurrentRuns = maxConcurrentRuns, MaxQueueDepth = maxQueueDepth };
 
     [Fact]
     public void Authenticates_a_configured_key_to_its_tenant_and_actor()
@@ -72,4 +72,35 @@ public class TenantRegistryTests
     [Fact]
     public void Rejects_a_concurrent_run_override_below_one() => // CD-3: a 0/negative slot cap is a boot-time misconfiguration
         Should.Throw<InvalidOperationException>(() => Registry(Tenant(maxConcurrentRuns: 0)));
+
+    [Fact]
+    public void Resolves_a_queue_depth_override() // CD-16: a tenant's per-tier at-cap wait room
+    {
+        var registry = Registry(Tenant(id: "alpha", key: "alpha-key-0123456789", maxQueueDepth: 10));
+
+        registry.TryGetQueueDepthOverride("alpha", out var depth).ShouldBeTrue();
+        depth.ShouldBe(10);
+    }
+
+    [Fact]
+    public void Defers_when_a_tenant_sets_no_queue_depth_override()
+    {
+        var registry = Registry(Tenant(id: "alpha", key: "alpha-key-0123456789", maxQueueDepth: null));
+
+        registry.TryGetQueueDepthOverride("alpha", out var depth).ShouldBeFalse(); // falls back to the global default
+        depth.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Defers_for_an_unknown_tenant_queue_depth_override()
+    {
+        var registry = Registry(Tenant(id: "alpha", key: "alpha-key-0123456789", maxQueueDepth: 10));
+
+        registry.TryGetQueueDepthOverride("no-such-tenant", out var depth).ShouldBeFalse();
+        depth.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Rejects_a_queue_depth_override_below_one() => // CD-16: a 0/negative queue depth is a boot-time misconfiguration
+        Should.Throw<InvalidOperationException>(() => Registry(Tenant(maxQueueDepth: 0)));
 }

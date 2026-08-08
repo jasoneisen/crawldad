@@ -34,6 +34,20 @@ public class RunEventScrubberTests
     }
 
     [Fact]
+    public void RunQueued_scrubs_the_payload_name_and_input_key_names() // CD-16: the queued run's opener, scrubbed like RunStarted
+    {
+        var payloadId = Guid.NewGuid();
+        var scrubbed = (RunQueued)RunEventScrubber.Scrub(
+            new RunQueued($"name-{_secret}", "hash", _at, [_secret, "startDate"], payloadId, 3), Scrubber());
+
+        scrubbed.PayloadName.ShouldBe($"name-{_redacted}");
+        scrubbed.InputKeys.ShouldBe([_redacted, "startDate"]);
+        scrubbed.ScriptHash.ShouldBe("hash"); // untouched
+        scrubbed.PayloadId.ShouldBe(payloadId); // pin preserved through scrub
+        scrubbed.PayloadRevision.ShouldBe(3);
+    }
+
+    [Fact]
     public void LogEmitted_scrubs_the_message()
     {
         var scrubbed = (LogEmitted)RunEventScrubber.Scrub(

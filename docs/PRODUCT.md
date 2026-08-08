@@ -624,9 +624,9 @@ never makes Crawldad the bottleneck of a stack the customer already paid for.
 **Queue-don't-reject:** at the slot cap, run N+1 **queues for a free slot** — the durable
 saga/async machinery makes this natural (the run is accepted, 202 + runId, queue position surfaced
 in `GET /runs/{id}` and SSE) — because a 429 at your own capacity limit feels like a broken
-product, while a visible queue feels like a full one. A 429 (`queue_full`) occurs only past the
+product, while a visible queue feels like a full one. A 429 (`queue_depth_exceeded`) occurs only past the
 per-tier queue depth; a queued run may carry `maxQueueWaitMs` after which it terminates with a
-clean `queue_timeout`. Sustained queue wait IS the upgrade signal, and the dashboard says so:
+clean `queue_wait_exceeded`. Sustained queue wait IS the upgrade signal, and the dashboard says so:
 "p95 queue wait this week: 4 m 12 s — add 5 slots?"
 
 **Upgrade triggers:** solo dev's second concurrent run queues behind the first (2-slot wall) or a
@@ -679,8 +679,8 @@ refund.
    keep history forever; we keep the bill bounded).
 3a. **NEW — slot admission queue semantics** (proposed ticket): at-cap StartRun accepts and
    enqueues rather than rejects — durable FIFO per tenant on the existing Wolverine machinery,
-   queue position in `GET /runs/{id}` + SSE, per-tier `queueDepth` (429 `queue_full` only past
-   it), optional `maxQueueWaitMs` → clean `queue_timeout`, p95-queue-wait metric surfaced
+   queue position in `GET /runs/{id}` + SSE, per-tier `queueDepth` (429 `queue_depth_exceeded` only past
+   it), optional `maxQueueWaitMs` → clean `queue_wait_exceeded`, p95-queue-wait metric surfaced
    per-tenant (it is the upgrade signal). Depends on CD-1 (tenant identity) + CD-3 (slot limit).
 4. **CD-6 BYO vault — promoted from Enterprise to core (Team).** BYO-everything is the thesis;
    form-fill credentials and storage credentials both need the by-reference machinery. Enterprise

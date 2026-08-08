@@ -51,6 +51,7 @@ public static class RunReplayEndpoint
         IRunSecretScope secretScope,
         IMessageBus bus,
         IRunAdmissionGate gate,
+        RunQueue queue,
         IOptions<RunLimitsOptions> limitsOptions,
         TimeProvider clock,
         CancellationToken ct)
@@ -71,6 +72,6 @@ public static class RunReplayEndpoint
         // Re-run the EXACT pinned revision (never the head) with the caller-resupplied inputs, delegating to POST /runs so
         // pin resolution + the archived guard + sync/async dispatch stay a single implementation.
         var start = new StartRunRequest(default, request.Inputs, payloadId, run.PayloadRevision, request.Async);
-        return await StartRunEndpoint.Handle(start, session, registry, sinks, scrubber, secretScope, bus, gate, limitsOptions, clock, ct);
+        return await StartRunEndpoint.Handle(start, session, registry, sinks, scrubber, secretScope, bus, gate, queue, limitsOptions, clock, ct);
     }
 }

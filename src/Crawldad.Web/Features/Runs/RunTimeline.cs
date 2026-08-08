@@ -71,7 +71,7 @@ public sealed record RunTimeline
 /// </summary>
 public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTimeline, Guid>
 {
-    /// <summary>Opens the timeline on the run's opening event.</summary>
+    /// <summary>Opens the timeline on the run's opening event (a run started immediately, under the cap).</summary>
     /// <param name="started">The opening event.</param>
     public RunTimeline Create(RunStarted started) => new()
     {
@@ -82,6 +82,26 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
         InputKeys = [.. started.InputKeys],
         StartedAt = started.StartedAt,
     };
+
+    /// <summary>Opens the timeline on the opening event of a run <b>queued</b> at the cap (CD-16). <see cref="RunTimeline.StartedAt"/>
+    /// is seeded to the enqueue instant so a run cancelled or expired while still queued has a sane baseline; a promoted run
+    /// overwrites it with its real execution start at <see cref="Apply(RunDequeued, RunTimeline)"/>.</summary>
+    /// <param name="queued">The opening event of a queued run.</param>
+    public RunTimeline Create(RunQueued queued) => new()
+    {
+        PayloadName = queued.PayloadName,
+        ScriptHash = queued.ScriptHash,
+        PayloadId = queued.PayloadId,
+        PayloadRevision = queued.PayloadRevision,
+        InputKeys = [.. queued.InputKeys],
+        StartedAt = queued.QueuedAt,
+    };
+
+    /// <summary>Stamps the real execution start when a queued run is promoted (CD-16), so the timeline's duration measures
+    /// execution — not the time spent waiting in the queue.</summary>
+    /// <param name="dequeued">The promotion event.</param>
+    /// <param name="timeline">The current timeline.</param>
+    public RunTimeline Apply(RunDequeued dequeued, RunTimeline timeline) => timeline with { StartedAt = dequeued.StartedAt };
 
     /// <summary>Records the backend region once the session opened.</summary>
     /// <param name="opened">The session-opened event.</param>
