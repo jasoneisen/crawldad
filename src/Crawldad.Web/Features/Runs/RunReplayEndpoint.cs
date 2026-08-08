@@ -36,6 +36,7 @@ public static class RunReplayEndpoint
     /// <param name="sinks">Resolves the download sink named by a <c>download.to</c> target (§9.3).</param>
     /// <param name="scrubber">Redacts credentials from every persisted event and the response (§12).</param>
     /// <param name="secretScope">The per-run secret registry the backend adapter registers the resolved credential into (§12).</param>
+    /// <param name="secretStores">The CD-6 secret-vault registry a <c>fill.secret</c> resolves against at action time.</param>
     /// <param name="bus">The message bus that kicks the executor saga for an async replay (§11).</param>
     /// <param name="clock">The time seam for event timestamps and duration.</param>
     /// <param name="ct">Cancels the replay.</param>
@@ -49,6 +50,7 @@ public static class RunReplayEndpoint
         IDownloadSinkRegistry sinks,
         CredentialScrubber scrubber,
         IRunSecretScope secretScope,
+        ISecretStoreRegistry secretStores,
         IMessageBus bus,
         IRunAdmissionGate gate,
         RunQueue queue,
@@ -74,6 +76,6 @@ public static class RunReplayEndpoint
         // Re-run the EXACT pinned revision (never the head) with the caller-resupplied inputs, delegating to POST /runs so
         // pin resolution + the archived guard + sync/async dispatch stay a single implementation.
         var start = new StartRunRequest(default, request.Inputs, payloadId, run.PayloadRevision, request.Async);
-        return await StartRunEndpoint.Handle(start, session, registry, sinks, scrubber, secretScope, bus, gate, queue, controls, supervisor, limitsOptions, clock, ct);
+        return await StartRunEndpoint.Handle(start, session, registry, sinks, scrubber, secretScope, secretStores, bus, gate, queue, controls, supervisor, limitsOptions, clock, ct);
     }
 }

@@ -48,6 +48,23 @@ public class BrowserBackendRegistrationTests
     }
 
     [Fact]
+    public async Task Registers_the_config_secret_vault_behind_the_keyed_registry()
+    {
+        await using var sp = Build();
+
+        // CD-6: the secret-vault registry resolves the `config` adapter by kind (the BYO-vault seam), and an unregistered
+        // kind (a not-yet-built azure-keyvault/etc.) is a clean miss — the interpreter turns that into unknown_secret_vault.
+        var registry = sp.GetRequiredService<ISecretStoreRegistry>();
+        registry.ShouldBeOfType<KeyedSecretStoreRegistry>();
+        registry.TryResolve(SecretVaults.Config, out var vault).ShouldBeTrue();
+        vault.ShouldBeOfType<ConfigurationSecretStore>();
+        registry.TryResolve("azure-keyvault", out _).ShouldBeFalse();
+
+        // The plain ISecretStore (backend connect) and the keyed `config` vault (form-fill) are the one shared instance.
+        sp.GetRequiredKeyedService<ISecretStore>(SecretVaults.Config).ShouldBeSameAs(sp.GetRequiredService<ISecretStore>());
+    }
+
+    [Fact]
     public async Task Honours_configured_endpoint_overrides()
     {
         await using var sp = Build(

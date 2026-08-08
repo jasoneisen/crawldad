@@ -49,6 +49,7 @@ public static class ExecuteRunHandler
 /// <param name="sinks">Resolves download sinks named by the payload.</param>
 /// <param name="scrubber">Scrubs credentials from every persisted event, checkpoint, and stored result (§12).</param>
 /// <param name="secretScope">The per-run secret registry opened for the whole execution (§12).</param>
+/// <param name="secretStores">The CD-6 secret-vault registry a <c>fill.secret</c> resolves against at action time (re-resolved on resume).</param>
 /// <param name="controls">The in-process stop-signal registry (cancel/deadline).</param>
 /// <param name="admissionGate">The concurrent-run admission gate (CD-3): the executor occupies the run's slot while it
 /// drives it (self-healing the count after a restart re-runs an already-admitted run) and frees it at finalisation.</param>
@@ -64,6 +65,7 @@ public sealed class RunExecutor(
     IDownloadSinkRegistry sinks,
     CredentialScrubber scrubber,
     IRunSecretScope secretScope,
+    ISecretStoreRegistry secretStores,
     IRunControlRegistry controls,
     IRunAdmissionGate admissionGate,
     IScreenshotStore screenshots,
@@ -152,7 +154,7 @@ public sealed class RunExecutor(
         RunOutcome outcome;
         try
         {
-            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, tenantId, observer, resume, screenshots, _limits).RunAsync(runCt);
+            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, tenantId, observer, resume, screenshots, _limits, secretStores, secretScope).RunAsync(runCt);
         }
         catch (OperationCanceledException) when (runCt.IsCancellationRequested)
         {

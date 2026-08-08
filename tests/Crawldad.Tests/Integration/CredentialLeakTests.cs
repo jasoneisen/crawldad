@@ -262,6 +262,117 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         durableState.ShouldNotContain(LeakHost.DurableSecretSentinel);   // …the resolved secret is not, anywhere durable
     }
 
+    // ----- CD-6: form-fill secretRef leak sweep --------------------------------
+
+    // The fake caphome-search backend + a secretRef `pw`. The fill types the vault-resolved secret into a form field; the
+    // payload then reads it BACK from the field (attr value, which the fake reflects) and adversarially echoes it into a log
+    // and the shaped result — so the exact-match scrub of the FILL-resolved secret is exercised at every sink, not vacuously
+    // absent. `pw` carries only the REFERENCE (login-password); the secret enters solely through the vault at fill time.
+    private const string _fillLeakPayload =
+        """
+        { "name": "leak-fill", "config": { "backend": "input.backend" },
+          "inputs": { "backend": { "type": "backend" }, "pw": { "type": "secretRef" } }, "vars": {},
+          "steps": [
+            { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement" } },
+            { "fill": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate", "secret": "input.pw" } },
+            { "set": { "var": "typed", "value": "attr({ css: '#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate' }, 'value')" } },
+            { "log": { "level": "info", "message": "the field now holds ${typed}" } }
+          ],
+          "result": "{ echoed: typed, echoedUrl: 'wss://x?token=' + typed }" }
+        """;
+
+    private static JsonObject FakeBackend() => new()
+    {
+        ["adapter"] = "fake",
+        ["options"] = new JsonObject { ["fixture"] = "caphome-search" },
+    };
+
+    [Fact]
+    public async Task A_fill_secret_run_leaks_the_typed_secret_into_no_sink()
+    {
+        var host = await leak.EnsureAsync(chromium);
+        leak.Capturer.Clear();
+
+        // `pw` carries only the reference; the secret is resolved from the tenant's config vault at the fill.
+        var inputs = new JsonObject { ["backend"] = FakeBackend(), ["pw"] = LeakHost.FillRef };
+        var root = await PostAsync(host, Body(_fillLeakPayload, inputs));
+
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+        // The field held the resolved secret and the payload echoed it raw + inside a token= param — both redacted.
+        var result = root.GetProperty("result");
+        result.GetProperty("echoed").GetString().ShouldBe(CredentialScrubber.Redaction);
+        result.GetProperty("echoedUrl").GetString().ShouldBe($"wss://x?token={CredentialScrubber.Redaction}");
+
+        await AssertRunLeaksNothingAsync(host, root, LeakHost.FillSecretSentinel);
+    }
+
+    [Fact]
+    public async Task An_async_fill_secret_run_keeps_the_secret_out_of_events_projections_sse_saga_and_envelopes()
+    {
+        var host = await leak.EnsureAsync(chromium);
+        leak.Capturer.Clear();
+
+        var inputs = new JsonObject { ["backend"] = FakeBackend(), ["pw"] = LeakHost.FillRef };
+        var body = Body(_fillLeakPayload, inputs);
+        body["async"] = true; // drive the durable executor saga: events, SSE, timeline, RunProgress, saga, envelopes all written
+
+        var accepted = await host.Scenario(x =>
+        {
+            x.Post.Json(body).ToUrl("/runs");
+            x.StatusCodeShouldBe(202);
+        });
+        var runId = (await accepted.ReadAsJsonAsync<JsonElement>()).GetProperty("runId").GetGuid();
+        var root = await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(30));
+
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+        root.GetProperty("result").GetProperty("echoed").GetString().ShouldBe(CredentialScrubber.Redaction);
+
+        // The resolved secret is absent from every scrubbed sink…
+        await AssertRunLeaksNothingAsync(host, root, LeakHost.FillSecretSentinel);
+
+        // …and from the durable orchestration state (the saga's inputs+script, every Wolverine envelope body) — while the
+        // REFERENCE is present there (it travels as the `pw` input value): the by-reference boundary holds for form-fill too.
+        var durableState = await DumpDurableStateAsync(host);
+        durableState.ShouldContain(LeakHost.FillRef);                // the reference is persisted at rest (a non-vacuous sweep)…
+        durableState.ShouldNotContain(LeakHost.FillSecretSentinel);  // …the resolved secret is not, anywhere durable
+    }
+
+    // Real-Chromium form-fill parity (browserless → loopback run-server): fill.secret types the vault-resolved secret into a
+    // real <input>; its `input` event echoes the value into #echo, which the run reads back and compares to the expected
+    // secret — proving the real backend types the resolved secret into the field exactly as the fake does (fake ≡ real).
+    private const string _realFillPayload =
+        """
+        { "name": "real-fill", "config": { "backend": "input.backend" },
+          "inputs": { "backend": { "type": "backend" }, "loginUrl": { "type": "string" }, "pw": { "type": "secretRef" }, "expected": { "type": "string" } },
+          "vars": {},
+          "steps": [
+            { "goto": { "url": "${input.loginUrl}" } },
+            { "fill": { "selector": "#pw", "secret": "input.pw" } },
+            { "set": { "var": "matched", "value": "text({ css: '#echo' }) == input.expected" } }
+          ],
+          "result": "{ matched: matched }" }
+        """;
+
+    [Fact]
+    public async Task Fill_secret_types_the_resolved_secret_into_a_real_form_field()
+    {
+        var host = await leak.EnsureAsync(chromium);
+        leak.Capturer.Clear();
+
+        var inputs = new JsonObject
+        {
+            ["backend"] = Backend("browserless", LeakHost.BrowserlessRef, new JsonObject { ["region"] = "lon" }),
+            ["loginUrl"] = leak.LoginUrl,
+            ["pw"] = LeakHost.FunctionalFillRef,
+            ["expected"] = LeakHost.FunctionalFillSecret,
+        };
+
+        var root = await PostAsync(host, Body(_realFillPayload, inputs));
+
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+        root.GetProperty("result").GetProperty("matched").GetBoolean().ShouldBeTrue(); // real Chromium filled the field with the vault secret
+    }
+
     // ----- the sink sweep -----------------------------------------------------
 
     private async Task AssertRunLeaksNothingAsync(IAlbaHost host, JsonElement responseRoot, string sentinel)
@@ -387,10 +498,29 @@ public sealed class LeakHost : IAsyncLifetime
     /// (distinct from <see cref="TokenSentinel"/>, which the echo tests deliberately place into a raw input value).</summary>
     internal const string DurableSecretSentinel = "brwsrless_DURABLEREST_secret_0123456789abcdefABCDEF";
 
+    /// <summary>The CD-6 form-fill secret sentinel: the value the tenant's <see cref="FillRef"/> resolves to via the REAL
+    /// config vault (<c>Secrets:{tenant}:{ref}</c>). It is NEVER passed as a plain input — only the reference travels — so a
+    /// hit at any sink or at rest is a real form-fill-secret breach (the secret enters the run only through <c>fill.secret</c>).</summary>
+    internal const string FillSecretSentinel = "f1llSECRET_LEAKCANARY_pw_0123456789abcdefABCDEF";
+
+    /// <summary>A benign form-fill secret for the real-Chromium functional parity (not a leak sentinel — this run is not swept).</summary>
+    internal const string FunctionalFillSecret = "correct-horse-battery-staple-42";
+
     internal const string BrowserlessRef = "browserless-cred";
     internal const string BrowserbaseRef = "browserbase-cred";
     internal const string ConnectUrlRef = "browserbase-connecturl-cred";
     internal const string DurableRef = "durable-byref-cred";
+
+    /// <summary>The CD-6 form-fill secretRef (its vault value is <see cref="FillSecretSentinel"/>, per-tenant in config).</summary>
+    internal const string FillRef = "login-password";
+
+    /// <summary>The functional-parity form-fill secretRef (its vault value is <see cref="FunctionalFillSecret"/>).</summary>
+    internal const string FunctionalFillRef = "functional-login-password";
+
+    // A login page whose input echoes its typed value into #echo on the `input` event — so a real fill (which dispatches
+    // that event and sets the value PROPERTY, not the HTML attribute) is verifiable via text(#echo) on real Chromium.
+    private const string _loginPage =
+        "<!doctype html><html><body><input id='pw' oninput=\"document.getElementById('echo').textContent=this.value\"><div id='echo'></div></body></html>";
 
     private RunServerHandle? _runServer;
     private CdpChromium? _cdp;
@@ -399,6 +529,9 @@ public sealed class LeakHost : IAsyncLifetime
 
     /// <summary>Captures every rendered log line (post-scrub) so the sweep can assert no credential reaches a sink.</summary>
     internal CapturingLoggerProvider Capturer { get; } = new();
+
+    /// <summary>The loopback login page URL the CD-6 form-fill tests navigate to (built once the stub site is up).</summary>
+    internal string LoginUrl => _stub!.Url("/login");
 
     public Task InitializeAsync() => Task.CompletedTask; // built lazily once the shared driver is available
 
@@ -414,8 +547,10 @@ public sealed class LeakHost : IAsyncLifetime
 
         _runServer = await RealChromiumFixture.StartRunServerAsync();
         _cdp = await chromium.LaunchCdpChromiumAsync();
-        _stub = new LocalSite().Map("/v1/sessions", "application/json",
-            $$"""{"connectUrl":"{{_cdp.Endpoint}}","region":"us-east-1","expiresAt":"2099-01-01T00:00:00Z"}""");
+        _stub = new LocalSite()
+            .Map("/v1/sessions", "application/json",
+                $$"""{"connectUrl":"{{_cdp.Endpoint}}","region":"us-east-1","expiresAt":"2099-01-01T00:00:00Z"}""")
+            .Map("/login", "text/html", _loginPage); // CD-6: the real-Chromium form-fill target
 
         var secrets = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -431,6 +566,12 @@ public sealed class LeakHost : IAsyncLifetime
             builder.UseCrawldadTestDefaults(SchemaName);
             builder.UseSetting("Crawldad:Browserless:EndpointTemplate", _runServer.WsBase);
             builder.UseSetting("Crawldad:Browserbase:ApiBaseUrl", _stub.BaseUrl.TrimEnd('/'));
+
+            // CD-6: the tenant-scoped form-fill secrets, resolved by the REAL config vault (Secrets:{tenant}:{ref}) — the
+            // connect credentials above go through the MapSecretStore override, but the form-fill path exercises the real
+            // ConfigurationSecretStore, so a tenant-namespaced miss (another tenant's key) genuinely fails to resolve.
+            builder.UseSetting($"Secrets:{TestTenants.PrimaryId}:{FillRef}", FillSecretSentinel);
+            builder.UseSetting($"Secrets:{TestTenants.PrimaryId}:{FunctionalFillRef}", FunctionalFillSecret);
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<TimeProvider>(new FakeClock());

@@ -42,6 +42,10 @@ internal static class RunEventScrubber
         // an extracted key / value-ref, a blob ref, a failure slug, or a region are all scrubbed so no sink can leak.
         Navigated navigated => navigated with { Url = scrubber.Scrub(navigated.Url) },
         Clicked clicked => clicked with { SelectorText = scrubber.Scrub(clicked.SelectorText) },
+
+        // Filled (CD-6) carries `secret:<refName>` — a reference name, safe by construction — but scrub defensively so even a
+        // ref name that happened to collide with a registered secret cannot surface. The resolved secret is never in this event.
+        Filled filled => filled with { Target = scrubber.Scrub(filled.Target) },
         Extracted extracted => extracted with { Key = scrubber.Scrub(extracted.Key), ValueRef = scrubber.Scrub(extracted.ValueRef) },
         Downloaded downloaded => downloaded with { BlobRef = scrubber.Scrub(downloaded.BlobRef) },
         StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error) },

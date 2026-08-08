@@ -18,6 +18,7 @@ internal sealed class SemanticWalker
 {
     private readonly List<PayloadIssue> _issues;
     private readonly HashSet<string> _inScope = new(StringComparer.Ordinal) { "input" };
+    private IReadOnlySet<string> _secretRefInputs = new HashSet<string>(StringComparer.Ordinal);
     private int _stepIndex = -1;
     private string _stepKind = "";
 
@@ -27,6 +28,10 @@ internal sealed class SemanticWalker
     /// <param name="payload">The schema-valid payload document.</param>
     public void Walk(JsonElement payload)
     {
+        // CD-6: the declared secretRef inputs — the only inputs a fill.secret may reference, and the ones no expression/template
+        // may name (the structural guarantee that a secret never enters the expression value space).
+        _secretRefInputs = SecretRefInputs.Names(payload);
+
         // config.backend resolves before vars, so it may reference only input (§8.1 order).
         _stepKind = "config";
         CheckExpr(payload.GetProperty("config").GetProperty("backend").GetString()!, "/config/backend");
@@ -141,7 +146,15 @@ internal sealed class SemanticWalker
             case "fill":
                 CheckSel(body.GetProperty("selector"), $"{p}/selector");
                 CheckNodeIn(body, p);
-                CheckExpr(body.GetProperty("value").GetString()!, $"{p}/value");
+                if (body.TryGetProperty("secret", out var fillSecret))
+                {
+                    CheckFillSecret(fillSecret.GetString()!, $"{p}/secret"); // CD-6: a restricted secretRef reference, never an Expr
+                }
+                else
+                {
+                    CheckExpr(body.GetProperty("value").GetString()!, $"{p}/value");
+                }
+
                 break;
             default: // clear
                 CheckSel(body.GetProperty("selector"), $"{p}/selector");
@@ -345,6 +358,7 @@ internal sealed class SemanticWalker
         }
 
         CheckDefined(expr.FreeIdentifiers(), path);
+        CheckNoSecretRefs(expr.InputMemberReferences(), path);
     }
 
     private void CheckTmpl(string source, string path)
@@ -361,6 +375,51 @@ internal sealed class SemanticWalker
         }
 
         CheckDefined(template.FreeIdentifiers(), path);
+        CheckNoSecretRefs(template.InputMemberReferences(), path);
+    }
+
+    // CD-6: a fill.secret is a restricted reference, not an Expr — it must be exactly `input.<name>` naming a declared
+    // secretRef input. Anything else (a general expression, or a reference to a non-secretRef input) is rejected, so the
+    // secret channel and the expression value space stay disjoint.
+    private void CheckFillSecret(string source, string path)
+    {
+        CrawldadExpression reference;
+        try
+        {
+            reference = CrawldadExpression.Parse(source);
+        }
+        catch (ExpressionParseException ex)
+        {
+            _issues.Add(new PayloadIssue(path, ex.Code, ex.Message, _stepIndex, _stepKind));
+            return;
+        }
+
+        if (!reference.TryGetInputMemberReference(out var name) || !_secretRefInputs.Contains(name))
+        {
+            _issues.Add(new PayloadIssue(
+                path, InterpreterErrorCodes.FillSecretNotSecretRef,
+                "fill.secret must reference a declared secretRef input via 'input.<name>'", _stepIndex, _stepKind));
+        }
+    }
+
+    // CD-6: reject a secretRef input named anywhere in the expression value space — a secretRef may be consumed ONLY by
+    // fill.secret, so a secret can never be interpolated into a log/result/selector or otherwise routed through an Expr.
+    private void CheckNoSecretRefs(IReadOnlySet<string> inputMembers, string path)
+    {
+        if (_secretRefInputs.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var name in inputMembers)
+        {
+            if (_secretRefInputs.Contains(name))
+            {
+                _issues.Add(new PayloadIssue(
+                    path, InterpreterErrorCodes.SecretRefInExpression,
+                    $"secretRef input '{name}' can only be used in fill.secret, not in an expression", _stepIndex, _stepKind));
+            }
+        }
     }
 
     private void CheckPath(string source, string path)

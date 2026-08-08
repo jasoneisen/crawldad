@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 /// <summary>
@@ -69,5 +71,42 @@ public sealed class CrawldadExpression
         var into = new HashSet<string>(StringComparer.Ordinal);
         _root.CollectFreeIdentifiers(into, new HashSet<string>(StringComparer.Ordinal));
         return into;
+    }
+
+    /// <summary>
+    /// The top-level <c>input</c> keys this expression reads via a direct <c>input.&lt;key&gt;</c> / <c>input["key"]</c>
+    /// access (CD-6): the static half of the guarantee that a <c>secretRef</c> input is consumed only by <c>fill.secret</c>.
+    /// A pure static walk, no evaluation.
+    /// </summary>
+    /// <returns>The distinct referenced <c>input</c> key names.</returns>
+    public IReadOnlySet<string> InputMemberReferences()
+    {
+        var into = new HashSet<string>(StringComparer.Ordinal);
+        _root.CollectInputMembers(into, new HashSet<string>(StringComparer.Ordinal));
+        return into;
+    }
+
+    /// <summary>
+    /// When this expression is <b>exactly</b> a single <c>input.&lt;name&gt;</c> (or <c>input["name"]</c>) reference — the
+    /// only shape a <c>fill.secret</c> may take (CD-6) — yields that input name. Any richer expression (a call, an operator,
+    /// a nested access, a bare identifier) is rejected, so <c>fill.secret</c> is a restricted reference, never the general
+    /// expression channel a secret must be structurally unable to enter.
+    /// </summary>
+    /// <param name="inputName">The referenced secretRef input name when the shape matches.</param>
+    /// <returns><see langword="true"/> when the root is a lone <c>input.&lt;name&gt;</c> reference.</returns>
+    public bool TryGetInputMemberReference([NotNullWhen(true)] out string? inputName)
+    {
+        switch (_root)
+        {
+            case MemberNode { Target: IdentifierNode { Name: "input" }, Name: var name }:
+                inputName = name;
+                return true;
+            case IndexNode { Target: IdentifierNode { Name: "input" }, Index: LiteralNode { Value: string key } }:
+                inputName = key;
+                return true;
+            default:
+                inputName = null;
+                return false;
+        }
     }
 }

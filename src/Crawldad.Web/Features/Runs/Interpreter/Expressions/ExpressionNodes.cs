@@ -67,16 +67,40 @@ internal abstract class ExpressionNode
     /// <param name="into">Accumulates the free identifier names.</param>
     /// <param name="bound">Names currently bound by enclosing binding builtins (excluded from <paramref name="into"/>).</param>
     public abstract void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound);
+
+    /// <summary>
+    /// Collects the top-level <c>input</c> keys this subtree reads via a direct <c>input.&lt;key&gt;</c> member access or
+    /// <c>input["key"]</c> string index — the static half of the CD-6 structural guarantee: a <c>secretRef</c> input may be
+    /// consumed <b>only</b> by <c>fill.secret</c>, so the semantic walker rejects any expression/template that names one.
+    /// Only the free <c>input</c> identifier is inspected (a binding builtin that shadows <c>input</c> suppresses detection in
+    /// its body); a bare <c>input</c> used whole is not a keyed reference (secretRef inputs are absent from the run scope, so
+    /// it cannot surface one). A pure static walk, no evaluation.
+    /// </summary>
+    /// <param name="into">Accumulates the referenced <c>input</c> key names.</param>
+    /// <param name="bound">Names currently bound by enclosing binding builtins (a bound <c>input</c> is not the run input).</param>
+    public abstract void CollectInputMembers(ISet<string> into, ISet<string> bound);
+
+    // True when this node is the free `input` identifier (the run-input root, not a binding-shadowed alias).
+    private protected static bool IsFreeInput(ExpressionNode node, ISet<string> bound) =>
+        node is IdentifierNode { Name: "input" } && !bound.Contains("input");
 }
 
 /// <summary>A constant: number (<see cref="long"/>/<see cref="double"/>), string, bool, or null.</summary>
 internal sealed class LiteralNode(object? value) : ExpressionNode
 {
-    protected override ValueTask<object?> EvaluateCoreAsync(EvalContext ctx) => new(value);
+    /// <summary>The constant value — read by <see cref="IndexNode"/> to recognise a string-literal <c>input["key"]</c> index (CD-6).</summary>
+    public object? Value { get; } = value;
+
+    protected override ValueTask<object?> EvaluateCoreAsync(EvalContext ctx) => new(Value);
 
     public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
     {
         // A literal reads no variables.
+    }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        // A literal reads no input keys.
     }
 }
 
@@ -99,6 +123,11 @@ internal sealed class IdentifierNode(string name) : ExpressionNode
             into.Add(Name);
         }
     }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        // A bare identifier (including a bare `input`) is not a keyed `input.<key>` reference.
+    }
 }
 
 /// <summary>An array literal <c>[…]</c> → a fresh <see cref="List{T}"/> of the evaluated elements.</summary>
@@ -120,6 +149,14 @@ internal sealed class ArrayNode(IReadOnlyList<ExpressionNode> items) : Expressio
         foreach (var item in items)
         {
             item.CollectFreeIdentifiers(into, bound);
+        }
+    }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        foreach (var item in items)
+        {
+            item.CollectInputMembers(into, bound);
         }
     }
 }
@@ -146,6 +183,14 @@ internal sealed class ObjectNode(IReadOnlyList<KeyValuePair<string, ExpressionNo
             node.CollectFreeIdentifiers(into, bound);
         }
     }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        foreach (var (_, node) in entries)
+        {
+            node.CollectInputMembers(into, bound);
+        }
+    }
 }
 
 /// <summary>Logical negation <c>!x</c>: operand must be bool (§7.1).</summary>
@@ -156,6 +201,9 @@ internal sealed class NotNode(ExpressionNode operand) : ExpressionNode
 
     public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
         operand.CollectFreeIdentifiers(into, bound);
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound) =>
+        operand.CollectInputMembers(into, bound);
 }
 
 /// <summary>Arithmetic negation <c>-x</c>: operand must be a number, else a terminal <c>type_error</c>.</summary>
@@ -174,6 +222,9 @@ internal sealed class NegateNode(ExpressionNode operand) : ExpressionNode
 
     public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
         operand.CollectFreeIdentifiers(into, bound);
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound) =>
+        operand.CollectInputMembers(into, bound);
 }
 
 /// <summary>An eager binary operator (<c>+ - * / % == != &lt; &lt;= &gt; &gt;=</c>) applied via a value-model delegate.</summary>
@@ -186,6 +237,12 @@ internal sealed class BinaryNode(ExpressionNode left, ExpressionNode right, Func
     {
         left.CollectFreeIdentifiers(into, bound);
         right.CollectFreeIdentifiers(into, bound);
+    }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        left.CollectInputMembers(into, bound);
+        right.CollectInputMembers(into, bound);
     }
 }
 
@@ -207,6 +264,12 @@ internal sealed class AndNode(ExpressionNode left, ExpressionNode right) : Expre
         left.CollectFreeIdentifiers(into, bound);
         right.CollectFreeIdentifiers(into, bound);
     }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        left.CollectInputMembers(into, bound);
+        right.CollectInputMembers(into, bound);
+    }
 }
 
 /// <summary>Short-circuiting <c>||</c>: both operands must be bool; the right is not evaluated when the left is true.</summary>
@@ -227,6 +290,12 @@ internal sealed class OrNode(ExpressionNode left, ExpressionNode right) : Expres
         left.CollectFreeIdentifiers(into, bound);
         right.CollectFreeIdentifiers(into, bound);
     }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        left.CollectInputMembers(into, bound);
+        right.CollectInputMembers(into, bound);
+    }
 }
 
 /// <summary>Ternary <c>c ? a : b</c>: the condition must be bool; only the taken branch is evaluated.</summary>
@@ -243,25 +312,49 @@ internal sealed class TernaryNode(ExpressionNode condition, ExpressionNode ifTru
         ifTrue.CollectFreeIdentifiers(into, bound);
         ifFalse.CollectFreeIdentifiers(into, bound);
     }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        condition.CollectInputMembers(into, bound);
+        ifTrue.CollectInputMembers(into, bound);
+        ifFalse.CollectInputMembers(into, bound);
+    }
 }
 
 /// <summary>Member access <c>a.b</c>: map → value (absent key → null), null → null (models C# <c>?.</c>), else <c>type_error</c>.</summary>
 internal sealed class MemberNode(ExpressionNode target, string name) : ExpressionNode
 {
+    /// <summary>The target subtree the member is read from — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> (CD-6).</summary>
+    public ExpressionNode Target { get; } = target;
+
+    /// <summary>The member key — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> (CD-6).</summary>
+    public string Name { get; } = name;
+
     protected override async ValueTask<object?> EvaluateCoreAsync(EvalContext ctx)
     {
-        var value = await target.EvaluateAsync(ctx);
+        var value = await Target.EvaluateAsync(ctx);
         return value switch
         {
             null => null,
-            Dictionary<string, object?> map => map.GetValueOrDefault(name),
-            _ => throw ExpressionValues.TypeError($"cannot access member '.{name}' on {ExpressionValues.TypeName(value)}"),
+            Dictionary<string, object?> map => map.GetValueOrDefault(Name),
+            _ => throw ExpressionValues.TypeError($"cannot access member '.{Name}' on {ExpressionValues.TypeName(value)}"),
         };
     }
 
     // The member name is a fixed key, not a variable reference; only the target subtree reads variables.
     public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
-        target.CollectFreeIdentifiers(into, bound);
+        Target.CollectFreeIdentifiers(into, bound);
+
+    // `input.<name>` names a top-level input key — the CD-6 secretRef guardrail's detection point.
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        if (IsFreeInput(Target, bound))
+        {
+            into.Add(Name);
+        }
+
+        Target.CollectInputMembers(into, bound);
+    }
 }
 
 /// <summary>
@@ -271,10 +364,16 @@ internal sealed class MemberNode(ExpressionNode target, string name) : Expressio
 /// </summary>
 internal sealed class IndexNode(ExpressionNode target, ExpressionNode index) : ExpressionNode
 {
+    /// <summary>The indexed target subtree — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> (CD-6).</summary>
+    public ExpressionNode Target { get; } = target;
+
+    /// <summary>The index subtree — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> to recognise a string-literal key (CD-6).</summary>
+    public ExpressionNode Index { get; } = index;
+
     protected override async ValueTask<object?> EvaluateCoreAsync(EvalContext ctx)
     {
-        var value = await target.EvaluateAsync(ctx);
-        var key = await index.EvaluateAsync(ctx);
+        var value = await Target.EvaluateAsync(ctx);
+        var key = await Index.EvaluateAsync(ctx);
         switch (value)
         {
             case List<object?> list:
@@ -310,8 +409,21 @@ internal sealed class IndexNode(ExpressionNode target, ExpressionNode index) : E
 
     public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound)
     {
-        target.CollectFreeIdentifiers(into, bound);
-        index.CollectFreeIdentifiers(into, bound);
+        Target.CollectFreeIdentifiers(into, bound);
+        Index.CollectFreeIdentifiers(into, bound);
+    }
+
+    // `input["name"]` with a string literal index names a top-level input key (a computed index cannot be statically
+    // resolved to a key, so it is not flagged — but a secretRef input is absent from the run scope, so it yields null there).
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        if (IsFreeInput(Target, bound) && Index is LiteralNode { Value: string key })
+        {
+            into.Add(key);
+        }
+
+        Target.CollectInputMembers(into, bound);
+        Index.CollectInputMembers(into, bound);
     }
 }
 
@@ -327,6 +439,14 @@ internal sealed class CallNode(BuiltinInvoker invoke, IReadOnlyList<ExpressionNo
         foreach (var arg in args)
         {
             arg.CollectFreeIdentifiers(into, bound);
+        }
+    }
+
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        foreach (var arg in args)
+        {
+            arg.CollectInputMembers(into, bound);
         }
     }
 }
@@ -353,6 +473,19 @@ internal sealed class BindingCallNode(
         source.CollectFreeIdentifiers(into, bound);
         var added = bound.Add(binding);
         body.CollectFreeIdentifiers(into, bound);
+        if (added)
+        {
+            bound.Remove(binding);
+        }
+    }
+
+    // Mirror the binding-shadowing rule: a binding named `input` (unusual, but legal) shadows the run input inside the body,
+    // so an `input.<key>` there is the element's, not a secretRef reference.
+    public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
+    {
+        source.CollectInputMembers(into, bound);
+        var added = bound.Add(binding);
+        body.CollectInputMembers(into, bound);
         if (added)
         {
             bound.Remove(binding);
