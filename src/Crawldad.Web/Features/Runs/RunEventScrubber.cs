@@ -26,6 +26,14 @@ internal static class RunEventScrubber
             InputKeys = [.. started.InputKeys.Select(scrubber.Scrub)],
         },
 
+        // RunQueued (CD-16) is a run's opening event when it queues at the cap; it records the same payload name + input key
+        // NAMES as RunStarted, so scrub both defensively for the same reason.
+        RunQueued queued => queued with
+        {
+            PayloadName = scrubber.Scrub(queued.PayloadName),
+            InputKeys = [.. queued.InputKeys.Select(scrubber.Scrub)],
+        },
+
         // A log node can interpolate an input/extracted value into its ${…} message — the primary in-event leak vector.
         LogEmitted log => log with { Message = scrubber.Scrub(log.Message) },
 

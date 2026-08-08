@@ -16,6 +16,10 @@ public enum RunLifecycle
 
     /// <summary>Cancelled between steps (§11) — the backend session was torn down cleanly.</summary>
     Cancelled,
+
+    /// <summary>Admitted at the concurrent-run cap and waiting for a slot (CD-16) — not yet executing. Declared last so the
+    /// ordinal is additive for the persisted snapshot.</summary>
+    Queued,
 }
 
 /// <summary>
@@ -32,10 +36,22 @@ public enum RunLifecycle
 /// <param name="PayloadRevision">The pinned payload revision (§14.2), or null for an inline run.</param>
 public sealed record Run(Guid Id, string PayloadName, string ScriptHash, RunLifecycle Status, Guid? PayloadId, int? PayloadRevision)
 {
-    /// <summary>Folds the opening event into a fresh aggregate (Marten assigns <see cref="Id"/> from the stream).</summary>
+    /// <summary>Folds the opening event of a run started immediately (under the cap) into a fresh aggregate (Marten assigns
+    /// <see cref="Id"/> from the stream).</summary>
     /// <param name="started">The opening event.</param>
     public static Run Create(RunStarted started) =>
         new(Guid.Empty, started.PayloadName, started.ScriptHash, RunLifecycle.Running, started.PayloadId, started.PayloadRevision);
+
+    /// <summary>Folds the opening event of a run <b>queued</b> at the concurrent-run cap (CD-16) into a fresh aggregate — the
+    /// alternative stream opener to <see cref="Create(RunStarted)"/>. It becomes <see cref="RunLifecycle.Running"/> on
+    /// <see cref="RunDequeued"/> when a slot frees.</summary>
+    /// <param name="queued">The opening event of a queued run.</param>
+    public static Run Create(RunQueued queued) =>
+        new(Guid.Empty, queued.PayloadName, queued.ScriptHash, RunLifecycle.Queued, queued.PayloadId, queued.PayloadRevision);
+
+    /// <summary>Marks a queued run promoted to execution (§CD-16): the queued→running transition.</summary>
+    /// <param name="dequeued">The promotion event.</param>
+    public Run Apply(RunDequeued dequeued) => this with { Status = RunLifecycle.Running };
 
     /// <summary>Marks the run succeeded.</summary>
     /// <param name="succeeded">The success event.</param>

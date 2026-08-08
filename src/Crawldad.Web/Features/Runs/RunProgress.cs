@@ -46,4 +46,10 @@ public sealed class RunProgress
 
     /// <summary>The run counters (set at any terminal status), else null.</summary>
     public RunStats? Stats { get; set; }
+
+    /// <summary>How long the run waited in the admission queue before it started, in milliseconds (CD-16): set at promotion for
+    /// a run that was <see cref="RunStatus.Queued"/>, null for a run started immediately under the cap. Stored here — a plain,
+    /// tenant-scoped, queryable document field — so a tenant's <b>p95 queue wait</b> (the pricing-model upgrade signal) is
+    /// computable from stored data without a metrics library (docs/PRODUCT.md §Pv.3).</summary>
+    public long? QueueWaitMs { get; set; }
 }

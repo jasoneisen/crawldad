@@ -24,6 +24,40 @@ public sealed record RunStarted(
     Guid? PayloadId,
     int? PayloadRevision);
 
+/// <summary>
+/// The run was admitted at the tenant's concurrent-run cap and <b>queued</b> for a slot (CD-16, docs/PRODUCT.md §Pv.3): the
+/// opening event of a queued run's stream — the durable, restart-surviving record that the run exists and is waiting, and the
+/// reason its stream (and SSE tail) is observable while it holds no slot. It carries the same PII-safe identity fields as
+/// <see cref="RunStarted"/> (payload name, script hash, input key <em>names</em> only, and the pinned payload/revision, §12)
+/// so the <c>Run</c> snapshot and <c>RunTimeline</c> open from it, plus the enqueue instant. A queued run reaches
+/// <see cref="RunDequeued"/> when a slot frees; a run started immediately (under the cap) opens with <see cref="RunStarted"/>
+/// instead and never emits this.
+/// </summary>
+/// <param name="PayloadName">The payload's logical name (from its <c>name</c> field).</param>
+/// <param name="ScriptHash">SHA-256 (lowercase hex) of the payload JSON that will run — pins exactly what is queued (drift/audit).</param>
+/// <param name="QueuedAt">When the run was enqueued (through the <see cref="TimeProvider"/> seam) — the start of its queue wait.</param>
+/// <param name="InputKeys">The names of the supplied inputs — never their values (PII discipline, §12).</param>
+/// <param name="PayloadId">The pinned managed payload (§14.2), or null for an inline run.</param>
+/// <param name="PayloadRevision">The pinned payload revision (§14.2), or null for an inline run.</param>
+public sealed record RunQueued(
+    string PayloadName,
+    string ScriptHash,
+    DateTimeOffset QueuedAt,
+    IReadOnlyList<string> InputKeys,
+    Guid? PayloadId,
+    int? PayloadRevision);
+
+/// <summary>
+/// A queued run was promoted to execution when a slot freed (CD-16): the queued→running transition appended to a
+/// <see cref="RunQueued"/> stream at promotion, right before the durable executor is kicked. Its presence is what an SSE tail
+/// observes as the run leaving the queue, and it carries the run's realised queue wait (enqueue→execution-start) — the per-run
+/// datum the tenant's p95 queue-wait aggregates from (the upgrade signal the pricing model depends on). The run's wall-clock
+/// deadline (§8.4) is scheduled from here, not from admission, so time spent queued does not count against it.
+/// </summary>
+/// <param name="StartedAt">When the run left the queue and began executing (through the <see cref="TimeProvider"/> seam).</param>
+/// <param name="QueueWaitMs">How long the run waited in the queue (<see cref="StartedAt"/> minus its enqueue instant), in milliseconds.</param>
+public sealed record RunDequeued(DateTimeOffset StartedAt, long QueueWaitMs);
+
 /// <summary>The run completed successfully.</summary>
 /// <param name="Stats">The run counters.</param>
 /// <param name="FinishedAt">When the run finished.</param>
