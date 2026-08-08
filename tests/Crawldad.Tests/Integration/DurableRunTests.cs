@@ -1,10 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Alba;
+using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using Wolverine;
 
 namespace Crawldad.Tests.Integration;
 
@@ -218,6 +220,10 @@ public class DurableRunTests(DurableFixture fixture)
         var failure = terminal.GetProperty("failure");
         failure.GetProperty("class").GetString().ShouldBe("terminal");
         failure.GetProperty("code").GetString().ShouldBe("run_deadline_exceeded");
+
+        // CD-5 scenario 2: a run its own deadline stopped is the one case that already-spent timeout can no longer janitor —
+        // the executor's RunFinished completes the saga instead, so its script+inputs are still reclaimed end-to-end.
+        await DurableHost.WaitUntilSagaGoneAsync(await fixture.EnsureAsync(), runId, TimeSpan.FromSeconds(20));
     }
 
     // ----- kill-and-restart resume (the load-bearing WP2 gate, §11) ----------
@@ -481,5 +487,157 @@ public class DurableRunTests(DurableFixture fixture)
         var progress = await read.LoadAsync<RunProgress>(runId);
         progress!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Failed); // empty inputs → no backend → terminal
         progress.Failure!.Code.ShouldBe("invalid_backend_binding");
+    }
+
+    // ----- saga completion at terminal (CD-5, §14.2) -------------------------
+
+    private const string _seedScript = """{ "crawldad": "1", "name": "seed" }""";
+    private const string _seedInputs = """{ "backend": { "credentialRef": "the-ref" } }""";
+
+    // Seeds a saga (as StartOrHandle would leave it — its ScriptHash set) and, optionally, the run's RunProgress row. The
+    // saga's document id IS the run id, so the deadline/finished handlers correlate to it by SagaIdentity.
+    private static async Task SeedSagaAsync(IAlbaHost host, Guid runId, RunStatus? progressStatus)
+    {
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        session.Store(new RunExecutorSaga { Id = runId, PayloadName = "seed", ScriptHash = "seedhash", Script = _seedScript, Inputs = _seedInputs });
+        if (progressStatus is { } status)
+        {
+            session.Store(new RunProgress { Id = runId, Status = status });
+        }
+
+        await session.SaveChangesAsync();
+    }
+
+    private static async Task<RunExecutorSaga?> LoadSagaAsync(IAlbaHost host, Guid runId)
+    {
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        return await session.LoadAsync<RunExecutorSaga>(runId);
+    }
+
+    // Drives one durable message through its real generated handler inline, under the run's tenant — so the saga is loaded,
+    // handled, and stored/deleted exactly as a scheduled/redelivered message would, with no wall-clock wait.
+    private static async Task InvokeAsync(IAlbaHost host, object message)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IMessageBus>().InvokeForTenantAsync(TestTenants.PrimaryId, message);
+    }
+
+    [Fact]
+    public async Task A_late_deadline_completes_the_saga_of_a_finished_run()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+        await SeedSagaAsync(host, runId, RunStatus.Succeeded);
+
+        // The already-scheduled deadline fires AFTER the run finished early (Wolverine never cancels it): it finds the run
+        // terminal and doubles as the janitor, reclaiming the saga's script+inputs (SECURITY.md "Durable state at rest").
+        await InvokeAsync(host, new RunDeadline(runId, TimeSpan.Zero));
+
+        (await LoadSagaAsync(host, runId)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_deadline_after_a_terminal_commit_with_no_finish_signal_reclaims_the_saga()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+
+        // The crash window: the terminal RunProgress committed but the finaliser's RunFinished never ran, so the saga lingers.
+        await SeedSagaAsync(host, runId, RunStatus.Failed);
+        (await LoadSagaAsync(host, runId)).ShouldNotBeNull();
+
+        // On the "next host" the durable deadline is still scheduled; when it fires it is the crash-safe backstop.
+        await InvokeAsync(host, new RunDeadline(runId, TimeSpan.Zero));
+
+        (await LoadSagaAsync(host, runId)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_deadline_for_a_saga_whose_progress_row_is_absent_completes_it()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+        await SeedSagaAsync(host, runId, progressStatus: null); // no RunProgress row at all
+
+        await InvokeAsync(host, new RunDeadline(runId, TimeSpan.Zero));
+
+        (await LoadSagaAsync(host, runId)).ShouldBeNull(); // nothing to resume — reclaim the orphan saga
+    }
+
+    [Fact]
+    public async Task A_deadline_while_the_run_is_still_running_leaves_the_saga_for_resume()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+        await SeedSagaAsync(host, runId, RunStatus.Running); // still running (e.g. mid-recovery), no control registered
+
+        await InvokeAsync(host, new RunDeadline(runId, TimeSpan.Zero));
+
+        // The resume invariant: a still-running run's saga is NOT completed — its script+inputs remain the resume source.
+        var saga = await LoadSagaAsync(host, runId);
+        saga.ShouldNotBeNull();
+        saga.Script.ShouldBe(_seedScript);
+        saga.Inputs.ShouldBe(_seedInputs);
+    }
+
+    [Fact]
+    public async Task A_deadline_while_the_run_is_still_running_stops_it_via_its_control()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+        await SeedSagaAsync(host, runId, RunStatus.Running);
+
+        var controls = host.Services.GetRequiredService<IRunControlRegistry>();
+        var control = controls.GetOrAdd(runId);
+        control.TryClaim();
+        try
+        {
+            await InvokeAsync(host, new RunDeadline(runId, TimeSpan.Zero));
+
+            control.StopReason.ShouldBe(RunStopReason.Deadline);   // enforced the wall-clock deadline (§8.4)
+            (await LoadSagaAsync(host, runId)).ShouldNotBeNull();  // NOT completed here — RunFinished completes it post-finalise
+        }
+        finally
+        {
+            controls.Remove(runId);
+        }
+    }
+
+    [Fact]
+    public async Task A_run_finished_signal_completes_the_saga_then_no_ops_when_it_is_already_gone()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+        await SeedSagaAsync(host, runId, RunStatus.Succeeded);
+
+        await InvokeAsync(host, new RunFinished(runId)); // the finaliser's prompt cleanup
+        (await LoadSagaAsync(host, runId)).ShouldBeNull();
+
+        await InvokeAsync(host, new RunFinished(runId)); // redelivery after the saga is gone — NotFound no-op, no throw
+    }
+
+    [Fact]
+    public async Task A_redelivered_start_run_creates_no_second_saga_and_does_not_error()
+    {
+        var host = await fixture.EnsureAsync();
+        var runId = Guid.NewGuid();
+        var command = new StartRun(runId, "n", "redeliverhash",
+            """{ "crawldad": "1", "name": "n", "config": { "backend": "input.backend" }, "steps": [], "result": "'ok'" }""",
+            "{}", null, null, 90_000);
+
+        await InvokeAsync(host, command);                 // first delivery — starts the saga
+        (await LoadSagaAsync(host, runId)).ShouldNotBeNull();
+
+        // The redelivery must be a genuine no-op: the load-first starter finds the existing saga and returns — no second saga,
+        // no re-kicked executor, and NOT the DocumentAlreadyExistsException a straight Insert would throw (which would surface
+        // out of this InvokeForTenantAsync and fail the test).
+        await InvokeAsync(host, command);
+
+        var saga = await LoadSagaAsync(host, runId);
+        saga.ShouldNotBeNull();
+        saga.Id.ShouldBe(runId);
+        saga.ScriptHash.ShouldBe("redeliverhash");
     }
 }
