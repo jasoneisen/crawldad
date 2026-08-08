@@ -57,9 +57,10 @@ public static class CancelRunEndpoint
         }
         else if (progress.Status == RunStatus.Queued)
         {
-            // Cancel-while-queued (CD-16): dequeue and drive to the cancelled terminal state. The run held no slot, so this
-            // frees nothing and promotes nothing.
-            await queue.CancelQueuedAsync(session, progress, ct);
+            // Cancel-while-queued (CD-16): dequeue and drive to the cancelled terminal state under the run stream's exclusive
+            // lock. The run held no slot, so this frees nothing and promotes nothing. A lost claim (the run promoted in the
+            // race between our load and the claim) leaves the now-running run alone — the caller may re-cancel it.
+            await queue.CancelQueuedAsync(session.TenantId!, id, ct);
         }
 
         return Results.Accepted($"/runs/{id}", acknowledged);

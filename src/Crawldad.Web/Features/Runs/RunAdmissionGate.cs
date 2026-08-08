@@ -33,6 +33,14 @@ public interface IRunAdmissionGate
     /// <param name="tenantId">The run's tenant.</param>
     /// <param name="runId">The run whose slot to free.</param>
     void Release(string tenantId, Guid runId);
+
+    /// <summary>Whether the tenant currently holds fewer slots than its cap — i.e. a slot is free right now. A racy hint (the
+    /// count can change the instant after), used only to decide whether an enqueue should nudge a promotion (CD-16): a run that
+    /// enqueues in the narrow window just after the last slot frees would otherwise sit behind idle capacity with no pending
+    /// trigger. When the cap is full (the common at-cap enqueue) this is false, so no spurious trigger is published.</summary>
+    /// <param name="tenantId">The tenant to check.</param>
+    /// <returns>True when the tenant is under its cap (a slot is free).</returns>
+    bool HasCapacity(string tenantId);
 }
 
 /// <summary>
@@ -98,6 +106,15 @@ public sealed class RunAdmissionGate(TenantRegistry tenants, IOptions<RunLimitsO
             {
                 slots.Remove(runId);
             }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool HasCapacity(string tenantId)
+    {
+        lock (_gate)
+        {
+            return (_active.TryGetValue(tenantId, out var slots) ? slots.Count : 0) < CapFor(tenantId);
         }
     }
 

@@ -59,6 +59,16 @@ public class RunAdmissionGateTests
     }
 
     [Fact]
+    public void Reports_free_capacity_until_the_cap_is_reached() // CD-16: the enqueue-promotion nudge hint
+    {
+        var gate = Gate(globalCap: 1, (TenantA, null));
+
+        gate.HasCapacity(TenantA).ShouldBeTrue(); // empty — a slot is free
+        gate.TryAdmit(TenantA, Guid.NewGuid()).ShouldBeTrue();
+        gate.HasCapacity(TenantA).ShouldBeFalse(); // at the cap — no free slot
+    }
+
+    [Fact]
     public void Releasing_a_slot_re_opens_capacity()
     {
         var gate = Gate(globalCap: 1, (TenantA, null));

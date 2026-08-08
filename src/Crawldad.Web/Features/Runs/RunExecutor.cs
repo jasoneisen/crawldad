@@ -306,28 +306,26 @@ public sealed class RunExecutor(
 /// queues survived a prior host, any run still marked <see cref="RunStatus.Running"/> in <see cref="RunProgress"/> was
 /// interrupted mid-flight, and any surviving <see cref="QueuedRun"/> was waiting at the cap when the prior host died. This
 /// hosted service re-publishes a durable <see cref="ExecuteRun"/> for each interrupted run (the executor resumes it from its
-/// last checkpoint with a fresh browser session — not from step 0), <b>seeds the queue's FIFO counter</b> above the surviving
-/// high-water sequence so post-restart enqueues preserve order, and re-triggers <see cref="PromoteQueued"/> for every tenant
-/// with a non-empty queue so queued runs start (in FIFO order) once slots are free. It runs after the Wolverine host services
-/// (registered later), so the durable local queue is live.
+/// last checkpoint with a fresh browser session — not from step 0) and re-triggers <see cref="PromoteQueued"/> for every tenant
+/// with a non-empty queue so queued runs start (in FIFO order) once slots are free. FIFO ordering across the restart is kept by
+/// the queue's per-tenant sequence, which self-seeds above the surviving high-water mark on its first post-restart use (so no
+/// startup-ordering seed is needed here). It runs after the Wolverine host services (registered later), so the durable local
+/// queue is live.
 /// </summary>
 /// <param name="store">The Marten store used to scan for interrupted and queued runs.</param>
 /// <param name="scopeFactory">Creates a scope to resolve the (scoped) message bus for re-publishing.</param>
 /// <param name="tenants">The configured tenant directory — the fan-out set the per-tenant scan iterates (CD-1).</param>
-/// <param name="queue">The run queue whose FIFO counter is seeded from the surviving high-water sequence.</param>
-public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactory scopeFactory, TenantRegistry tenants, RunQueue queue) : IHostedService
+public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactory scopeFactory, TenantRegistry tenants) : IHostedService
 {
     /// <summary>Scans for interrupted and queued runs and re-drives them, <b>per tenant</b>. Under conjoined tenancy (CD-1)
     /// every query is tenant-scoped, so recovery fans out over each configured tenant: it re-publishes each interrupted run's
-    /// <see cref="ExecuteRun"/> tagged with that tenant, tracks the largest surviving <see cref="QueuedRun.Sequence"/>, and (for
-    /// a tenant with queued runs) publishes a <see cref="PromoteQueued"/> so its queue drains into free slots in FIFO order.
-    /// Finally it seeds the queue counter above that high-water mark. On a fresh database each per-tenant query finds none.</summary>
+    /// <see cref="ExecuteRun"/> tagged with that tenant, and (for a tenant with queued runs) publishes a <see cref="PromoteQueued"/>
+    /// so its queue drains into free slots in FIFO order. On a fresh database each per-tenant query finds none.</summary>
     /// <param name="cancellationToken">Cancels the scan.</param>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
-        var highWaterSequence = 0L;
 
         foreach (var tenantId in tenants.TenantIds)
         {
@@ -341,19 +339,13 @@ public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactor
                 await bus.PublishAsync(new ExecuteRun(run.Id), new DeliveryOptions { TenantId = tenantId });
             }
 
-            // Surviving queued runs (CD-16): note the high-water FIFO sequence, and re-trigger promotion so the queue drains
-            // once slots free (the trigger drains one and re-triggers for each further free slot, in sequence order).
-            var queued = await session.Query<QueuedRun>().ToListAsync(cancellationToken);
-            if (queued.Count > 0)
+            // Surviving queued runs (CD-16): re-trigger promotion so the queue drains once slots free (the trigger drains one
+            // and re-triggers for each further free slot, in sequence order).
+            if (await session.Query<QueuedRun>().AnyAsync(cancellationToken))
             {
-                highWaterSequence = Math.Max(highWaterSequence, queued.Max(q => q.Sequence));
                 await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
             }
         }
-
-        // Seed the FIFO counter above every surviving queued run so a post-restart enqueue never reuses or undercuts a
-        // waiting run's sequence — FIFO ordering is preserved across the restart.
-        queue.Seed(highWaterSequence);
     }
 
     /// <summary>No teardown work.</summary>

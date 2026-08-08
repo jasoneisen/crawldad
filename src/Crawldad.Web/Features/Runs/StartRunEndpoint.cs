@@ -137,7 +137,17 @@ public static class StartRunEndpoint
         var admitted = !await queue.HasQueuedAsync(session, ct) && gate.TryAdmit(tenantId, runId);
         if (!admitted)
         {
-            return await EnqueueAsync(request, payload, script, scriptHash, payloadId, payloadRevision, runId, tenantId, session, bus, queue, scrubber, ct);
+            var queuedResult = await EnqueueAsync(request, payload, script, scriptHash, payloadId, payloadRevision, runId, tenantId, session, bus, queue, scrubber, ct);
+
+            // SHOULD-FIX-2: if a slot is actually free at commit time (the stranding race — the cap freed between our TryAdmit
+            // and the enqueue commit), nudge a promotion so this run is not left behind idle capacity with no pending trigger.
+            // Conditional on real free capacity, so the common at-cap enqueue publishes nothing (no churn, no restart-redelivery storm).
+            if (gate.HasCapacity(tenantId))
+            {
+                await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = tenantId });
+            }
+
+            return queuedResult;
         }
 
         if (request.Async)

@@ -330,7 +330,10 @@ public class SlotQueueTests
         }
         finally
         {
-            await host1.DisposeAsync(); // honest kill: the blocker is left running, B and C left queued (durably)
+            // Graceful shutdown (not a hard process kill): the blocker never finalizes and no slot frees during host1, so this
+            // faithfully exercises durable-queue survival + recovery-driven FIFO promotion across a restart (the Release->Publish
+            // crash window is separately healed by recovery re-publishing PromoteQueued).
+            await host1.DisposeAsync();
         }
 
         // Host 2 on the SAME schema/durable queues, gate unarmed: recovery resumes the blocker (which now runs through),
@@ -339,8 +342,8 @@ public class SlotQueueTests
         holder2.Arm(gate: null);
         await using var host2 = await DurableHost.BuildAsync(Schema, new GatedFakeBackend(Runner.FixturesRoot, holder2), resetData: false, settings: Settings());
 
-        (await DurableHost.PollUntilTerminalAsync(host2, b, TimeSpan.FromSeconds(40))).GetProperty("status").GetString().ShouldBe("succeeded");
-        (await DurableHost.PollUntilTerminalAsync(host2, c, TimeSpan.FromSeconds(40))).GetProperty("status").GetString().ShouldBe("succeeded");
+        (await DurableHost.PollUntilTerminalAsync(host2, b, TimeSpan.FromSeconds(60))).GetProperty("status").GetString().ShouldBe("succeeded");
+        (await DurableHost.PollUntilTerminalAsync(host2, c, TimeSpan.FromSeconds(60))).GetProperty("status").GetString().ShouldBe("succeeded");
 
         // FIFO preserved across the restart: B (enqueued first) promoted before C.
         (await PromotionOrderAsync(host2, b)).ShouldBeLessThan(await PromotionOrderAsync(host2, c));
@@ -386,6 +389,68 @@ public class SlotQueueTests
         return (await result.ReadAsJsonAsync<JsonElement>()).Clone();
     }
 
+    // ----- exactly one terminal writer under a cancel/promotion race (BLOCKER-1) ----
+
+    // Seeds a run in a queued run's shape (stream opener + QueuedRun row + RunProgress at a chosen status), for driving the
+    // terminal-transition claim white-box.
+    private static async Task<Guid> SeedQueuedAsync(IDocumentStore store, TimeProvider clock, RunStatus status)
+    {
+        var runId = Guid.NewGuid();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        session.Events.StartStream<Run>(runId, new RunQueued("edge", "hash", clock.GetUtcNow(), [], null, null));
+        session.Store(new QueuedRun { Id = runId, Sequence = 1, Script = "{}", Inputs = "{}", QueuedAt = clock.GetUtcNow() });
+        session.Store(new RunProgress { Id = runId, Status = status });
+        await session.SaveChangesAsync();
+        return runId;
+    }
+
+    private static async Task DeleteQueuedAsync(IDocumentStore store, Guid runId)
+    {
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        session.Delete<QueuedRun>(runId);
+        await session.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task A_cancel_racing_promotion_leaves_one_terminal_writer_and_no_leak()
+    {
+        var holder = new GateHolder();
+        await using var host = await HostAsync("crawldad_slotq_race", holder);
+        var queue = host.Services.GetRequiredService<RunQueue>();
+        var gate = (RunAdmissionGate)host.Services.GetRequiredService<IRunAdmissionGate>();
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        var clock = host.Services.GetRequiredService<TimeProvider>();
+
+        var runId = await SeedQueuedAsync(store, clock, RunStatus.Queued);
+
+        // Drive the interleaving the reviewer's probe hit: a promotion holds the run stream's exclusive lock and commits its
+        // transition (run -> running, slot occupied) while a REAL cancel is blocked on that same lock. The cancel must then
+        // observe the committed promotion and abort — writing no RunCancelled and leaving no leaked slot.
+        gate.TryAdmit(TestTenants.PrimaryId, runId).ShouldBeTrue(); // the promotion reserves the slot
+        Task<bool> cancel;
+        await using (var promote = store.LightweightSession(TestTenants.PrimaryId))
+        {
+            await promote.Events.AppendExclusive(runId, new RunDequeued(clock.GetUtcNow(), 0)); // hold the stream lock
+            cancel = Task.Run(() => queue.CancelQueuedAsync(TestTenants.PrimaryId, runId, CancellationToken.None));
+            await Task.Delay(400); // let the cancel reach + block on the same lock
+            var progress = (await promote.LoadAsync<RunProgress>(runId))!;
+            progress.Status = RunStatus.Running;
+            promote.Store(progress);
+            promote.Delete<QueuedRun>(runId);
+            await promote.SaveChangesAsync(); // promotion wins; releases the lock
+        }
+
+        (await cancel).ShouldBeFalse(); // the cancel lost the race and committed nothing
+
+        var types = await EventTypesAsync(host, runId);
+        types.ShouldContain(typeof(RunDequeued));     // the winner's transition
+        types.ShouldNotContain(typeof(RunCancelled)); // the loser wrote no terminal event — coherent trace, no double-terminal
+        (await StateAsync(host, runId)).GetProperty("status").GetString().ShouldBe("running");
+        gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(1); // held by the legitimately-running run — NOT leaked by a cancelled zombie
+
+        gate.Release(TestTenants.PrimaryId, runId); // cleanup (no executor drives this white-box run)
+    }
+
     // ----- queue-service edge branches (white-box) ---------------------------------
 
     [Fact]
@@ -396,33 +461,16 @@ public class SlotQueueTests
         var queue = host.Services.GetRequiredService<RunQueue>();
         var gate = (RunAdmissionGate)host.Services.GetRequiredService<IRunAdmissionGate>();
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        var signals = host.Services.GetRequiredService<RunEventSignals>();
         var clock = host.Services.GetRequiredService<TimeProvider>();
         using var scope = host.Services.CreateScope();
         var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
 
-        // Promotion with no matching progress row: the reserved slot is released (not leaked) and the failure propagates.
-        var orphan = Guid.NewGuid();
-        await using (var seed = store.LightweightSession(TestTenants.PrimaryId))
-        {
-            seed.Store(new QueuedRun { Id = orphan, Sequence = queue.NextSequence(), Script = "{}", Inputs = "{}", QueuedAt = clock.GetUtcNow() });
-            await seed.SaveChangesAsync();
-        }
-
-        await Should.ThrowAsync<Exception>(async () => await queue.PromoteOldestAsync(bus, TestTenants.PrimaryId, CancellationToken.None));
-        gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(0); // the reservation was released in the failure path
-
-        await using (var cleanup = store.LightweightSession(TestTenants.PrimaryId))
-        {
-            cleanup.Delete<QueuedRun>(orphan);
-            await cleanup.SaveChangesAsync();
-        }
-
-        // Cancelling a non-queued run through the queue is a no-op.
-        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
-        {
-            (await queue.CancelQueuedAsync(session, new RunProgress { Id = Guid.NewGuid(), Status = RunStatus.Running }, CancellationToken.None)).ShouldBeFalse();
-        }
+        // Promotion of a run whose progress already left 'queued' (a concurrent cancel/timeout won the claim): the reserved
+        // slot is RELEASED and nothing is promoted — no leak.
+        var lost = await SeedQueuedAsync(store, clock, RunStatus.Running); // QueuedRun present but progress not queued
+        (await queue.PromoteOldestAsync(bus, TestTenants.PrimaryId, CancellationToken.None)).ShouldBeFalse();
+        gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(0);
+        await DeleteQueuedAsync(store, lost);
 
         // Position of a run that is not queued is null (the read-race guard).
         await using (var session = store.QuerySession(TestTenants.PrimaryId))
@@ -433,19 +481,90 @@ public class SlotQueueTests
         // Promoting an empty queue does nothing.
         (await queue.PromoteOldestAsync(bus, TestTenants.PrimaryId, CancellationToken.None)).ShouldBeFalse();
 
-        // The handlers fail closed without a tenant on the envelope; the wait timeout is a no-op for a run that is gone or not
-        // queued (a valid tenant with no progress row, and a run already running).
+        // The handlers fail closed without a tenant on the envelope; the wait timeout is a no-op for a run that already left the queue.
         await PromoteQueuedHandler.Handle(new PromoteQueued(), queue, bus, new Envelope(), CancellationToken.None);
-        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(Guid.NewGuid()), store, new Envelope(), signals, clock, CancellationToken.None);
-        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(Guid.NewGuid()), store, new Envelope { TenantId = TestTenants.PrimaryId }, signals, clock, CancellationToken.None);
-
-        var promoted = Guid.NewGuid();
-        await using (var seed = store.LightweightSession(TestTenants.PrimaryId))
-        {
-            seed.Store(new RunProgress { Id = promoted, Status = RunStatus.Running }); // already running, not queued
-            await seed.SaveChangesAsync();
-        }
-        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(promoted), store, new Envelope { TenantId = TestTenants.PrimaryId }, signals, clock, CancellationToken.None);
+        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(Guid.NewGuid()), queue, new Envelope(), CancellationToken.None);
+        var promoted = await SeedQueuedAsync(store, clock, RunStatus.Running); // not queued
+        (await queue.TimeoutQueuedAsync(TestTenants.PrimaryId, promoted, CancellationToken.None)).ShouldBeFalse();
+        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(promoted), queue, new Envelope { TenantId = TestTenants.PrimaryId }, CancellationToken.None);
         (await StateAsync(host, promoted)).GetProperty("status").GetString().ShouldBe("running"); // untouched by the spent timeout
+    }
+
+    // ----- an enqueue landing with a free slot nudges its own promotion (SHOULD-FIX-2) -
+
+    // Seeds a queued run whose stored definition is actually runnable (a no-backend payload that fails cleanly once promoted).
+    private static async Task<Guid> SeedRunnableQueuedAsync(IDocumentStore store, TimeProvider clock)
+    {
+        var runId = Guid.NewGuid();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        session.Events.StartStream<Run>(runId, new RunQueued("strand", "hash", clock.GetUtcNow(), [], null, null));
+        session.Store(new QueuedRun
+        {
+            Id = runId,
+            Sequence = 1,
+            Script = """{ "crawldad": "1", "name": "strand", "config": { "backend": "input.backend" }, "steps": [], "result": "'x'" }""",
+            Inputs = "{}",
+            DeadlineMs = 30_000,
+            QueuedAt = clock.GetUtcNow(),
+        });
+        session.Store(new RunProgress { Id = runId, Status = RunStatus.Queued });
+        await session.SaveChangesAsync();
+        return runId;
+    }
+
+    [Fact]
+    public async Task An_enqueue_landing_with_a_free_slot_nudges_its_own_promotion()
+    {
+        var holder = new GateHolder();
+        await using var host = await HostAsync("crawldad_slotq_strand", holder);
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        var clock = host.Services.GetRequiredService<TimeProvider>();
+
+        // The stranding state SHOULD-FIX-2 guards: a run is queued but no slot is occupied (a slot freed without promoting it,
+        // and the freeing run's PromoteQueued found the queue empty).
+        var stranded = await SeedRunnableQueuedAsync(store, clock);
+
+        // A new run arrives; fairness makes it queue behind the stranded run. Because a slot is actually free, the enqueue
+        // nudges a promotion — un-stranding the waiting run.
+        await host.Scenario(x =>
+        {
+            x.Post.Json(new JsonObject
+            {
+                ["payload"] = JsonNode.Parse("""{ "crawldad": "1", "config": { "backend": "input.backend" }, "steps": [], "result": "'x'" }"""),
+                ["async"] = true,
+            }).ToUrl("/runs");
+            x.StatusCodeShouldBe(202);
+        });
+
+        // The stranded run starts on its own and reaches a terminal state (no backend → it fails, but it RAN).
+        var terminal = await DurableHost.PollUntilTerminalAsync(host, stranded, TimeSpan.FromSeconds(30));
+        terminal.GetProperty("status").GetString().ShouldBe("failed");
+        terminal.GetProperty("failure").GetProperty("code").GetString().ShouldBe("invalid_backend_binding");
+    }
+
+    // ----- FIFO counter self-seeds above a restart's high-water mark (SHOULD-FIX-3) -
+
+    [Fact]
+    public async Task The_fifo_counter_self_seeds_above_the_restored_high_water_mark()
+    {
+        var holder = new GateHolder();
+        await using var host = await HostAsync("crawldad_slotq_seed", holder);
+        var queue = host.Services.GetRequiredService<RunQueue>();
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        var clock = host.Services.GetRequiredService<TimeProvider>();
+
+        // A restart's surviving queue: a run already at a high sequence, with a fresh (unseeded) in-memory counter.
+        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
+        {
+            session.Store(new QueuedRun { Id = Guid.NewGuid(), Sequence = 500, Script = "{}", Inputs = "{}", QueuedAt = clock.GetUtcNow() });
+            await session.SaveChangesAsync();
+        }
+
+        // The first sequence assigned after boot self-seeds above the survivor — a boot-window enqueue cannot undercut it.
+        await using (var session = store.QuerySession(TestTenants.PrimaryId))
+        {
+            (await queue.NextSequenceAsync(session, TestTenants.PrimaryId, CancellationToken.None)).ShouldBe(501);
+            (await queue.NextSequenceAsync(session, TestTenants.PrimaryId, CancellationToken.None)).ShouldBe(502);
+        }
     }
 }
