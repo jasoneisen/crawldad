@@ -5,6 +5,7 @@ using Crawldad.Web.Infrastructure.Security;
 using JasperFx;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
+using JasperFx.MultiTenancy;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -40,6 +41,13 @@ public static class HostConfiguration
                 options.Connection(builder.Configuration.GetConnectionString("marten")!);
                 // Schema isolation so Crawldad coexists with other apps on the shared devcontainer Postgres.
                 options.DatabaseSchemaName = "crawldad";
+
+                // Per-tenant data isolation (CD-1, §12) via Marten's native conjoined multi-tenancy: one shared schema with
+                // every event stream and document row qualified by a tenant_id, every session opened for a tenant. Event
+                // tenancy isolates the Payload/Run aggregates + projections + SSE + drift/replay; AllDocuments extends it
+                // to the RunProgress/RunExecutorSaga/PayloadSummary docs. Tenancy model + upgrade path: SECURITY.md.
+                options.Policies.AllDocumentsAreMultiTenanted();
+                options.Events.TenancyStyle = TenancyStyle.Conjoined;
 
                 // Each vertical slice self-registers its events/projections on the shared lifecycle: the Payloads
                 // aggregate + summary read model (§14.1) and the Run aggregate + step-trace/timeline read models
@@ -78,8 +86,32 @@ public static class HostConfiguration
         // credential scrubber + per-run secret scope, §12), and the Payloads slice registers the POST /payloads validator.
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
+        AddTenantSecurity(builder);
         ScrubAllLogOutput(builder.Services);
         return builder;
+    }
+
+    // The tenant boundary (CD-1, §12): the config-bound tenant directory + the machine-to-machine API-key scheme, plus the
+    // authorization services RequireAuthorizeOnAll (MapCrawldadPlatform) leans on. Authentication resolves the tenant/actor
+    // claims; authorization then rejects every unauthenticated request. The tenant API keys are also folded into the single
+    // credential scrubber as always-on secrets, so a key can never surface in an event, projection, log, or response.
+    private static void AddTenantSecurity(WebApplicationBuilder builder)
+    {
+        builder.Services.AddOptions<TenantOptions>().Bind(builder.Configuration.GetSection(TenantOptions.Section));
+        builder.Services.AddSingleton<TenantRegistry>();
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddScoped<TenantContext>();
+
+        builder.Services.AddAuthentication(CrawldadAuthentication.Scheme)
+            .AddScheme<ApiKeyOptions, ApiKeyAuthenticationHandler>(CrawldadAuthentication.Scheme, configureOptions: null);
+        builder.Services.AddAuthorization();
+
+        // Replace the plain CredentialScrubber registration (RunsModule) with one that also redacts the configured tenant
+        // API keys everywhere — resolved from the same bound options, so the scrubber's always-on set is the live key set.
+        // Keys shorter than the scrubber's exact-match floor are inert there (and the registry rejects them at boot anyway).
+        builder.Services.Replace(ServiceDescriptor.Singleton(sp => new CredentialScrubber(
+            sp.GetRequiredService<IRunSecretScope>(),
+            [.. sp.GetRequiredService<IOptions<TenantOptions>>().Value.Tenants.Select(tenant => tenant.ApiKey)])));
     }
 
     // The Wolverine message pipeline (§14): transactional outbox, durable local queues (so the executor saga's messages
@@ -118,8 +150,26 @@ public static class HostConfiguration
             app.UseHsts();
         }
 
+        // The tenant boundary (CD-1): authenticate the API key into a tenant/actor principal, then authorize. Ordered
+        // before the endpoints so an unauthenticated request never reaches a handler.
+        app.UseAuthentication();
+        app.UseAuthorization();
+
         // The JSON API. Validation failures become 400 ProblemDetails via the FluentValidation middleware.
-        app.MapWolverineEndpoints(options => options.UseFluentValidationProblemDetailMiddleware());
+        app.MapWolverineEndpoints(options =>
+        {
+            options.UseFluentValidationProblemDetailMiddleware();
+
+            // Every Wolverine endpoint requires an authenticated tenant (CD-1) — no anonymous mutating or reading route
+            // survives. /health opts out with [AllowAnonymous] (a liveness probe must answer an unauthenticated load
+            // balancer); the endpoint-enumeration test asserts every other route rejects an unauthenticated request.
+            options.RequireAuthorizeOnAll();
+
+            // Scope each request's Marten session to the tenant on the authenticated principal. Wolverine opens the
+            // injected IDocumentSession/IQuerySession for this tenant and stamps it onto messages the endpoint publishes,
+            // so the async run path carries the tenant to the executor saga without any explicit plumbing.
+            options.TenantId.IsClaimTypeNamed(CrawldadClaims.TenantId);
+        });
 
         return app;
     }
