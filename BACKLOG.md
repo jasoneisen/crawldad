@@ -14,7 +14,8 @@ refs (§Pv, §P, §1–§6) point to `docs/PRODUCT.md` (the product-architecture
 ## Tier 1 — GA blockers (before any real customer data)
 
 ### [CD-1](https://github.com/jasoneisen/crawldad/issues/1) Auth/authz + tenant isolation
-**Status:** open. **Ref:** §12.
+**Status:** shipped 2026-08-08 (PR #17, reviewer-approved). Per-tenant API keys, Marten conjoined
+multi-tenancy, Wolverine envelope tenant propagation, tenant-partitioned storage seams. **Ref:** §12.
 Every endpoint today — runs, payloads, SSE, cancel, replay — is unauthenticated (deliberate MVP
 deferral; the reference's no-auth must not be copied). Build the tenant boundary: authenticated
 tenant, actor/`By` from the principal (never the request body), per-tenant Marten
@@ -34,7 +35,8 @@ test matrices against real storage (or an emulator) with zero live third-party t
 retention policy documented in SECURITY.md.
 
 ### [CD-3](https://github.com/jasoneisen/crawldad/issues/3) Remaining §12 resource limits
-**Status:** open. **Ref:** §12 "Resource limits".
+**Status:** shipped 2026-08-08 (PR #18, reviewer-approved). All five limits landed; the concurrency
+cap's reject-at-cap was superseded by CD-16's queue the same night. **Ref:** §12 "Resource limits".
 Built: run wall-clock deadline (`config.deadlineMs`), per-node `timeoutMs` hierarchy,
 `loop.maxIterations`, regex size/time guards. Not built: **max steps**, **max total downloaded
 bytes**, **max event count**, **max concurrent runs per tenant**, expression evaluation step budget.
@@ -77,6 +79,9 @@ race (saga handlers are serialized). Alternative if prompt cleanup is wanted: th
 **Done when:** tests cover late-timeout-to-completed-saga, crash between terminal-commit and
 cleanup, and the resume invariant; the leak-test retention assertion flips from "lingers" to "gone
 after deadline"; SECURITY.md table updated.
+Note (added 2026-08-08, from the CD-16 review): fold in `StartRun`/saga-start idempotency — the
+CD-16 reviewer confirmed a latent saga-starter race under redelivered `StartRun`/`PromoteQueued`
+load (masked, not fixed, by CD-16's conditional enqueue-nudge; promotion itself is idempotent).
 
 ### [CD-6](https://github.com/jasoneisen/crawldad/issues/6) BYO key vault + `secretRef` form-fill credentials
 **Status:** approved 2026-08-07; design recorded in SECURITY.md "Designed, not built". **Ref:** §12.
@@ -91,7 +96,10 @@ sweep proving the resolved secret is absent from events, projections, SSE, durab
 the saga while the ref is present.
 
 ### [CD-16](https://github.com/jasoneisen/crawldad/issues/16) Slot admission queue: queue-don't-reject at the concurrent-run cap
-**Status:** approved 2026-08-08. **Ref:** `docs/PRODUCT.md` §Pv.3/§Pv.5; depends on CD-1 (tenant
+**Status:** shipped 2026-08-08 (PR #19, reviewer-approved after a three-round loop — a
+double-terminal slot-leak race was found, fixed via advisory-lock claim, and re-verified). Wire
+codes as shipped: `queue_depth_exceeded` / `queue_wait_exceeded`; `concurrent_runs_exceeded` was
+removed with the queue. **Ref:** `docs/PRODUCT.md` §Pv.3/§Pv.5; depends on CD-1 (tenant
 scope) and CD-3 (`maxConcurrentRunsPerTenant` — this ticket defines that cap's at-limit semantics).
 Slot-based pricing makes the per-tenant concurrency cap revenue enforcement at `StartRun`
 admission, so its rejection behavior is product-critical: queue, don't 429. Durable FIFO on the

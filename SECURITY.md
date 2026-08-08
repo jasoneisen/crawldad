@@ -171,9 +171,12 @@ byte-identical.
 
 ## Not in scope here
 
-PII crypto-shredding and resource limits are tracked in `CRAWLDAD_DESIGN.md` §12 and are not part of the WP3 scrubbing
-boundary. Per-tenant concurrency caps (CD-3), the slot queue (CD-16), real storage adapters (CD-2), and the BYO vault
-(CD-6) build on the CD-1 tenant seam but are their own tickets.
+PII crypto-shredding is tracked in `CRAWLDAD_DESIGN.md` §12 and is not part of the WP3 scrubbing
+boundary. The §12 resource limits (CD-3) and per-tenant slot queue (CD-16) shipped 2026-08-08: five
+server-side limits a payload cannot raise (max steps, max downloaded bytes, max events, expression
+fuel, per-tenant concurrent runs), with at-cap admission queueing rather than rejection. Real
+storage adapters (CD-2) and the BYO vault (CD-6) build on the CD-1 tenant seam but are their own
+tickets.
 
 ## Designed, not built: BYO key vault + `secretRef` form-fill credentials (post-P5)
 
