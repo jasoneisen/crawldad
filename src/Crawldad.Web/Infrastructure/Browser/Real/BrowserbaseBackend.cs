@@ -15,9 +15,10 @@ namespace Crawldad.Web.Infrastructure.Browser.Real;
 ///   <item><b>apiKey</b> (default) — the resolved secret is the account API key; we <c>POST /v1/sessions</c> with an
 ///   <c>X-BB-API-Key</c> header and connect to the returned <c>connectUrl</c>, recording the response <c>region</c>.</item>
 /// </list>
-/// <b>Ship-blocker fact (§3.5/§9, re-verified):</b> the returned <c>connectUrl</c> has the form
-/// <c>wss://connect.browserbase.com?apiKey=bb_live_…&amp;sessionId=ses_…</c> — it <b>embeds the account apiKey</b>, so
-/// the whole URL is a secret. It is never logged and never placed in an exception message: the connect is a scrubbing
+/// <b>Ship-blocker fact (§3.5/§9, live-primary re-verified 2026-08-08):</b> the returned <c>connectUrl</c> has the form
+/// <c>wss://connect.&lt;region&gt;.browserbase.com/?signingKey=&lt;JWT&gt;</c> (e.g. <c>connect.usw2.browserbase.com</c>) —
+/// a per-session JWT, <b>not</b> the account apiKey (which travels only in the <c>X-BB-API-Key</c> header). The whole URL
+/// is still a live-session secret: never logged, never placed in an exception message — the connect is a scrubbing
 /// boundary that converts any fault into a secret-free terminal <see cref="BrowserConnectException"/>.
 /// </summary>
 /// <param name="provider">The shared Playwright driver.</param>
@@ -43,7 +44,7 @@ internal sealed class BrowserbaseBackend(
     internal const string ConnectUrlMode = "connectUrl";
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types",
-        Justification = "The connect is a credential-scrubbing boundary (§12): the connectUrl embeds the account apiKey, so ANY fault (a PlaywrightException can echo the CDP URL) must become a secret-free BrowserConnectException. Cancellation and the already-scrubbed BrowserConnectException are excluded by the filter.")]
+        Justification = "The connect is a credential-scrubbing boundary (§12): the connectUrl carries a per-session signingKey JWT (live-verified 2026-08-08), so ANY fault (a PlaywrightException can echo the CDP URL) must become a secret-free BrowserConnectException. Cancellation and the already-scrubbed BrowserConnectException are excluded by the filter.")]
     public async Task<IBrowserSession> ConnectAsync(BackendBinding binding, SessionPolicy policy, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(binding);
@@ -69,7 +70,7 @@ internal sealed class BrowserbaseBackend(
                 (connectUrl, region) = await CreateSessionAsync(secret, options, ct);
             }
 
-            secretScope.Register(connectUrl); // the connectUrl embeds the account apiKey (§3.5) — a secret in its own right
+            secretScope.Register(connectUrl); // the connectUrl carries a per-session signingKey JWT (§3.5, live-verified 2026-08-08) — a secret in its own right
 
             var playwright = await provider.GetAsync(ct);
             browser = await playwright.Chromium.ConnectOverCDPAsync(connectUrl);

@@ -31,6 +31,8 @@ public class CredentialScrubberTests
     [Fact]
     public void Redacts_a_token_in_a_wss_connect_url_but_keeps_the_rest()
     {
+        // The live-confirmed Browserless connect shape (CD-4, re-verified 2026-08-08): the account token is a `token=`
+        // query param on wss://production-<region>.browserless.io/chromium/playwright.
         var scrubbed = Scrubber().Scrub(
             "connecting wss://production-lon.browserless.io/chromium/playwright?token=tok_SECRET_123&blockAds=true");
 
@@ -41,9 +43,26 @@ public class CredentialScrubberTests
     }
 
     [Fact]
-    public void Redacts_the_apiKey_embedded_in_a_browserbase_connect_url_and_keeps_the_session_id()
+    public void Redacts_the_live_signingKey_in_a_browserbase_connect_url_and_keeps_the_host()
     {
-        // The verified ship-blocker shape: connectUrl embeds the account apiKey; sessionId is ephemeral, not a secret.
+        // The live-verified Browserbase shape (CD-4, 2026-08-08): a region-encoded host with a SINGLE per-session
+        // `signingKey` JWT (base64url, '.'-separated) — the returned URL no longer embeds the account apiKey. The JWT is
+        // synthetic (same eyJhbGci prefix + header.payload.signature structure), NOT a real key.
+        const string Jwt =
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uSWQiOiJmYWtlIiwiZXhwIjo5OTk5OTk5OTk5fQ.s1gn4tur3_FAKE_forTESTINGonly_notARealKey";
+        var scrubbed = Scrubber().Scrub($"wss://connect.usw2.browserbase.com/?signingKey={Jwt}");
+
+        // The region host and path survive; the whole JWT (through both '.' separators, to end of value) is gone.
+        scrubbed.ShouldBe($"wss://connect.usw2.browserbase.com/?signingKey={_redacted}");
+        scrubbed.ShouldNotContain(Jwt);
+        scrubbed.ShouldNotContain("s1gn4tur3");
+    }
+
+    [Fact]
+    public void Redacts_an_apiKey_bearing_browserbase_connect_url_and_keeps_the_session_id()
+    {
+        // An apiKey-bearing connectUrl (connectUrl mode, or a user-constructed / pre-2026-08 shape) is still redacted;
+        // sessionId is ephemeral, not a secret. The live default shape now uses signingKey (see the test above).
         var scrubbed = Scrubber().Scrub("wss://connect.browserbase.com?apiKey=bb_live_ACCOUNTKEY&sessionId=ses_abc123");
 
         scrubbed.ShouldBe($"wss://connect.browserbase.com?apiKey={_redacted}&sessionId=ses_abc123");
@@ -139,6 +158,7 @@ public class CredentialScrubberTests
 
     [Theory]
     [InlineData("wss://h/x?apiKey=bb_live_abc&sessionId=ses_1")]
+    [InlineData("wss://connect.usw2.browserbase.com/?signingKey=eyJhbGci.eyJz.s1g")] // live Browserbase shape
     [InlineData("token=tok_abc123&next=1")]
     public void Param_scrub_is_idempotent(string input)
     {

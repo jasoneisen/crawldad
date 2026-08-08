@@ -13,9 +13,10 @@ namespace Crawldad.Web.Infrastructure.Security;
 ///   query-param rule cannot recognise (a <c>log</c> message echoing an input, an exception, a scraped page).</item>
 ///   <item><b>Known credential params</b> — the values of <c>apiKey</c>, <c>token</c>, and <c>signingKey</c>
 ///   (case-insensitive) are redacted anywhere they appear as <c>name=value</c>, which covers a <c>ws://</c>/<c>wss://</c>
-///   connect URL's query (<c>?token=…</c>, the Browserbase <c>?apiKey=…&amp;sessionId=…</c> that <b>embeds</b> the
-///   account key, §3.5) and a JSON-embedded connect URL alike. The surrounding text (scheme, host, path, the non-secret
-///   <c>sessionId</c>) is preserved so the redaction stays diagnostic.</item>
+///   connect URL's query (Browserless <c>?token=…</c>; the live Browserbase <c>?signingKey=…</c> per-session JWT — the
+///   returned URL no longer embeds the account apiKey, re-verified live 2026-08-08, §3.5) and a JSON-embedded connect URL
+///   alike. The <c>apiKey</c> param is retained for an apiKey-bearing connectUrl (connectUrl mode / pre-drift). Surrounding
+///   text (scheme, host, path) is preserved so the redaction stays diagnostic.</item>
 /// </list>
 /// <para>
 /// The transform is <b>idempotent</b> (scrubbing already-scrubbed text is a no-op) and — critically for the acceptance

@@ -97,15 +97,16 @@ The prompt asked us to flag anything wrong. Findings, each low-impact but worth 
    selectors (§5) because it is cheap and real sites need it, but it is undemonstrated by the
    acceptance suite — not a v1 risk.
 
-5. **Browserbase "high-security connectUrl" is weaker than the brief implies (security-relevant).**
+5. **Browserbase "high-security connectUrl" — live-primary re-verified 2026-08-08 (shape drifted).**
    The brief says the two-step flow lets the customer "hand us only the ephemeral, single-session
-   `connectUrl`." Verified: the default CDP `connectUrl` **embeds the account `apiKey` in its query
-   string** (`wss://connect.browserbase.com?apiKey=bb_live_…&sessionId=…`). It is ephemeral in
-   *session lifetime* but **not credential-isolated** — a holder can read the key out and mint more
-   sessions. So `connectUrl` mode reduces credential *storage* (we never persist a long-lived key)
-   but not *blast radius on leak*; it must be scrubbed exactly like an `apiKey` (§12). We still
-   support both modes, but we do not market `connectUrl` as "safe to leak." (Confidence MED-HIGH; §9
-   flags a primary re-check before shipping.)
+   `connectUrl`." The earlier docs-based check found the `connectUrl` embedded the account `apiKey`;
+   a **live** session-create on 2026-08-08 shows it no longer does. The returned URL is now
+   `wss://connect.<region>.browserbase.com/?signingKey=<JWT>` — a **per-session** signing key, not the
+   account key (which travels only in the `X-BB-API-Key` header). So the brief's "ephemeral,
+   single-session" framing now holds: a leaked `connectUrl` compromises that one session until it
+   expires, not the account. It is still **not** "safe to leak" (session hijack) and is scrubbed as a
+   secret (the `signingKey` param + exact-match, §12); we support both modes. See `SECURITY.md` for the
+   confirmed shapes and scrub re-confirmation. (Was Confidence MED-HIGH; now **live-primary**.)
 
 6. **Latent bug in the reference retry we must fix, not copy.** On `Page crashed`, the retry handler
    reopens a page (`page = await browserContext.NewPageAsync()`) but assigns it only to a local; the
@@ -470,12 +471,13 @@ Notes wired into the design:
 - **Prefer Browserless native** (`/chromium/playwright` + `chromium.connect`) over raw CDP — less
   chatty for remote operation (verified). Browserbase is CDP-only, so the two adapters are not
   symmetric; the interface abstracts *connect*, not *protocol*.
-- **`connectUrl` mode caveat (see §3.5):** Browserbase's `connectUrl` embeds the account `apiKey`. It
-  buys ephemeral session lifetime and no long-lived key in our vault, but it is **not** safe-to-leak;
-  scrub it identically (§12). In `connectUrl` mode, Browserbase session recordings land in the
-  *caller's* dashboard (observability follows the creating key), which is a feature for
-  high-security customers. **Ship-blocker check:** re-verify the exact `connectUrl` query format
-  against a primary Browserbase page before the security copy goes out.
+- **`connectUrl` mode caveat (see §3.5; live-primary re-verified 2026-08-08):** Browserbase's returned
+  `connectUrl` carries a **per-session `signingKey` JWT**, not the account `apiKey` (re-verified live —
+  the earlier "embeds the apiKey" note is superseded). It buys ephemeral session lifetime and no
+  long-lived key in our vault, and is **not** safe-to-leak; scrub it identically (§12). In `connectUrl`
+  mode, Browserbase session recordings land in the *caller's* dashboard (observability follows the
+  creating key), a feature for high-security customers. **Ship-blocker check: DONE** — the exact
+  `connectUrl` shape was re-verified against a live primary Browserbase session (see `SECURITY.md`).
 - **Browserless token is account-scoped** — a leaked token drains the account's unit balance. Same
   scrubbing rules.
 - **`backendOptions` passthrough** carries provider capabilities we do not implement: Browserless
@@ -574,9 +576,10 @@ does not itself contain).
 ## 12. Security
 
 - **Credential scrubbing at the logging boundary, from day one.** Connect URLs and tokens
-  (`?apiKey=…`, `?token=…`, `connectUrl`) are secrets that appear in the query string and are
-  account-draining on leak. They are **never** persisted in events, projections, run traces, or logs;
-  a redaction filter at the sink strips known credential params and any `wss://…?(apiKey|token)=` URL.
+  (`?apiKey=…`, `?token=…`, `?signingKey=…`, `connectUrl`) are secrets that appear in the query string
+  and are session- or account-draining on leak. They are **never** persisted in events, projections,
+  run traces, or logs; a redaction filter at the sink strips known credential params and any
+  `wss://…?(apiKey|token|signingKey)=` URL.
   Run traces are a *paid* feature — without scrubbing, credentials would otherwise land in log
   retention by default. This is non-negotiable and tested (a run whose input contains a token asserts
   the token appears in no event/log/trace).
