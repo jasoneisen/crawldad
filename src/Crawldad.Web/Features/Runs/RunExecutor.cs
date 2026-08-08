@@ -17,12 +17,13 @@ namespace Crawldad.Web.Features.Runs;
 /// leaves the run resumable — <see cref="RunRecoveryService"/> re-publishes it on the next host.</summary>
 public static class ExecuteRunHandler
 {
-    /// <summary>Drives one run (or resumes it) to a terminal state.</summary>
+    /// <summary>Drives one run (or resumes it) to a terminal state, under the message's tenant (CD-1).</summary>
     /// <param name="command">The run to execute.</param>
     /// <param name="executor">The run executor.</param>
+    /// <param name="envelope">The message envelope — its tenant id scopes every session the executor opens for this run.</param>
     /// <param name="ct">The handler cancellation token (cancelled on host shutdown).</param>
-    public static Task Handle(ExecuteRun command, RunExecutor executor, CancellationToken ct) =>
-        executor.ExecuteAsync(command.RunId, ct);
+    public static Task Handle(ExecuteRun command, RunExecutor executor, Envelope envelope, CancellationToken ct) =>
+        executor.ExecuteAsync(command.RunId, envelope.TenantId, ct);
 }
 
 /// <summary>
@@ -58,13 +59,21 @@ public sealed class RunExecutor(
     /// <summary>The terminal failure code for a run that outran its wall-clock deadline (§8.4).</summary>
     public const string DeadlineExceededCode = "run_deadline_exceeded";
 
-    /// <summary>Executes (or resumes) the run to a terminal state. A host-shutdown interruption is left un-finalised so the
-    /// durable <see cref="ExecuteRun"/> message is redelivered and the run resumes on restart.</summary>
+    /// <summary>Executes (or resumes) the run to a terminal state under <paramref name="tenantId"/>. A host-shutdown
+    /// interruption is left un-finalised so the durable <see cref="ExecuteRun"/> message is redelivered and the run resumes
+    /// on restart. Every Marten session the executor opens is scoped to the run's tenant, so its trace appends and progress
+    /// writes land in the same tenant partition the run started under (CD-1).</summary>
     /// <param name="runId">The run to execute.</param>
+    /// <param name="tenantId">The run's tenant (from the message envelope); a run with no tenant is a fail-closed no-op.</param>
     /// <param name="handlerCt">The handler cancellation token (cancelled on host shutdown).</param>
-    public async Task ExecuteAsync(Guid runId, CancellationToken handlerCt)
+    public async Task ExecuteAsync(Guid runId, string? tenantId, CancellationToken handlerCt)
     {
-        var loaded = await LoadRunnableAsync(runId, handlerCt);
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            return; // a run without a tenant cannot be resolved — fail closed (never touch the default partition)
+        }
+
+        var loaded = await LoadRunnableAsync(runId, tenantId, handlerCt);
         if (loaded is null)
         {
             return; // unknown run, already terminal (idempotent redelivery), or not yet set up
@@ -82,7 +91,7 @@ public sealed class RunExecutor(
 
         try
         {
-            await DriveAsync(runId, saga, progress, control, handlerCt);
+            await DriveAsync(runId, tenantId, saga, progress, control, handlerCt);
         }
         finally
         {
@@ -91,7 +100,7 @@ public sealed class RunExecutor(
         }
     }
 
-    private async Task DriveAsync(Guid runId, RunExecutorSaga saga, RunProgress progress, RunControl control, CancellationToken handlerCt)
+    private async Task DriveAsync(Guid runId, string tenantId, RunExecutorSaga saga, RunProgress progress, RunControl control, CancellationToken handlerCt)
     {
         // The deadline source (§8.4) forcibly interrupts a run stuck mid-call; it is linked in beside host shutdown so the
         // interpreter's operations observe both. The control binds it so the saga's deadline timeout can fire it.
@@ -104,18 +113,18 @@ public sealed class RunExecutor(
         // interpreter re-registers the resolved credential, so a resumed run re-establishes the scrub set naturally.
         using var runSecrets = secretScope.Begin();
 
-        var resume = await LoadResumeAsync(runId, progress, runCt);
+        var resume = await LoadResumeAsync(runId, tenantId, progress, runCt);
 
         using var payloadDocument = JsonDocument.Parse(saga.Script);
         using var inputsDocument = JsonDocument.Parse(saga.Inputs);
         var input = JsonValues.FromJson(inputsDocument.RootElement) as Dictionary<string, object?>
             ?? new Dictionary<string, object?>(StringComparer.Ordinal);
 
-        var observer = new ExecutorObserver(runId, control, store, scrubber, signals, clock);
+        var observer = new ExecutorObserver(runId, tenantId, control, store, scrubber, signals, clock);
         RunOutcome outcome;
         try
         {
-            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, observer, resume, screenshots).RunAsync(runCt);
+            outcome = await new RunInterpreter(payloadDocument.RootElement, input, registry, sinks, clock, tenantId, observer, resume, screenshots).RunAsync(runCt);
         }
         catch (OperationCanceledException) when (runCt.IsCancellationRequested)
         {
@@ -123,7 +132,7 @@ public sealed class RunExecutor(
             {
                 // The wall-clock deadline forcibly cancelled a stuck run (§8.4): finalise a terminal failure. The
                 // interpreter's `await using` already tore the backend session down cleanly.
-                await FinalizeAsync(runId, DeadlineOutcome(), control, CancellationToken.None);
+                await FinalizeAsync(runId, tenantId, DeadlineOutcome(), control, CancellationToken.None);
             }
 
             // Otherwise host shutdown interrupted the run: leave RunProgress "running" (do NOT finalise) and return
@@ -132,7 +141,7 @@ public sealed class RunExecutor(
             return;
         }
 
-        await FinalizeAsync(runId, outcome, control, runCt);
+        await FinalizeAsync(runId, tenantId, outcome, control, runCt);
     }
 
     // A synthetic stopped outcome for a run the deadline forcibly cancelled mid-call (there is no salvageable result);
@@ -142,9 +151,9 @@ public sealed class RunExecutor(
 
     // Loads the run definition + progress and returns them only when the run is actually runnable: an unknown run (no saga)
     // or one that is no longer running (already terminal — an idempotent redelivery) yields null and the executor no-ops.
-    private async Task<(RunExecutorSaga Saga, RunProgress Progress)?> LoadRunnableAsync(Guid runId, CancellationToken ct)
+    private async Task<(RunExecutorSaga Saga, RunProgress Progress)?> LoadRunnableAsync(Guid runId, string tenantId, CancellationToken ct)
     {
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(tenantId);
         var saga = await session.LoadAsync<RunExecutorSaga>(runId, ct);
         if (saga is null)
         {
@@ -157,14 +166,14 @@ public sealed class RunExecutor(
 
     // Restores the resume state from the last durable checkpoint (§11) and records the resume in the trace, or returns null
     // for a fresh run. Appended from the executor's own session so the RunResumed marker is durable independent of finalisation.
-    private async ValueTask<ResumeState?> LoadResumeAsync(Guid runId, RunProgress progress, CancellationToken ct)
+    private async ValueTask<ResumeState?> LoadResumeAsync(Guid runId, string tenantId, RunProgress progress, CancellationToken ct)
     {
         if (progress.Checkpoint is not { } stored)
         {
             return null;
         }
 
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(tenantId);
         session.Events.Append(runId, new RunResumed(stored.StepIndex, stored.Name, clock.GetUtcNow()));
         await session.SaveChangesAsync(ct);
         signals.Notify(runId); // a tailing SSE client sees the resume marker live
@@ -175,9 +184,9 @@ public sealed class RunExecutor(
     // Maps the interpreter outcome to the persisted disposition: append the scrubbed trace + terminal event and stamp the
     // executor-owned RunProgress read model. A cooperative stop is a user cancel (cancelled + partial) unless the deadline
     // fired (a terminal run_deadline_exceeded failure, §8.4).
-    private async Task FinalizeAsync(Guid runId, RunOutcome outcome, RunControl control, CancellationToken ct)
+    private async Task FinalizeAsync(Guid runId, string tenantId, RunOutcome outcome, RunControl control, CancellationToken ct)
     {
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(tenantId);
 
         // The interpreter's trace events were already appended live through the observer (§13, in occurrence order), so
         // outcome.Events is empty on this path — nothing to replay here; only the terminal event + read model remain.
@@ -227,13 +236,13 @@ public sealed class RunExecutor(
     // The executor's run observer (§11/§13): appends the interpreter's live trace events and each reached checkpoint from the
     // executor's OWN session, scrubbed at the RunEventScrubber chokepoint (§12) and committed immediately — so a tailing SSE
     // client sees them at once and a kill after a checkpoint resumes there. Every append pings the SSE notification hub.
-    private sealed class ExecutorObserver(Guid runId, RunControl control, IDocumentStore store, CredentialScrubber scrubber, RunEventSignals signals, TimeProvider clock) : IRunObserver
+    private sealed class ExecutorObserver(Guid runId, string tenantId, RunControl control, IDocumentStore store, CredentialScrubber scrubber, RunEventSignals signals, TimeProvider clock) : IRunObserver
     {
         public bool CancellationRequested => control.StopRequested;
 
         public async ValueTask EmitAsync(object traceEvent, CancellationToken ct)
         {
-            await using var session = store.LightweightSession();
+            await using var session = store.LightweightSession(tenantId);
             session.Events.Append(runId, RunEventScrubber.Scrub(traceEvent, scrubber));
             await session.SaveChangesAsync(ct);
             signals.Notify(runId);
@@ -241,7 +250,7 @@ public sealed class RunExecutor(
 
         public async ValueTask CheckpointReachedAsync(CheckpointSnapshot checkpoint, CancellationToken ct)
         {
-            await using var session = store.LightweightSession();
+            await using var session = store.LightweightSession(tenantId);
             session.Events.Append(runId, new RunCheckpointReached(checkpoint.Name, checkpoint.Sequence, clock.GetUtcNow()));
 
             var progress = (await session.LoadAsync<RunProgress>(runId, ct))!;
@@ -268,23 +277,30 @@ public sealed class RunExecutor(
 /// </summary>
 /// <param name="store">The Marten store used to scan for interrupted runs.</param>
 /// <param name="scopeFactory">Creates a scope to resolve the (scoped) message bus for re-publishing.</param>
-public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactory scopeFactory) : IHostedService
+/// <param name="tenants">The configured tenant directory — the fan-out set the per-tenant scan iterates (CD-1).</param>
+public sealed class RunRecoveryService(IDocumentStore store, IServiceScopeFactory scopeFactory, TenantRegistry tenants) : IHostedService
 {
-    /// <summary>Scans for interrupted runs and re-publishes their executor messages. On a fresh database the query simply
-    /// finds none.</summary>
+    /// <summary>Scans for interrupted runs and re-publishes their executor messages, <b>per tenant</b>. Under conjoined
+    /// tenancy (CD-1) every query is tenant-scoped, so recovery fans out over each configured tenant and re-publishes each
+    /// interrupted run's <see cref="ExecuteRun"/> tagged with that tenant — so the executor resumes it under the same
+    /// partition it started in. On a fresh database each per-tenant query simply finds none.</summary>
     /// <param name="cancellationToken">Cancels the scan.</param>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        await using var session = store.QuerySession();
-        var interrupted = await session.Query<RunProgress>()
-            .Where(progress => progress.Status == RunStatus.Running)
-            .ToListAsync(cancellationToken);
-
         using var scope = scopeFactory.CreateScope();
         var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
-        foreach (var run in interrupted)
+
+        foreach (var tenantId in tenants.TenantIds)
         {
-            await bus.PublishAsync(new ExecuteRun(run.Id));
+            await using var session = store.QuerySession(tenantId);
+            var interrupted = await session.Query<RunProgress>()
+                .Where(progress => progress.Status == RunStatus.Running)
+                .ToListAsync(cancellationToken);
+
+            foreach (var run in interrupted)
+            {
+                await bus.PublishAsync(new ExecuteRun(run.Id), new DeliveryOptions { TenantId = tenantId });
+            }
         }
     }
 

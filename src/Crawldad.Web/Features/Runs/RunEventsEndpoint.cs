@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Crawldad.Web.Infrastructure.Security;
 using JasperFx.Events;
 using Marten;
 using Microsoft.AspNetCore.Http;
@@ -22,17 +23,20 @@ public static class RunEventsEndpoint
     /// <param name="id">The run to stream.</param>
     /// <param name="store">The Marten store (the durable frame source).</param>
     /// <param name="signals">The in-process tail-wakeup hub.</param>
+    /// <param name="tenant">The authenticated tenant — scopes the stream to this tenant's runs (CD-1).</param>
     /// <returns>The SSE streaming <see cref="IResult"/>.</returns>
     [WolverineGet("/runs/{id}/events")]
-    public static IResult Handle(Guid id, IDocumentStore store, RunEventSignals signals) =>
-        new RunEventStream(id, store, signals);
+    public static IResult Handle(Guid id, IDocumentStore store, RunEventSignals signals, TenantContext tenant) =>
+        new RunEventStream(id, store, signals, tenant.TenantId);
 }
 
 /// <summary>The SSE streaming result for one run (§11): backfill-from-durable-stream then live-tail-until-terminal.</summary>
 /// <param name="runId">The run to stream.</param>
 /// <param name="store">The Marten store (a fresh query session per read, so each read sees the latest committed events).</param>
 /// <param name="signals">The tail-wakeup hub.</param>
-internal sealed class RunEventStream(Guid runId, IDocumentStore store, RunEventSignals signals) : IResult
+/// <param name="tenantId">The tenant the query sessions are scoped to — a run in another tenant is unreadable here, so a
+/// cross-tenant stream is an empty stream and answers 404 exactly as an unknown run does (CD-1).</param>
+internal sealed class RunEventStream(Guid runId, IDocumentStore store, RunEventSignals signals, string tenantId) : IResult
 {
     // The tail poll backstop: a missed in-process wakeup only defers a re-read by at most this long — the durable re-read is
     // the correctness guarantee, this bounds latency (and lets a disconnect be noticed promptly).
@@ -102,10 +106,11 @@ internal sealed class RunEventStream(Guid runId, IDocumentStore store, RunEventS
         }
     }
 
-    // A fresh query session per read, so each read sees the latest committed events (no session-level snapshot).
+    // A fresh query session per read, so each read sees the latest committed events (no session-level snapshot). Scoped to
+    // the request's tenant (CD-1): a stream id belonging to another tenant fetches nothing, so it 404s like an unknown run.
     private async Task<IReadOnlyList<IEvent>> FetchAsync(CancellationToken token)
     {
-        await using var session = store.QuerySession();
+        await using var session = store.QuerySession(tenantId);
         return await session.Events.FetchStreamAsync(runId, token: token);
     }
 

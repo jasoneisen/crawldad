@@ -18,23 +18,32 @@ public sealed record StoredDownload(Guid ContentId, string StoredAs, long SizeBy
 /// already-present blob short-circuits to <c>stored:true</c> with <b>no</b> re-upload (reproducing
 /// <c>handleDownload</c>'s blob-exists check). A <c>FakeDownloadSink</c> implements this in-memory for tests and the
 /// fake-adapter path; Phase 4 adds presigned-URL / blob-store kinds behind the same interface.
+/// <para>
+/// The seam is <b>tenant-scoped</b> (CD-1): every call carries the run's <paramref name="tenant"/> so a real adapter
+/// partitions storage per tenant (the tenant in the key/path structure) and the content-addressed idempotency probe is
+/// scoped to the tenant — one tenant can neither read, overwrite, nor even probe another's blob by guessing its content
+/// id. The engine-facing content id / stored name stay tenant-independent (so the wire <c>dl</c> and trace stay
+/// byte-identical); the tenant only qualifies where the bytes physically live. Real adapters land in CD-2.
+/// </para>
 /// </summary>
 public interface IDownloadSink
 {
-    /// <summary>Whether a blob with this content id is already stored (the idempotency short-circuit).</summary>
+    /// <summary>Whether a blob with this content id is already stored <b>for this tenant</b> (the idempotency short-circuit).</summary>
+    /// <param name="tenant">The run's tenant — scopes the probe so it never sees another tenant's blobs.</param>
     /// <param name="contentId">The content-addressed id.</param>
     /// <param name="ct">Cancels the check.</param>
-    /// <returns><see langword="true"/> when the blob is already present (skip the upload).</returns>
-    Task<bool> ExistsAsync(Guid contentId, CancellationToken ct);
+    /// <returns><see langword="true"/> when the blob is already present for this tenant (skip the upload).</returns>
+    Task<bool> ExistsAsync(string tenant, Guid contentId, CancellationToken ct);
 
     /// <summary>
-    /// Stores the content, returning whether the handling succeeded — the engine binds this into <c>dl.stored</c>,
-    /// exactly as the reference's <c>handleDownload</c> returns a bool the caller branches on (store ⇒ keep the
-    /// attachment; failure ⇒ warn and drop it).
+    /// Stores the content <b>under the tenant's partition</b>, returning whether the handling succeeded — the engine binds
+    /// this into <c>dl.stored</c>, exactly as the reference's <c>handleDownload</c> returns a bool the caller branches on
+    /// (store ⇒ keep the attachment; failure ⇒ warn and drop it).
     /// </summary>
+    /// <param name="tenant">The run's tenant — the storage partition the bytes land in.</param>
     /// <param name="item">The content metadata (id, stored name, size, hash).</param>
     /// <param name="content">The byte stream to persist (positioned at the start).</param>
     /// <param name="ct">Cancels the store.</param>
     /// <returns><see langword="true"/> when the content was stored successfully; <see langword="false"/> on a handling failure.</returns>
-    Task<bool> StoreAsync(StoredDownload item, Stream content, CancellationToken ct);
+    Task<bool> StoreAsync(string tenant, StoredDownload item, Stream content, CancellationToken ct);
 }

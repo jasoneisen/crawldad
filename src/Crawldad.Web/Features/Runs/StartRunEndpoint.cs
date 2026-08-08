@@ -139,7 +139,9 @@ public static class StartRunEndpoint
             runId,
             RunEventScrubber.Scrub(new RunStarted(payloadName, scriptHash, clock.GetUtcNow(), [.. input.Keys], payloadId, payloadRevision), scrubber));
 
-        var outcome = await new RunInterpreter(payload, input, registry, sinks, clock).RunAsync(ct);
+        // The session is already tenant-scoped by Wolverine's HTTP tenant detection, so its tenant is the run's tenant —
+        // thread it to the interpreter so a synchronous run's downloads/screenshots land in this tenant's storage (CD-1).
+        var outcome = await new RunInterpreter(payload, input, registry, sinks, clock, session.TenantId).RunAsync(ct);
 
         // The interpreter's trace events (LogEmitted/RunAttemptFailed) land between RunStarted and the terminal event,
         // in occurrence order — each scrubbed at this single append chokepoint, so nothing credential-bearing is persisted.
