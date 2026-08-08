@@ -12,32 +12,36 @@ namespace Crawldad.Web.Features.Payloads;
 /// <param name="Script">The saved payload JSON (scrubbed; the reconstructable version history).</param>
 /// <param name="ScriptHash">SHA-256 (lowercase hex) of <see cref="Script"/> — pins the exact stored bytes (drift/audit, same convention as <c>RunStarted</c>).</param>
 /// <param name="DraftedAt">When the payload was drafted (through the <see cref="TimeProvider"/> seam).</param>
-public sealed record PayloadDrafted(string Name, string Script, string ScriptHash, DateTimeOffset DraftedAt);
+/// <param name="By">The actor who drafted it — stamped from the authenticated tenant's identity, never a request body (§12).</param>
+public sealed record PayloadDrafted(string Name, string Script, string ScriptHash, DateTimeOffset DraftedAt, string By);
 
 /// <summary>
 /// A managed payload gained a new script revision (§14.1) — one event = one version. Carries the same scrubbed-then-hashed
 /// <see cref="Script"/>/<see cref="ScriptHash"/> as a draft (a persisted revision is always executable, §12), plus an
 /// optional <see cref="Note"/> for the audit trail. The revision number is the event's stream version (folded by the
-/// aggregate), so it is not duplicated here. No actor is recorded — identity comes from the authenticated principal, never
-/// the request body (§12); it is post-MVP (mirrors <c>RunStarted</c>).
+/// aggregate), so it is not duplicated here. The actor (<see cref="By"/>) comes from the authenticated principal, never
+/// the request body (§12).
 /// </summary>
 /// <param name="Script">The revised payload JSON (scrubbed).</param>
 /// <param name="ScriptHash">SHA-256 (lowercase hex) of <see cref="Script"/>.</param>
 /// <param name="Note">An optional human note describing the revision (scrubbed).</param>
 /// <param name="RevisedAt">When the revision was saved (through the <see cref="TimeProvider"/> seam).</param>
-public sealed record PayloadRevised(string Script, string ScriptHash, string? Note, DateTimeOffset RevisedAt);
+/// <param name="By">The actor who revised it — stamped from the authenticated tenant's identity (§12).</param>
+public sealed record PayloadRevised(string Script, string ScriptHash, string? Note, DateTimeOffset RevisedAt, string By);
 
 /// <summary>
 /// A managed payload was renamed (§14.1): metadata only, the script is unchanged. Advances the head revision but leaves
-/// the script hash the same. No actor recorded (§12, as above).
+/// the script hash the same. The actor (<see cref="By"/>) comes from the authenticated principal (§12, as above).
 /// </summary>
 /// <param name="Name">The new logical name (scrubbed).</param>
 /// <param name="RenamedAt">When the rename was saved (through the <see cref="TimeProvider"/> seam).</param>
-public sealed record PayloadRenamed(string Name, DateTimeOffset RenamedAt);
+/// <param name="By">The actor who renamed it — stamped from the authenticated tenant's identity (§12).</param>
+public sealed record PayloadRenamed(string Name, DateTimeOffset RenamedAt, string By);
 
 /// <summary>
 /// A managed payload was archived (§14.1): a terminal lifecycle change. An archived payload cannot be revised, renamed,
-/// re-archived, or pinned by a new run. No actor recorded (§12, as above).
+/// re-archived, or pinned by a new run. The actor (<see cref="By"/>) comes from the authenticated principal (§12, as above).
 /// </summary>
 /// <param name="ArchivedAt">When the archive was saved (through the <see cref="TimeProvider"/> seam).</param>
-public sealed record PayloadArchived(DateTimeOffset ArchivedAt);
+/// <param name="By">The actor who archived it — stamped from the authenticated tenant's identity (§12).</param>
+public sealed record PayloadArchived(DateTimeOffset ArchivedAt, string By);

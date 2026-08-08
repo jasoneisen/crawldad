@@ -190,7 +190,7 @@ public static class DurableHost
     /// <param name="resetData">Whether to reset Marten data after boot (false to inherit a prior host's data).</param>
     public static async Task<IAlbaHost> BuildAsync(string schema, IBrowserBackend fakeBackend, bool resetData = true)
     {
-        var host = await AlbaHost.For<Program>(builder =>
+        var host = (await AlbaHost.For<Program>(builder =>
         {
             builder.UseCrawldadTestDefaults(schema);
             builder.ConfigureServices(services =>
@@ -198,7 +198,7 @@ public static class DurableHost
                 services.AddSingleton<TimeProvider>(new FakeClock());
                 services.AddKeyedSingleton<IBrowserBackend>("fake", (_, _) => fakeBackend);
             });
-        });
+        })).AuthenticatedAsPrimaryTenant();
 
         if (resetData)
         {

@@ -11,7 +11,9 @@ namespace Crawldad.Web.Infrastructure.Storage;
 /// <param name="failStore">When true, <see cref="StoreAsync"/> drains the stream but returns <see langword="false"/> and stores nothing.</param>
 internal sealed class FakeDownloadSink(bool failStore = false) : IDownloadSink
 {
-    private readonly HashSet<Guid> _stored = [];
+    // Blobs are held under (tenant, contentId) so the fake proves the seam's tenant partitioning (CD-1): the same content
+    // id under two tenants is two distinct entries, and one tenant's Exists probe never matches another's stored blob.
+    private readonly HashSet<(string Tenant, Guid ContentId)> _stored = [];
 
     /// <summary>How many times <see cref="ExistsAsync"/> was asked (the idempotency probe count).</summary>
     internal int ExistsCalls { get; private set; }
@@ -19,16 +21,21 @@ internal sealed class FakeDownloadSink(bool failStore = false) : IDownloadSink
     /// <summary>How many times <see cref="StoreAsync"/> actually ran (must stay flat across a re-download of present content).</summary>
     internal int StoreCalls { get; private set; }
 
-    /// <summary>The content ids currently held (a re-store of any of these must not occur).</summary>
-    internal IReadOnlyCollection<Guid> Stored => _stored;
+    /// <summary>The content ids currently held across all tenants (a re-store of any of these, for its tenant, must not occur).</summary>
+    internal IReadOnlyCollection<Guid> Stored => [.. _stored.Select(key => key.ContentId)];
 
-    public Task<bool> ExistsAsync(Guid contentId, CancellationToken ct)
+    /// <summary>The content ids held for one tenant — the tenant-isolation probe (another tenant's ids never appear here).</summary>
+    /// <param name="tenant">The tenant partition to inspect.</param>
+    internal IReadOnlyCollection<Guid> StoredFor(string tenant) =>
+        [.. _stored.Where(key => string.Equals(key.Tenant, tenant, StringComparison.Ordinal)).Select(key => key.ContentId)];
+
+    public Task<bool> ExistsAsync(string tenant, Guid contentId, CancellationToken ct)
     {
         ExistsCalls++;
-        return Task.FromResult(_stored.Contains(contentId));
+        return Task.FromResult(_stored.Contains((tenant, contentId)));
     }
 
-    public async Task<bool> StoreAsync(StoredDownload item, Stream content, CancellationToken ct)
+    public async Task<bool> StoreAsync(string tenant, StoredDownload item, Stream content, CancellationToken ct)
     {
         StoreCalls++;
 
@@ -42,7 +49,7 @@ internal sealed class FakeDownloadSink(bool failStore = false) : IDownloadSink
             return false; // scripted handling failure → dl.stored == false
         }
 
-        _stored.Add(item.ContentId);
+        _stored.Add((tenant, item.ContentId));
         return true;
     }
 }

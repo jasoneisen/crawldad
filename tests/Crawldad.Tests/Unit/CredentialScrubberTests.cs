@@ -119,6 +119,22 @@ public class CredentialScrubberTests
         scrubbed.ShouldBe($"token={_redacted}");
     }
 
+    // ----- always-on secrets (the configured tenant API keys, CD-1) ----------
+
+    [Fact]
+    public void Redacts_a_configured_always_on_secret_wherever_it_appears()
+    {
+        const string ApiKey = "tenant-api-key-0123456789abcdef";
+        var scrubber = new CredentialScrubber(new StubSecretScope(), [ApiKey, "short"]);
+
+        // The always-on set redacts the key even in free-form text no param rule would catch (a stray Authorization log);
+        // a below-floor entry ("short") is inert, so the two branches of the always-on rule are both exercised.
+        var scrubbed = scrubber.Scrub($"Authorization: Bearer {ApiKey} then short");
+
+        scrubbed.ShouldBe($"Authorization: Bearer {_redacted} then short");
+        scrubbed.ShouldNotContain(ApiKey);
+    }
+
     // ----- idempotence -------------------------------------------------------
 
     [Theory]

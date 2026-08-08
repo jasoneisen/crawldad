@@ -253,7 +253,7 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         // The RunExecutorSaga LINGERS after the run finished — it is never marked complete — and holds the run's
         // inputs+script at rest, but by reference: the credentialRef IS stored, the resolved secret is NOT (§12).
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using (var session = store.LightweightSession())
+        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
             var saga = await session.LoadAsync<RunExecutorSaga>(runId);
             saga.ShouldNotBeNull();                                         // still at rest post-completion (the retention finding)
@@ -276,7 +276,7 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         responseRoot.GetRawText().ShouldNotContain(sentinel);
 
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
 
         // (a) every event in the run's stream (typed data re-serialised to JSON).
         var events = await session.Events.FetchStreamAsync(runId);
@@ -430,7 +430,7 @@ public sealed class LeakHost : IAsyncLifetime
             [DurableRef] = DurableSecretSentinel,
         };
 
-        _host = await AlbaHost.For<Program>(builder =>
+        _host = (await AlbaHost.For<Program>(builder =>
         {
             builder.UseCrawldadTestDefaults(SchemaName);
             builder.UseSetting("Crawldad:Browserless:EndpointTemplate", _runServer.WsBase);
@@ -443,7 +443,7 @@ public sealed class LeakHost : IAsyncLifetime
                 services.AddSingleton<IPlaywrightProvider>(new SharedPlaywrightProvider(chromium.Provider));
                 services.AddSingleton<ILoggerProvider>(Capturer);
             });
-        });
+        })).AuthenticatedAsPrimaryTenant();
 
         await _host.ResetAllMartenDataAsync();
         return _host;

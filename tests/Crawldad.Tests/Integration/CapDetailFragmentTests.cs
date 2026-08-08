@@ -103,7 +103,7 @@ public class CapDetailFragmentTests(AppFixture fixture)
 
         var runId = root.GetProperty("runId").GetGuid();
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var events = await session.Events.FetchStreamAsync(runId);
         var logs = events.Select(e => e.Data).OfType<LogEmitted>().Select(l => (l.Level, l.Message)).ToList();
 

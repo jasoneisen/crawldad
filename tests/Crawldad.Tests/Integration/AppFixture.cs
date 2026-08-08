@@ -17,7 +17,7 @@ public sealed class AppFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Host = await AlbaHost.For<Program>(builder =>
+        Host = (await AlbaHost.For<Program>(builder =>
         {
             builder.UseCrawldadTestDefaults("crawldad_test");
 
@@ -27,7 +27,7 @@ public sealed class AppFixture : IAsyncLifetime
                 // reads time through this seam, so freezing it here keeps run traces deterministic.
                 services.AddSingleton<TimeProvider>(new FakeClock());
             });
-        });
+        })).AuthenticatedAsPrimaryTenant();
 
         await Host.ResetAllMartenDataAsync();
     }

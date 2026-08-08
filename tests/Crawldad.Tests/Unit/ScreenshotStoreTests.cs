@@ -1,4 +1,5 @@
 using System.Text;
+using Crawldad.Tests.Support;
 using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Unit;
@@ -15,7 +16,7 @@ public class ScreenshotStoreTests
         var store = new InMemoryScreenshotStore();
         var png = Encoding.UTF8.GetBytes("fake-png-bytes");
 
-        var reference = await store.SaveAsync(png, CancellationToken.None);
+        var reference = await store.SaveAsync(TestTenants.InterpreterTenant, png, CancellationToken.None);
 
         reference.ShouldStartWith("screenshots/");
         reference.ShouldEndWith(".png");
@@ -28,8 +29,8 @@ public class ScreenshotStoreTests
     {
         var store = new InMemoryScreenshotStore();
 
-        var first = await store.SaveAsync([1, 2, 3], CancellationToken.None);
-        var second = await store.SaveAsync([1, 2, 3], CancellationToken.None);
+        var first = await store.SaveAsync(TestTenants.InterpreterTenant, [1, 2, 3], CancellationToken.None);
+        var second = await store.SaveAsync(TestTenants.InterpreterTenant, [1, 2, 3], CancellationToken.None);
 
         second.ShouldBe(first);          // same content ⇒ same ref
         store.Blobs.Count.ShouldBe(1);   // stored once

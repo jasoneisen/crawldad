@@ -53,7 +53,7 @@ public class RetryEndpointTests(AppFixture fixture)
     private async Task<IReadOnlyList<Type>> StreamEventTypesAsync(Guid runId)
     {
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var events = await session.Events.FetchStreamAsync(runId);
         return [.. events.Select(e => e.EventType)];
     }

@@ -49,7 +49,8 @@ internal static class Runner
             input,
             new SingleBackendRegistry("fake", backend),
             sinks ?? new SingleSinkRegistry("fake", new FakeDownloadSink()),
-            clock ?? new FakeClock());
+            clock ?? new FakeClock(),
+            TestTenants.InterpreterTenant);
         return (await interpreter.RunAsync(CancellationToken.None), backend);
     }
 
@@ -83,6 +84,7 @@ internal static class Runner
             new SingleBackendRegistry("fake", backend ?? new FakeBrowserBackend(FixturesRoot)),
             new SingleSinkRegistry("fake", sink ?? new FakeDownloadSink()),
             new FakeClock(),
+            TestTenants.InterpreterTenant,
             observer,
             resume: null,
             screenshots);

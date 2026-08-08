@@ -21,7 +21,7 @@ public class PayloadRevisionsTests(AppFixture fixture)
     public async Task LoadAsync_returns_null_for_an_unknown_payload()
     {
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         (await PayloadRevisions.LoadAsync(session, Guid.NewGuid(), CancellationToken.None)).ShouldBeNull();
     }
 
@@ -31,18 +31,18 @@ public class PayloadRevisionsTests(AppFixture fixture)
         var id = Guid.NewGuid();
         var at = FakeClock.Fixed;
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using (var writer = store.LightweightSession())
+        await using (var writer = store.LightweightSession(TestTenants.PrimaryId))
         {
             writer.Events.StartStream<Payload>(
                 id,
-                new PayloadDrafted("demo", """{ "s": 1 }""", "h1", at),
-                new PayloadRevised("""{ "s": 2 }""", "h2", "note", at),
-                new PayloadRenamed("renamed", at), // metadata: carries the script forward
-                new PayloadArchived(at));          // terminal: carries the script forward, marks archived
+                new PayloadDrafted("demo", """{ "s": 1 }""", "h1", at, TestTenants.PrimaryActor),
+                new PayloadRevised("""{ "s": 2 }""", "h2", "note", at, TestTenants.PrimaryActor),
+                new PayloadRenamed("renamed", at, TestTenants.PrimaryActor), // metadata: carries the script forward
+                new PayloadArchived(at, TestTenants.PrimaryActor));          // terminal: carries the script forward, marks archived
             await writer.SaveChangesAsync();
         }
 
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var resolved = await PayloadRevisions.LoadAsync(session, id, CancellationToken.None);
 
         resolved.ShouldNotBeNull();

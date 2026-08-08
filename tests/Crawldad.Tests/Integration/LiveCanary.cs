@@ -68,7 +68,8 @@ internal static class LiveCanary
     /// <returns>The host; dispose it with <c>await using</c>.</returns>
     public static async Task<IAlbaHost> BuildLiveHostAsync()
     {
-        var host = await AlbaHost.For<Program>(builder => builder.UseCrawldadTestDefaults("crawldad_canary"));
+        var host = (await AlbaHost.For<Program>(builder => builder.UseCrawldadTestDefaults("crawldad_canary")))
+            .AuthenticatedAsPrimaryTenant();
         await host.ResetAllMartenDataAsync();
         return host;
     }

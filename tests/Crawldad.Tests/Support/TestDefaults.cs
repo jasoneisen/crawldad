@@ -16,6 +16,15 @@ public static class TestDefaults
     public static IWebHostBuilder UseCrawldadTestDefaults(this IWebHostBuilder builder, string schemaName)
     {
         builder.UseSetting(HostConfiguration.ProjectionLifecycleKey, "Inline");
+
+        // Configure the tenant directory (CD-1) so the host's registry admits the test tenants. The Alba host layers the
+        // primary tenant's key onto every scenario (TestTenants.AuthenticatedAsPrimaryTenant) so the request-based suite
+        // stays green; the cross-tenant and unauthenticated tests override the header per scenario.
+        foreach (var (key, value) in TestTenants.Configuration)
+        {
+            builder.UseSetting(key, value);
+        }
+
         builder.ConfigureServices(services =>
         {
             services.ConfigureMarten(options => options.DatabaseSchemaName = schemaName);

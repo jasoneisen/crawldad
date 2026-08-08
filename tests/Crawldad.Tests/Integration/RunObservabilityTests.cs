@@ -195,7 +195,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         // (a) Every event in the immutable §13 trace: NONE carries the raw value. set/push emit Extracted shape refs only,
         // the checkpoint marker is metadata-only (name + sequence), and no terminal event carries the result body.
         var store = host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var events = await session.Events.FetchStreamAsync(runId);
         string.Join('\n', events.Select(e => JsonSerializer.Serialize(e.Data, e.Data.GetType()))).ShouldNotContain(Pii);
 
@@ -225,6 +225,7 @@ public class RunObservabilityTests(DurableFixture fixture)
     public async Task Events_for_an_unknown_run_is_404()
     {
         using var client = (await fixture.EnsureAsync()).GetTestServer().CreateClient();
+        client.DefaultRequestHeaders.Add("Authorization", TestTenants.Bearer(TestTenants.PrimaryKey));
         using var response = await client.GetAsync(new Uri($"/runs/{Guid.NewGuid()}/events", UriKind.Relative));
         response.StatusCode.ShouldBe(System.Net.HttpStatusCode.NotFound);
     }
@@ -295,6 +296,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         // Open the stream and drain frames continuously, then abort the request while the run is still gated — the server
         // observes RequestAborted and stops tailing cleanly.
         using var client = host.GetTestServer().CreateClient();
+        client.DefaultRequestHeaders.Add("Authorization", TestTenants.Bearer(TestTenants.PrimaryKey));
         using var cts = new CancellationTokenSource();
         var draining = Task.Run(async () =>
         {

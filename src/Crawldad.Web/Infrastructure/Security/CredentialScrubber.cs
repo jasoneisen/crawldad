@@ -23,9 +23,19 @@ namespace Crawldad.Web.Infrastructure.Security;
 /// contains no credential param and no live secret is returned unchanged (same instance), so goldens are byte-identical.
 /// </para>
 /// </summary>
+/// <para>
+/// Alongside the per-run secrets, a fixed set of <b>always-on</b> secrets is exact-scrubbed on every call: the configured
+/// tenant API keys (CD-1). An API key is not run data and so never reaches a sink by design, but wiring it in closes the
+/// residual vector (a stray log of an <c>Authorization</c> header) the same way run credentials are handled — defence in
+/// depth, not a substitute for never emitting it.
+/// </para>
+/// </summary>
 /// <param name="secretScope">The per-run secret registry consulted for the exact-match rule.</param>
-public sealed partial class CredentialScrubber(IRunSecretScope secretScope)
+/// <param name="alwaysScrub">Process-wide secrets (the configured tenant API keys) exact-scrubbed on every call.</param>
+public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IReadOnlyCollection<string>? alwaysScrub = null)
 {
+    private readonly IReadOnlyCollection<string> _alwaysScrub = alwaysScrub ?? [];
+
     /// <summary>The fixed marker a redacted value is replaced with.</summary>
     public const string Redaction = "[redacted]";
 
@@ -56,6 +66,16 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope)
 
         var result = text;
         foreach (var secret in secretScope.Current)
+        {
+            if (secret.Length >= MinExactScrubLength)
+            {
+                result = result.Replace(secret, Redaction, StringComparison.Ordinal);
+            }
+        }
+
+        // Always-on secrets (the configured tenant API keys, CD-1): exact-scrubbed on every call, above the length floor
+        // (a configured key is required to be well above it), so a leaked key is redacted wherever it might surface.
+        foreach (var secret in _alwaysScrub)
         {
             if (secret.Length >= MinExactScrubLength)
             {

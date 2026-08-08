@@ -77,7 +77,7 @@ public class RunPinningTests(AppFixture fixture)
 
         // RunStarted pinned the exact payload + revision + hash.
         var store = Host.Services.GetRequiredService<IDocumentStore>();
-        await using var session = store.LightweightSession();
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
         var started = (RunStarted)(await session.Events.FetchStreamAsync(run1Id))[0].Data;
         started.PayloadId.ShouldBe(id);
         started.PayloadRevision.ShouldBe(1);

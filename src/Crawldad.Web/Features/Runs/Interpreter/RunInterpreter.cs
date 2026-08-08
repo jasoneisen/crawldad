@@ -45,6 +45,7 @@ internal sealed class RunInterpreter
     private readonly IBrowserBackendRegistry _registry;
     private readonly IDownloadSinkRegistry _sinks;
     private readonly TimeProvider _clock;
+    private readonly string _tenant;
     private readonly IRunObserver? _observer;
     private readonly ResumeState? _resume;
     private readonly IScreenshotStore? _screenshots;
@@ -70,6 +71,9 @@ internal sealed class RunInterpreter
     /// <param name="registry">Resolves the backend adapter named by <c>config.backend</c>.</param>
     /// <param name="sinks">Resolves the download sink named by a <c>download.to</c> target.</param>
     /// <param name="clock">The time seam for stats/trace timestamps.</param>
+    /// <param name="tenant">The run's tenant (CD-1): threaded into the download/screenshot sinks so their storage is
+    /// partitioned per tenant (the tenant in the key/path structure). The content-addressed refs it produces stay
+    /// tenant-independent, so the wire result and trace are byte-identical.</param>
     /// <param name="observer">The durable-execution seam (§11): null on the synchronous path (a <c>checkpoint</c> is then
     /// inert, cancellation is never signalled, and no step-trace events are emitted — behaviour and goldens unchanged); the
     /// executor supplies one for the async saga path.</param>
@@ -82,6 +86,7 @@ internal sealed class RunInterpreter
         IBrowserBackendRegistry registry,
         IDownloadSinkRegistry sinks,
         TimeProvider clock,
+        string tenant,
         IRunObserver? observer = null,
         ResumeState? resume = null,
         IScreenshotStore? screenshots = null)
@@ -91,6 +96,7 @@ internal sealed class RunInterpreter
         _registry = registry;
         _sinks = sinks;
         _clock = clock;
+        _tenant = tenant;
         _observer = observer;
         _resume = resume;
         _screenshots = screenshots;
@@ -569,8 +575,9 @@ internal sealed class RunInterpreter
         long sizeBytes = data.Length;
 
         // exists ⇒ stored:true, no re-upload; else the sink's own success (false ⇒ the reference's handleDownload reject).
-        var stored = await sink.ExistsAsync(contentId, ct)
-            || await sink.StoreAsync(new StoredDownload(contentId, storedAs, sizeBytes, sha256), new MemoryStream(data, writable: false), ct);
+        // Both calls carry the run's tenant so the sink partitions storage and probes existence per tenant (CD-1).
+        var stored = await sink.ExistsAsync(_tenant, contentId, ct)
+            || await sink.StoreAsync(_tenant, new StoredDownload(contentId, storedAs, sizeBytes, sha256), new MemoryStream(data, writable: false), ct);
 
         _downloads++;
         _scope.Set(body.GetProperty("var").GetString()!, new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -922,7 +929,7 @@ internal sealed class RunInterpreter
 
         try
         {
-            return await _screenshots.SaveAsync(await _scope.PageHandle.ScreenshotAsync(ct), ct);
+            return await _screenshots.SaveAsync(_tenant, await _scope.PageHandle.ScreenshotAsync(ct), ct);
         }
         catch (BrowserException)
         {
