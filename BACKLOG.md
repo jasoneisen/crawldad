@@ -27,7 +27,13 @@ tenant, actor/`By` from the principal (never the request body), per-tenant Marte
 (runs, payloads, timelines, SSE, blobs); actor stamped on payload mutation events from the principal.
 
 ### [#2](https://github.com/jasoneisen/crawldad/issues/2) Real blob storage adapters + retention/lifecycle
-**Status:** open. **Ref:** §9.3, §12, §13; `RunsModule.cs` wiring.
+**Status:** shipped 2026-08-08 (PR #25, reviewer-approved after a two-round loop — round 1 caught a
+retention-janitor exception that would stop the host on transient storage errors and a missing
+shared tenant/key guard on the Azure adapter, both fixed with tests). Filesystem adapter is the
+durable default (100%-covered on real disk); Azure Blob validated against Azurite (hermetic CI);
+provider knob `Crawldad:Storage:Provider`; retention TTLs enforced by a scheduled janitor;
+crypto-shredding documented designed-not-built. TTL is measured from first write under
+content-addressing — revisit before any blob-retrieval endpoint. **Ref:** §9.3, §12, §13.
 Production wiring registers only `FakeDownloadSink` (keyed `"fake"`) and `InMemoryScreenshotStore`.
 Ship at least one durable adapter for each (S3 / Azure Blob / filesystem) behind the existing keyed
 registry + `IScreenshotStore` seams, plus the §12/§13 policies: deletable PII blobs,
@@ -145,6 +151,19 @@ bodies reference the served schema (#20) rather than duplicating the DSL.
 **Done when:** `/openapi.json` served (anonymous-or-not decided deliberately, like `/health`); the
 spec covers every routable endpoint with accurate auth + response shapes; a sync test asserts no
 endpoint is missing from the spec. Deferred: SDK generation, hosted reference UI.
+
+### [#26](https://github.com/jasoneisen/crawldad/issues/26) Drain `SyncRunSupervisor` tasks on host shutdown
+**Status:** confirmed bug, filed 2026-08-08 (found during the #2 review; confirmed by two
+independent reviewers). **Ref:** #15 (PR #23) `SyncRunSupervisor`.
+`Adopt` fire-and-forgets `DriveToTerminalAsync` with no tie to the host lifetime; the
+post-persistence tail (finalize via singleton store → promote via a fresh scope + `IMessageBus`)
+can hit disposed services on shutdown → intermittent `ObjectDisposedException` teardown flakes in
+`SyncCapTests`/`ConcurrentRunsCapTests`, and in production a graceful shutdown can cut a promotion
+mid-flight (recovered durably on restart, but noisy). Fix direction: register supervised tasks
+with the host lifetime and drain on shutdown (or guard the tail against a disposing provider);
+fixtures drain in-flight supervised runs before dispose.
+**Done when:** a shutdown-with-inflight-upgraded-run test proves clean drain; the teardown flake
+cascades disappear from repeated full-suite runs.
 
 ## Tier 3 — operational toggles
 
