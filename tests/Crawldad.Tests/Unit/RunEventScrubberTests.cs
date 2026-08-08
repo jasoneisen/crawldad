@@ -133,6 +133,26 @@ public class RunEventScrubberTests
     }
 
     [Fact]
+    public void Screenshotted_scrubs_the_ref_and_the_name() // #8: the ref is a credential-free hash, the name is author free text — both scrubbed defensively
+    {
+        var scrubbed = (Screenshotted)RunEventScrubber.Scrub(
+            new Screenshotted($"screenshots/{_secret}.png", $"after {_secret}", 4096, _at), Scrubber());
+
+        scrubbed.ScreenshotRef.ShouldBe($"screenshots/{_redacted}.png");
+        scrubbed.Name.ShouldBe($"after {_redacted}");
+        scrubbed.Size.ShouldBe(4096); // metadata untouched
+    }
+
+    [Fact]
+    public void Screenshotted_with_no_name_passes_the_null_label_through() // #8: the null-name branch — nothing to scrub
+    {
+        var scrubbed = (Screenshotted)RunEventScrubber.Scrub(new Screenshotted($"screenshots/{_secret}.png", null, 8, _at), Scrubber());
+
+        scrubbed.ScreenshotRef.ShouldBe($"screenshots/{_redacted}.png");
+        scrubbed.Name.ShouldBeNull();
+    }
+
+    [Fact]
     public void StepFailed_scrubs_the_error_and_keeps_the_screenshot_ref()
     {
         var scrubbed = (StepFailed)RunEventScrubber.Scrub(new StepFailed(3, $"boom-{_secret}", "screenshots/abc.png", _at), Scrubber());

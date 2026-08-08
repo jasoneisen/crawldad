@@ -94,6 +94,7 @@ internal sealed class SemanticWalker
             case "click":
             case "fill":
             case "clear":
+            case "screenshot":
                 WalkInteractionNode(head, body, p);
                 break;
             case "locate":
@@ -153,6 +154,15 @@ internal sealed class SemanticWalker
                 else
                 {
                     CheckExpr(body.GetProperty("value").GetString()!, $"{p}/value");
+                }
+
+                break;
+            case "screenshot":
+                // #8: a full-page capture with no scope effect; its only leaf is the optional author `name` label (a Tmpl,
+                // interpolation-consistent with log.message/goto.url), so a bad reference in it is caught at save time.
+                if (body.TryGetProperty("name", out var shotName))
+                {
+                    CheckTmpl(shotName.GetString()!, $"{p}/name");
                 }
 
                 break;

@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Alba;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
+using Crawldad.Web.Infrastructure.Storage;
 using Marten;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -118,6 +119,50 @@ public class RunObservabilityTests(DurableFixture fixture)
         // The extracted-value ref (key + shape, never the value).
         var extracted = timeline.GetProperty("extracted").EnumerateArray().ToList();
         extracted.ShouldContain(e => e.GetProperty("key").GetString() == "landed");
+    }
+
+    [Fact]
+    public async Task Timeline_surfaces_an_explicit_screenshot_capture() // #8: the durable saga → RunTimeline projection → endpoint, with the fake store
+    {
+        var host = await fixture.EnsureAsync();
+        fixture.Gate.Arm(gate: null);
+
+        var body = new JsonObject
+        {
+            ["payload"] = JsonNode.Parse(
+                """
+                { "crawldad": "1", "name": "obs.shot", "config": { "backend": "input.backend" }, "vars": {},
+                  "steps": [
+                    { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement" } },
+                    { "screenshot": { "name": "after-load" } }
+                  ],
+                  "result": "'ok'" }
+                """),
+            ["inputs"] = new JsonObject { ["backend"] = new JsonObject { ["adapter"] = "fake", ["options"] = new JsonObject { ["fixture"] = "caphome-multipage" } } },
+            ["async"] = true,
+        };
+        var runId = await StartAsyncAsync(host, body);
+        var terminal = await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(20));
+        terminal.GetProperty("status").GetString().ShouldBe("succeeded");
+
+        var result = await host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{runId}/timeline");
+            x.StatusCodeShouldBe(200);
+        });
+        var timeline = await result.ReadAsJsonAsync<JsonElement>();
+
+        // The timeline surfaces the capture as an artifact (ref + label + byte size), never the image (§12).
+        var shot = timeline.GetProperty("screenshots").EnumerateArray().ToList().ShouldHaveSingleItem();
+        var storedRef = shot.GetProperty("screenshotRef").GetString();
+        storedRef.ShouldStartWith("screenshots/");
+        shot.GetProperty("name").GetString().ShouldBe("after-load");
+        shot.GetProperty("size").GetInt64().ShouldBeGreaterThan(8);
+
+        // The bytes live only in the deletable, tenant-partitioned blob store (the same seam as screenshot-on-failure) —
+        // the timeline carries only the ref + metadata, never the image.
+        var store = (InMemoryScreenshotStore)host.Services.GetRequiredService<IScreenshotStore>();
+        store.Blobs.Keys.ShouldContain(storedRef!);
     }
 
     [Fact]

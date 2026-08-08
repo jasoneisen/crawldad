@@ -48,6 +48,15 @@ internal static class RunEventScrubber
         Filled filled => filled with { Target = scrubber.Scrub(filled.Target) },
         Extracted extracted => extracted with { Key = scrubber.Scrub(extracted.Key), ValueRef = scrubber.Scrub(extracted.ValueRef) },
         Downloaded downloaded => downloaded with { BlobRef = scrubber.Scrub(downloaded.BlobRef) },
+
+        // Screenshotted (#8) carries a content-addressed ref (credential-free hash) + the author's optional `name` label — the
+        // ref scrubbed defensively like Downloaded.BlobRef, the name scrubbed like any author free text (it can interpolate a
+        // value), null passing through. The image is never in the event (only the ref), so pixels cannot leak here (§12).
+        Screenshotted shot => shot with
+        {
+            ScreenshotRef = scrubber.Scrub(shot.ScreenshotRef),
+            Name = shot.Name is null ? null : scrubber.Scrub(shot.Name),
+        },
         StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error) },
         RunSessionOpened opened => opened with { Region = scrubber.Scrub(opened.Region) },
 

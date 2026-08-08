@@ -33,6 +33,16 @@ public class PayloadSchemaTests
     public void The_canonical_payloads_satisfy_the_schema(string fixture) =>
         PayloadSchema.Validate(Load(fixture)).ShouldBeEmpty();
 
+    [Theory]
+    [InlineData("""[ { "screenshot": {} } ]""")]                        // #8: an empty (all-optional) body is valid
+    [InlineData("""[ { "screenshot": { "name": "after-login" } } ]""")] // with the optional author label
+    public void A_screenshot_node_satisfies_the_schema(string steps) =>
+        PayloadSchema.Validate(Parse(Steps(steps))).ShouldBeEmpty();
+
+    [Fact]
+    public void A_screenshot_node_with_an_unknown_property_fails_the_schema() => // #8: additionalProperties:false — no to/selector/fullPage yet
+        PayloadSchema.Validate(Parse(Steps("""[ { "screenshot": { "selector": "#x" } } ]"""))).ShouldNotBeEmpty();
+
     [Fact]
     public void An_unknown_node_head_fails_the_schema()
     {

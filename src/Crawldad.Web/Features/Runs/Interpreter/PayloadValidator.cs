@@ -46,11 +46,11 @@ internal static class SecretRefInputs
 /// would be rejected by the existing node tests.</summary>
 internal static class NodeHeads
 {
-    /// <summary>The 24 recognised heads (P1+P2+WP1 dispatch table plus the P5 <c>checkpoint</c>).</summary>
+    /// <summary>The 25 recognised heads (P1+P2+WP1 dispatch table, the P5 <c>checkpoint</c>, and the #8 <c>screenshot</c>).</summary>
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
         "comment", "goto", "waitForLoadState", "waitForRequest", "waitFor", "frame", "addStyleTag",
-        "click", "fill", "clear", "locate", "download", "set", "push", "log", "guard", "fail",
+        "click", "fill", "clear", "screenshot", "locate", "download", "set", "push", "log", "guard", "fail",
         "if", "switch", "loop", "forEach", "break", "continue", "checkpoint",
     };
 }

@@ -50,6 +50,23 @@ public class RunTimelineProjectionTests
     }
 
     [Fact]
+    public void A_run_folds_explicit_screenshots_in_capture_order() // #8: author-requested artifacts, curated like downloads
+    {
+        var projection = new RunTimelineProjection();
+
+        var t = projection.Create(Started());
+        t = projection.Apply(new StepStarted(0, "screenshot", _t0), t);
+        t = projection.Apply(new Screenshotted("screenshots/aaa.png", "after-login", 2048, _t0), t);
+        t = projection.Apply(new Screenshotted("screenshots/bbb.png", null, 4096, _t0), t); // a second, unnamed → non-empty spread
+        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
+
+        t.Screenshots.ShouldBe([
+            new RunTimelineScreenshot("screenshots/aaa.png", "after-login", 2048),
+            new RunTimelineScreenshot("screenshots/bbb.png", null, 4096),
+        ]);
+    }
+
+    [Fact]
     public void A_failed_run_carries_the_step_failure_and_its_screenshot_ref()
     {
         var projection = new RunTimelineProjection();

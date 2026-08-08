@@ -422,6 +422,7 @@ internal sealed class RunInterpreter
             ["click"] = Effect(ClickAsync),
             ["fill"] = Effect(FillAsync),
             ["clear"] = Effect(ClearAsync),
+            ["screenshot"] = Effect(ScreenshotAsync),
             ["locate"] = Effect(LocateAsync),
             ["download"] = Effect(DownloadAsync),
             ["set"] = Effect(SetAsync),
@@ -614,6 +615,29 @@ internal sealed class RunInterpreter
     {
         var handle = await ResolveSelectorAsync(body, ct);
         await handle.ClearAsync(ct);
+    }
+
+    // #8 explicit screenshot node: the author-authored analogue of screenshot-on-failure, flowing through the SAME
+    // IScreenshotStore seam (§13) — so it inherits its deletable, tenant-partitioned, TTL-governed blob storage for free
+    // (no new storage logic). A full-page capture; the optional `name` is a rendered author label carried into the
+    // Screenshotted trace event (never the image itself). Inert on the synchronous path (no observer + no store), exactly
+    // as every §13 step-trace event no-ops there, so the §10 goldens are byte-identical. Counts as one step (through the
+    // dispatch chokepoint at ExecuteNodeAsync) and one event; its PNG bytes flow OUT through the store, never through the
+    // download byte cap (§12) — exactly as failure-screenshot bytes are exempt. Unlike the best-effort failure capture, an
+    // explicit capture that faults is NOT swallowed: it propagates as the run's own failure, because the author asked for it.
+    private async ValueTask ScreenshotAsync(JsonElement body, CancellationToken ct)
+    {
+        if (_observer is null || _screenshots is null)
+        {
+            return;
+        }
+
+        var name = body.TryGetProperty("name", out var label)
+            ? await CrawldadTemplate.Parse(label.GetString()!).RenderAsync(_scope, ct)
+            : null;
+        var png = await _scope.PageHandle.ScreenshotAsync(ct);
+        var screenshotRef = await _screenshots.SaveAsync(_tenant, png, ct);
+        await StepAsync(new Screenshotted(screenshotRef, name, png.Length, _clock.GetUtcNow()), ct); // §13 (ref + metadata only, never the bytes)
     }
 
     // ----- locate (both forms) ----------------------------------------------
