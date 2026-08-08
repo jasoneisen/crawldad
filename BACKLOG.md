@@ -103,7 +103,12 @@ Note (added 2026-08-08, from the #16 review): fold in `StartRun`/saga-start idem
 load (masked, not fixed, by #16's conditional enqueue-nudge; promotion itself is idempotent).
 
 ### [#6](https://github.com/jasoneisen/crawldad/issues/6) BYO key vault + `secretRef` form-fill credentials
-**Status:** approved 2026-08-07; design recorded in SECURITY.md "Designed, not built". **Ref:** §12.
+**Status:** shipped 2026-08-08 (PR #29, reviewer-approved after a two-round adversarial loop —
+round 1 caught the untested re-resolved-on-resume commitment and a short-secret leak via
+extract-after-fill, both fixed with tests). Config adapter only (`Secrets:{tenant}:{ref}`);
+azure-keyvault / aws-secretsmanager / hashicorp-vault / customer-HTTP adapters remain future work
+behind the shipped `ISecretStoreRegistry` seam. Form secrets scrub at floor 4 (1–3-char inert,
+documented). Unblocks the first login-gated target. **Ref:** §12.
 Pluggable `ISecretStore` adapters behind the keyed-registry pattern (`config`, then
 `azure-keyvault` / `aws-secretsmanager` / `hashicorp-vault` / customer HTTP endpoint); a `secretRef`
 payload input type whose value is the reference string only; a dedicated secret-valued action field
