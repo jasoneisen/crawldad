@@ -3,7 +3,9 @@
 > The post-MVP work list, created 2026-08-07 after all five phases of `CRAWLDAD_PLAN.md` shipped
 > (`8369556`). **Live tracking happens in GitHub Issues** — each ticket CD-N is mirrored as
 > [issue #N](https://github.com/jasoneisen/crawldad/issues) with a tier label; this file is the
-> stable index + full ticket text. Section refs (§) point to `CRAWLDAD_DESIGN.md`.
+> stable index + full ticket text. Section refs (§) point to `CRAWLDAD_DESIGN.md`; product/pricing
+refs (§Pv, §P, §1–§6) point to `docs/PRODUCT.md` (the product-architecture report, added
+2026-08-08).
 >
 > Explicitly **not** tickets (out of scope by the brief, re-affirmed at plan close): proxy layer,
 > browser fleet, billing, marketing site, self-serve authoring UI, `evaluate`/arbitrary JS (never —
@@ -39,7 +41,19 @@ bytes**, **max event count**, **max concurrent runs per tenant**, expression eva
 Exceeding a limit is a terminal failure with a clear code.
 **Done when:** each limit has a config knob, a terminal failure code, and a test driving it over the
 limit; concurrent-runs cap is per-tenant (depends on CD-1 for tenancy identity — a global cap is an
-acceptable first slice).
+acceptable first slice). Note: under the slot-based pricing model (`docs/PRODUCT.md` §Pv.3) the
+per-tenant concurrent-runs cap is the billing-critical limit — its at-limit semantics are CD-16.
+
+### [CD-15](https://github.com/jasoneisen/crawldad/issues/15) Cap synchronous runs at 120 s with auto-upgrade to async
+**Status:** approved 2026-08-08. **Ref:** `docs/PRODUCT.md` §1.1/§2.2, §8.4.
+Every viable Azure ingress kills a long sync request first (Front Door 240 s, Container Apps Envoy
+240 s, App Service ~230 s fixed) — the 30-minute synchronous `POST /runs` is architecturally dead
+behind any of them. Cap sync execution at 120 s wall clock; at the cap the run is auto-upgraded,
+not failed: the engine continues as if `"async": true` and the caller gets
+`202 {runId, status:"running"}` at the moment of upgrade, then uses the existing async surface.
+**Done when:** sub-120 s sync responses are byte-identical to today (goldens unchanged); a run
+crossing the cap returns 202 and completes with the same terminal result async would have
+produced; the threshold is a config knob; deployment docs state the required ingress timeout.
 
 ### [CD-4](https://github.com/jasoneisen/crawldad/issues/4) Browserbase `connectUrl` live-primary re-check
 **Status:** open (verification currently MED-HIGH from docs + captured examples). **Ref:** §3.5/§9,
@@ -75,6 +89,20 @@ Unblocks the first login-gated target.
 **Done when:** the SECURITY.md design section's four commitments each have a test, including a leak
 sweep proving the resolved secret is absent from events, projections, SSE, durable envelopes, and
 the saga while the ref is present.
+
+### [CD-16](https://github.com/jasoneisen/crawldad/issues/16) Slot admission queue: queue-don't-reject at the concurrent-run cap
+**Status:** approved 2026-08-08. **Ref:** `docs/PRODUCT.md` §Pv.3/§Pv.5; depends on CD-1 (tenant
+scope) and CD-3 (`maxConcurrentRunsPerTenant` — this ticket defines that cap's at-limit semantics).
+Slot-based pricing makes the per-tenant concurrency cap revenue enforcement at `StartRun`
+admission, so its rejection behavior is product-critical: queue, don't 429. Durable FIFO on the
+existing Wolverine machinery — at the cap, run N+1 is accepted (`202`, `status:"queued"`, position
+in GET + SSE) and starts when a slot frees; `429` (`queue_depth_exceeded`) only past the per-tier
+max queue depth; cancel-while-queued dequeues without consuming a slot; `deadlineMs` starts at
+execution with a separate max-queue-wait knob; p95 queue wait per tenant emitted (the upgrade
+signal the pricing model depends on).
+**Done when:** tests cover FIFO fill→queue→auto-start, depth 429, cancel-while-queued,
+deadline-at-execution, and crash/restart with a non-empty queue (queued runs survive, start in
+order); queue position visible via GET + SSE; p95 queue wait observable.
 
 ## Tier 3 — operational toggles
 
