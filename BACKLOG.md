@@ -153,8 +153,13 @@ spec covers every routable endpoint with accurate auth + response shapes; a sync
 endpoint is missing from the spec. Deferred: SDK generation, hosted reference UI.
 
 ### [#26](https://github.com/jasoneisen/crawldad/issues/26) Drain `SyncRunSupervisor` tasks on host shutdown
-**Status:** confirmed bug, filed 2026-08-08 (found during the #2 review; confirmed by two
-independent reviewers). **Ref:** #15 (PR #23) `SyncRunSupervisor`.
+**Status:** shipped 2026-08-08 (PR #27, reviewer-approved; flake death independently verified
+10/10 stress iterations). Supervisor is an IHostedService draining tracked tails in StopAsync
+(bounded 15 s) before provider disposal; shutdown skips the promotion nudge, durably re-triggered
+by the recovery scan. Non-blocking residuals for a future hardening pass (candidates for #5):
+a request upgrading DURING the drain can adopt after the drain snapshot (degrades to the durable
+hard-crash recovery path); drain-timeout path leaves `Task.WhenAll` faults unobserved (benign
+under .NET defaults). **Ref:** #15 (PR #23) `SyncRunSupervisor`.
 `Adopt` fire-and-forgets `DriveToTerminalAsync` with no tie to the host lifetime; the
 post-persistence tail (finalize via singleton store → promote via a fresh scope + `IMessageBus`)
 can hit disposed services on shutdown → intermittent `ObjectDisposedException` teardown flakes in
