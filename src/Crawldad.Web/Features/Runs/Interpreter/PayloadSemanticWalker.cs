@@ -284,7 +284,7 @@ internal sealed class SemanticWalker
 
             if (body.TryGetProperty("nth", out var nth))
             {
-                CheckExpr(nth.GetString()!, $"{p}/nth");
+                CheckNth(nth.GetString()!, $"{p}/nth");
             }
         }
         else
@@ -507,6 +507,50 @@ internal sealed class SemanticWalker
         }
     }
 
+    // A locate nth (#37) is an Expr string that must evaluate to a whole 0-based index. It flows through the same
+    // parse + defined-before-use + secretRef checks as any leaf, and then — where it is a bare compile-time-constant
+    // literal (the statically-detectable case, incl. a negated one, via TryGetConstantNumber) — a NON-INTEGRAL literal
+    // (2.5, "2.5", -2.5) is rejected as the same type_error the run-time RequireNthIndex raises, and an integral literal
+    // OUTSIDE the valid 0-based 32-bit range (a NEGATIVE index, or one past int.MaxValue) as the same index_out_of_range.
+    // A computed expression is not a constant and is left to that run-time check; a non-negative integer literal (0, 3,
+    // 2.0) validates clean. Only the two nth sites (locate.from and the structured Sel map) route through here.
+    private void CheckNth(string source, string path)
+    {
+        CrawldadExpression expr;
+        try
+        {
+            expr = CrawldadExpression.Parse(source);
+        }
+        catch (ExpressionParseException ex)
+        {
+            _issues.Add(new PayloadIssue(path, ex.Code, ex.Message, _stepIndex, _stepKind));
+            return;
+        }
+
+        CheckDefined(expr.FreeIdentifiers(), path);
+        CheckNoSecretRefs(expr.InputMemberReferences(), path);
+
+        if (!expr.TryGetConstantNumber(out var value, out var isIntegral))
+        {
+            return;
+        }
+
+        if (!isIntegral)
+        {
+            _issues.Add(new PayloadIssue(
+                path, ExpressionErrorCodes.TypeError,
+                $"nth must be an integer, got {value.ToString(CultureInfo.InvariantCulture)}",
+                _stepIndex, _stepKind));
+        }
+        else if (value < 0 || value > int.MaxValue)
+        {
+            _issues.Add(new PayloadIssue(
+                path, ExpressionErrorCodes.IndexOutOfRange,
+                $"nth index {value.ToString(CultureInfo.InvariantCulture)} is out of range: a 0-based locator index must be between 0 and {int.MaxValue}",
+                _stepIndex, _stepKind));
+        }
+    }
+
     private void CheckTmpl(string source, string path)
     {
         CrawldadTemplate template;
@@ -620,7 +664,7 @@ internal sealed class SemanticWalker
                     CheckRef(field.Value.GetString()!, $"{path}/base");
                     break;
                 case "nth":
-                    CheckExpr(field.Value.GetString()!, $"{path}/nth");
+                    CheckNth(field.Value.GetString()!, $"{path}/nth");
                     break;
                 case "filter":
                     CheckTmpl(field.Value.GetProperty("hasTextRegex").GetString()!, $"{path}/filter/hasTextRegex");

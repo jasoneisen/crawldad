@@ -125,6 +125,24 @@ public class SelectorVariantTests
         (await page.Locator("xpath=//table").CountAsync(_ct)).ShouldBe(0); // no-match
     }
 
+    // ----- nth (seam, #37) ---------------------------------------------------
+
+    // #37 parity: .Nth is a lazy 0-based narrowing on the fake — an in-range index narrows to that one element, an index
+    // PAST the end narrows to no match, and a NEGATIVE index yields no match (the fake models 0-based nth only). The real
+    // backend agrees for the in-range/past-end domain but DIVERGES on a negative (Playwright's Nth(-1) is the last
+    // element) — see RealChromiumSelectorParityTests — which is exactly why the interpreter rejects a negative nth (as a
+    // classified index_out_of_range) before it can reach either backend.
+    [Fact]
+    public async Task Nth_is_a_zero_based_narrowing_yielding_no_match_past_the_end_or_negative()
+    {
+        var li = (await PageAsync()).Locator("li"); // the three <li>: Alpha / Bravo / Charlie
+
+        (await li.Nth(0).TextContentAsync(_ct)).ShouldBe("Alpha item");
+        (await li.Nth(2).TextContentAsync(_ct)).ShouldBe("Charlie item");
+        (await li.Nth(3).CountAsync(_ct)).ShouldBe(0);   // past the end → no match
+        (await li.Nth(-1).CountAsync(_ct)).ShouldBe(0);  // fake models 0-based only → no match (real diverges: the last)
+    }
+
     // ----- click / fill (seam) -----------------------------------------------
 
     [Fact]

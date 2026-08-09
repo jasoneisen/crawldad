@@ -276,6 +276,77 @@ public class PayloadValidatorTests
         LoopForBound("""{ "var": "i", "from": 0, "to": "bogusFn(1)" }""")
             .ShouldContain(i => i.Code == ExpressionErrorCodes.UnknownFunction && i.Path == "/steps/0/loop/for/to");
 
+    // #37: save-time semantic walk of the two nth surfaces — the from-handle form (`rows` bound first so `from`
+    // resolves) at /steps/1/locate/nth, and the structured Sel map on a click at /steps/0/click/selector/nth.
+    private static IReadOnlyList<PayloadIssue> FromHandleNth(string nth) =>
+        Semantic(Steps($$"""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "{{nth}}" } } ]"""));
+
+    private static IReadOnlyList<PayloadIssue> SelNth(string nth) =>
+        Semantic(Steps($$"""[ { "click": { "selector": { "css": "tr", "nth": "{{nth}}" } } } ]"""));
+
+    // #37: a bare non-integral literal nth is rejected at SAVE time with type_error — the same code the run-time
+    // RequireNthIndex raises — because .Nth takes an integer index. Covered for BOTH nth surfaces and for the negated
+    // literal (-2.5 folds through the parser's unary-minus, like #33's bounds).
+    [Fact]
+    public void A_non_integral_literal_nth_is_rejected_at_save_for_both_surfaces()
+    {
+        FromHandleNth("2.5").ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/1/locate/nth");
+        FromHandleNth("-2.5").ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/1/locate/nth");
+        SelNth("2.5").ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/click/selector/nth");
+        SelNth("-2.5").ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/click/selector/nth");
+    }
+
+    // #37: a bare integral literal nth OUTSIDE the valid 0-based 32-bit range is rejected at save with index_out_of_range
+    // — a NEGATIVE index (either sign folds via TryGetConstantNumber) or one past int.MaxValue — again for both surfaces.
+    [Fact]
+    public void A_negative_or_out_of_range_literal_nth_is_rejected_at_save()
+    {
+        FromHandleNth("-1").ShouldContain(i => i.Code == ExpressionErrorCodes.IndexOutOfRange && i.Path == "/steps/1/locate/nth");
+        FromHandleNth("3000000000").ShouldContain(i => i.Code == ExpressionErrorCodes.IndexOutOfRange && i.Path == "/steps/1/locate/nth");
+        SelNth("-1").ShouldContain(i => i.Code == ExpressionErrorCodes.IndexOutOfRange && i.Path == "/steps/0/click/selector/nth");
+    }
+
+    // #37: a valid 0-based literal nth — a non-negative integer or an integral-valued double (2.0) — validates clean, and
+    // a COMPUTED non-integral expression (5.0/2) is NOT a constant literal, so it is deferred to the run-time check.
+    // Neither over-rejects.
+    [Fact]
+    public void A_valid_or_computed_nth_validates_clean()
+    {
+        FromHandleNth("0").ShouldBeEmpty();
+        FromHandleNth("3").ShouldBeEmpty();
+        FromHandleNth("2.0").ShouldBeEmpty();
+        FromHandleNth("5.0 / 2").ShouldBeEmpty(); // computed non-integral → deferred to run time
+        SelNth("2.0").ShouldBeEmpty();
+        SelNth("5.0 / 2").ShouldBeEmpty();
+    }
+
+    // #37: the two nth surfaces (from-handle and structured Sel) produce the SAME single issue for the same literal —
+    // code type_error and a message naming the value — so they reject identically.
+    [Fact]
+    public void The_two_nth_surfaces_reject_a_non_integral_literal_identically()
+    {
+        var fromHandle = FromHandleNth("2.5").ShouldHaveSingleItem();
+        var structured = SelNth("2.5").ShouldHaveSingleItem();
+
+        fromHandle.Code.ShouldBe(ExpressionErrorCodes.TypeError);
+        structured.Code.ShouldBe(fromHandle.Code);
+        structured.Message.ShouldBe(fromHandle.Message);
+        fromHandle.Message.ShouldContain("2.5");
+    }
+
+    // #37: the full save pipeline (schema THEN semantic) surfaces a literal nth "2.5" as the walker's type_error — the
+    // schema admits any Expr string for nth, so enforcing integrality is the semantic pass's job (not a schema reject).
+    [Fact]
+    public void A_literal_non_integral_nth_flows_through_schema_to_the_semantic_type_error() =>
+        ValidateAll(Parse(Steps("""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "2.5" } } ]""")))
+            .ShouldContain(s => s.Contains("/steps/1/locate/nth", StringComparison.Ordinal) && s.Contains(ExpressionErrorCodes.TypeError, StringComparison.Ordinal));
+
+    // #37: a malformed nth Expr surfaces its parse error at save — CheckNth parses through the same grammar as any leaf,
+    // so an unknown builtin in an nth is rejected here, before the integral check.
+    [Fact]
+    public void A_malformed_nth_surfaces_its_parse_error() =>
+        FromHandleNth("bogusFn(1)").ShouldContain(i => i.Code == ExpressionErrorCodes.UnknownFunction && i.Path == "/steps/1/locate/nth");
+
     [Fact]
     public void An_unknown_builtin_is_rejected()
     {

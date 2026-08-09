@@ -81,6 +81,26 @@ public sealed class RealChromiumSelectorParityTests(RealChromiumFixture fixture)
     }
 
     [Fact]
+    public async Task Nth_agrees_with_the_fake_in_range_and_diverges_on_a_negative_index()
+    {
+        using var site = Site();
+        var page = await OpenAsync(site);
+        var li = page.Locator("li"); // the same three <li> (Alpha / Bravo / Charlie) the fake serves
+
+        // Accepted 0-based domain — identical to the fake (SelectorVariantTests): in-range narrows to one, past-the-end
+        // to none. This is the domain #37 lets through to a backend, and it is fake≡real.
+        (await li.Nth(0).TextContentAsync(_ct)).ShouldBe("Alpha item");
+        (await li.Nth(2).TextContentAsync(_ct)).ShouldBe("Charlie item");
+        (await li.Nth(3).CountAsync(_ct)).ShouldBe(0);
+
+        // DIVERGENCE — the empirical basis for rejecting a negative nth (#37): Playwright's Nth(-1) is the LAST element,
+        // whereas the fake yields no match for a negative index. A negative nth therefore cannot mean the same thing on
+        // both backends, so the interpreter classifies it (index_out_of_range) before it reaches either.
+        (await li.Nth(-1).CountAsync(_ct)).ShouldBe(1);
+        (await li.Nth(-1).TextContentAsync(_ct)).ShouldBe("Charlie item");
+    }
+
+    [Fact]
     public async Task Click_on_a_role_selected_link_navigates()
     {
         using var site = Site();

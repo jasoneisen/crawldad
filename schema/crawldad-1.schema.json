@@ -336,7 +336,7 @@
               "type": "string"
             },
             "nth": {
-              "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole number.",
+              "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (§8.3, #37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
               "type": "string"
             },
             "first": {
@@ -843,7 +843,7 @@
                   "type": "string"
                 },
                 "nth": {
-                  "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole number.",
+                  "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (§8.3, #37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
                   "type": "string"
                 },
                 "first": {
