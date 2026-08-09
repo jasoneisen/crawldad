@@ -109,4 +109,39 @@ public sealed class CrawldadExpression
                 return false;
         }
     }
+
+    /// <summary>
+    /// When this expression is a compile-time-constant numeric literal — a bare number, or a unary minus applied to one
+    /// (the two shapes the parser produces for <c>2.5</c> and <c>-2.5</c>) — yields its signed <paramref name="value"/>
+    /// and whether it is <paramref name="isIntegral"/> (a <see cref="long"/>, or a <see cref="double"/> with no
+    /// fractional part such as <c>2.0</c>). Any richer expression (a call, an operator over non-literals, an identifier,
+    /// a non-numeric literal) is not a constant number and returns <see langword="false"/>. Backs the save-time
+    /// rejection of a non-integral <c>loop.for</c> bound (#33): a fractional literal is caught statically, while a
+    /// computed bound is left to the run-time integral check. Pure static inspection, no evaluation.
+    /// </summary>
+    /// <param name="value">The constant numeric value (sign applied) when the expression is a numeric literal.</param>
+    /// <param name="isIntegral">Whether that value is a whole number the integer loop counter can take.</param>
+    /// <returns><see langword="true"/> when the root is a bare numeric literal, optionally negated.</returns>
+    public bool TryGetConstantNumber(out double value, out bool isIntegral)
+    {
+        var (literal, sign) = _root is NegateNode negate ? (negate.Operand, -1.0) : (_root, 1.0);
+        switch (literal)
+        {
+            case LiteralNode { Value: long l }:
+                value = sign * l;
+                isIntegral = true;
+                return true;
+            case LiteralNode { Value: double d }:
+                // A source literal is finite in every realistic case (the lexer parses a bounded digit string), so no
+                // infinity guard is needed here — a pathological overflow-to-infinity literal reads as "integral" and is
+                // harmlessly deferred to RunInterpreter.RequireIntegralBound, whose guard rejects it at run time.
+                value = sign * d;
+                isIntegral = d == Math.Floor(d);
+                return true;
+            default:
+                value = 0;
+                isIntegral = false;
+                return false;
+        }
+    }
 }

@@ -888,17 +888,17 @@ internal sealed class RunInterpreter
         var varName = forSpec.GetProperty("var").GetString()!;
         var toExpr = forSpec.GetProperty("to");
         var inclusive = forSpec.TryGetProperty("inclusiveTo", out var inc) && inc.GetBoolean();
-        var step = forSpec.TryGetProperty("step", out var s) ? (long)(await BoundAsync(s, ct))! : 1L;
+        var step = forSpec.TryGetProperty("step", out var s) ? RequireIntegralBound(await BoundAsync(s, ct), "step") : 1L;
         var doBlock = body.GetProperty("do");
 
-        var i = (long)(await BoundAsync(forSpec.GetProperty("from"), ct))!;
+        var i = RequireIntegralBound(await BoundAsync(forSpec.GetProperty("from"), ct), "from");
         var iterations = 0L;
         using var shadow = _scope.Shadow((varName, (object?)i));
 
         while (true)
         {
             _scope.Set(varName, i);
-            var to = (long)(await BoundAsync(toExpr, ct))!; // re-evaluated each iteration, matching the reference's condition
+            var to = RequireIntegralBound(await BoundAsync(toExpr, ct), "to"); // re-evaluated each iteration, matching the reference's condition
             if (inclusive ? i > to : i >= to)
             {
                 break;
@@ -1043,6 +1043,25 @@ internal sealed class RunInterpreter
     private ValueTask<object?> BoundAsync(JsonElement bound, CancellationToken ct) =>
         CrawldadExpression.Parse(bound.ValueKind == JsonValueKind.String ? bound.GetString()! : bound.GetRawText())
             .EvaluateAsync(_scope, ct);
+
+    // A loop.for bound (from/to/step) must evaluate to an integer the long loop counter can take: a long, or a double
+    // with no fractional part (2.0) — coerced exactly as ExpressionValues.RequireIndex coerces an array index. A
+    // non-integral double (2.5, or a computed one such as 5.0/2), or a non-number (a computed Expr yielding
+    // string/bool/null/array/map/handle), is a terminal type_error (#33) — classified like every other numeric-coercion
+    // failure, never the raw (long) cast that used to escape the retry layer as an unhandled 500 (InvalidCastException
+    // for a double/string/bool, NullReferenceException for null — none in ExecuteWithRetryAsync/RunAsync's catch
+    // filters). Both bound forms (typed number, Expr string) reach here through the same BoundAsync, so they fail
+    // identically (the CD-10 contract). The bound value is safe to name (bounds are not secrets): a numeric value is
+    // shown, a non-numeric one by type only (message hygiene, matching the evaluator's own type errors).
+    private static long RequireIntegralBound(object? value, string boundName) => value switch
+    {
+        long l => l,
+        double d when !double.IsInfinity(d) && d == Math.Floor(d) => (long)d,
+        double => throw ExpressionValues.TypeError(
+            $"loop.for bound '{boundName}' must be an integer, got {ExpressionValues.ToStringValue(value)}"),
+        _ => throw ExpressionValues.TypeError(
+            $"loop.for bound '{boundName}' must be an integer, got {ExpressionValues.TypeName(value)}"),
+    };
 
     private static long ReadMaxIterations(JsonElement body) => body.GetProperty("maxIterations").GetInt64();
 

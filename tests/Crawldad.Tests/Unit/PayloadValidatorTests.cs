@@ -192,6 +192,90 @@ public class PayloadValidatorTests
         issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/loop/for/to");
     }
 
+    // A save-time semantic walk of a single loop.for with the given for-spec (maxIterations + empty do supplied).
+    private static IReadOnlyList<PayloadIssue> LoopForBound(string forSpec) =>
+        Semantic(Steps($$"""[ { "loop": { "maxIterations": 10, "for": {{forSpec}}, "do": [] } } ]"""));
+
+    // #33: a bare non-integral literal loop.for bound is rejected at SAVE time with type_error — the same code the
+    // run-time integral check raises — because the long loop counter can never take a fractional value. Covered for
+    // from, to, and step, and identically whether the bound is a typed JSON 2.5 or its Expr-string "2.5" (CD-10: N ≡ "N").
+    [Fact]
+    public void A_non_integral_literal_loop_bound_is_rejected_at_save_for_each_bound_and_both_forms()
+    {
+        // from — typed, then Expr
+        LoopForBound("""{ "var": "i", "from": 2.5, "to": 5 }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/from");
+        LoopForBound("""{ "var": "i", "from": "2.5", "to": "5" }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/from");
+
+        // to — typed, then Expr
+        LoopForBound("""{ "var": "i", "from": 0, "to": 2.5 }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/to");
+        LoopForBound("""{ "var": "i", "from": "0", "to": "2.5" }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/to");
+
+        // step — typed, then Expr
+        LoopForBound("""{ "var": "i", "from": 0, "to": 5, "step": 2.5 }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/step");
+        LoopForBound("""{ "var": "i", "from": "0", "to": "5", "step": "2.5" }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/step");
+    }
+
+    // #33: the typed and Expr-string spellings of the same non-integral bound produce the SAME single issue — code
+    // type_error, and a message naming the bound and its value — so the two forms reject identically (the CD-10 contract).
+    [Fact]
+    public void A_typed_and_expr_non_integral_bound_reject_identically()
+    {
+        var typed = LoopForBound("""{ "var": "i", "from": 0, "to": 2.5 }""").ShouldHaveSingleItem();
+        var strung = LoopForBound("""{ "var": "i", "from": "0", "to": "2.5" }""").ShouldHaveSingleItem();
+
+        typed.Code.ShouldBe(ExpressionErrorCodes.TypeError);
+        strung.Code.ShouldBe(typed.Code);
+        strung.Message.ShouldBe(typed.Message);
+        typed.Message.ShouldContain("'to'");
+        typed.Message.ShouldContain("2.5");
+    }
+
+    // #33: the full save pipeline (schema THEN semantic) surfaces a typed 2.5 bound as the walker's type_error, not a
+    // schema rejection — numExpr admits any JSON number, so enforcing integrality is the semantic pass's job.
+    [Fact]
+    public void A_typed_non_integral_bound_flows_through_schema_to_the_semantic_type_error() =>
+        ValidateAll(Parse(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 2.5 }, "do": [] } } ]""")))
+            .ShouldContain(s => s.Contains("/steps/0/loop/for/to", StringComparison.Ordinal) && s.Contains(ExpressionErrorCodes.TypeError, StringComparison.Ordinal));
+
+    // #33: an integral-VALUED double bound (2.0 / "2.0") validates clean — the loop counter coerces it exactly as an
+    // array index coerces an integral double, so only a FRACTIONAL literal rejects. The save-time check does not
+    // over-reject whole-valued doubles, staying consistent with the run-time acceptance.
+    [Fact]
+    public void An_integral_valued_double_literal_loop_bound_validates_clean()
+    {
+        ValidateAll(Parse(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0.0, "to": 4.0, "step": 2.0 }, "do": [] } } ]"""))).ShouldBeEmpty();
+        ValidateAll(Parse(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": "0.0", "to": "4.0", "step": "2.0" }, "do": [] } } ]"""))).ShouldBeEmpty();
+    }
+
+    // #33: sign is handled at save time too — the parser folds a negative literal into unary-minus over a number, so a
+    // negative FRACTIONAL bound (-2.5) is rejected exactly as its positive twin, while a negative INTEGER bound (-2, a
+    // valid descending step) validates clean. Keeps typed and Expr spellings symmetric for signed literals.
+    [Fact]
+    public void A_negative_literal_bound_rejects_only_when_fractional()
+    {
+        LoopForBound("""{ "var": "i", "from": 0, "to": 5, "step": -2.5 }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/step");
+        LoopForBound("""{ "var": "i", "from": 0, "to": 5, "step": "-2.5" }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/step");
+
+        LoopForBound("""{ "var": "i", "from": 0, "to": 5, "step": -2 }""").ShouldBeEmpty();
+        LoopForBound("""{ "var": "i", "from": 0, "to": 5, "step": "-2" }""").ShouldBeEmpty();
+    }
+
+    // A malformed bound (an unparseable Expr) surfaces its parse error at save time — CheckBound parses through the same
+    // grammar as any Expr leaf, so an unknown builtin / syntax fault in a from/to/step is rejected here, before the
+    // integral check. (Only the Expr-string form can be malformed; a typed JSON number always lexes to a literal.)
+    [Fact]
+    public void A_malformed_loop_bound_surfaces_its_parse_error() =>
+        LoopForBound("""{ "var": "i", "from": 0, "to": "bogusFn(1)" }""")
+            .ShouldContain(i => i.Code == ExpressionErrorCodes.UnknownFunction && i.Path == "/steps/0/loop/for/to");
+
     [Fact]
     public void An_unknown_builtin_is_rejected()
     {

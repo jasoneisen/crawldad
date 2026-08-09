@@ -2,6 +2,7 @@ using System.Text.Json;
 using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs.Interpreter;
+using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit;
 
@@ -122,6 +123,64 @@ public class RunInterpreterTests
             .Code.ShouldBe(InterpreterErrorCodes.MaxIterationsExceeded);
         Fail(await Run("""[ { "loop": { "maxIterations": 3, "for": { "var": "i", "from": "0", "to": "3", "step": "0" }, "do": [] } } ]"""))
             .Code.ShouldBe(InterpreterErrorCodes.MaxIterationsExceeded);
+    }
+
+    // #33: a non-integral loop.for bound is a terminal type_error at run time — never the raw (long) cast that escaped
+    // ForLoopAsync as an unhandled 500 (InvalidCastException, outside the retry layer's catch filters). A typed 2.5 and
+    // its Expr "2.5" spelling classify identically (CD-10), a COMPUTED non-integer (the issue's "Expr producing a
+    // non-integral double", 5.0/2 == 2.5) classifies the same, and from/to/step each reach the check. On this direct
+    // interpreter path the save-time walker never runs, so even a literal bound is caught here at run time.
+    [Fact]
+    public async Task Loop_for_non_integral_bound_is_a_terminal_type_error()
+    {
+        // to: typed 2.5 ≡ Expr "2.5" — both classified, same code.
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 2.5 }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": "0", "to": "2.5" }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);
+
+        // to: a computed non-integral double (5.0 / 2 == 2.5).
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "5.0 / 2" }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);
+
+        // to: a computed infinity (1.0 / 0.0 is +Infinity for doubles, never an integer) — the IsInfinity guard routes it
+        // to the same type_error rather than letting (long)Infinity produce a garbage counter.
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "1.0 / 0.0" }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);
+
+        // from and step each reach the same classification (from once at entry; step once before the loop).
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 2.5, "to": 5 }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 5, "step": "3.0 / 2" }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);
+    }
+
+    // #33 (the "non-numeric bound" consideration): a bound computing to a string, bool, or null also escaped today —
+    // InvalidCastException for a string/bool, NullReferenceException for null — all outside the catch filters. They are
+    // now the SAME terminal type_error as a fractional number, in the one RequireIntegralBound helper.
+    [Fact]
+    public async Task Loop_for_non_numeric_bound_is_a_terminal_type_error()
+    {
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "'nope'" }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError); // string
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": "null", "to": 5 }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError); // null (previously a NullReferenceException)
+        Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "true" }, "do": [] } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError); // bool
+    }
+
+    // #33: an integral-VALUED double bound (2.0, or a computed 4.0/2 == 2.0) is accepted and coerced to the long the
+    // counter uses — exactly as an array index coerces — so `from 0 to 4.0` yields [0,1,2,3] just like `to: 4`, and an
+    // inclusive `to: 4.0/2` gives [0,1,2]. Only a FRACTIONAL bound rejects; the fix does not over-reject whole doubles.
+    [Fact]
+    public async Task Loop_for_integral_double_bound_is_accepted_and_coerced()
+    {
+        Longs(Ok(await Run(
+            """[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 4.0 }, "do": [ { "push": { "into": "acc", "value": "i" } } ] } } ]""",
+            result: "acc", vars: """{ "acc": [] }"""))).ShouldBe([0, 1, 2, 3]);
+        Longs(Ok(await Run(
+            """[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "4.0 / 2", "inclusiveTo": true }, "do": [ { "push": { "into": "acc", "value": "i" } } ] } } ]""",
+            result: "acc", vars: """{ "acc": [] }"""))).ShouldBe([0, 1, 2]);
     }
 
     [Fact]

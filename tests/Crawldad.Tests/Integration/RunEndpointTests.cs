@@ -166,6 +166,30 @@ public class RunEndpointTests(AppFixture fixture)
     }
 
     [Fact]
+    public async Task Non_integral_loop_bound_is_a_terminal_failure_not_a_500()
+    {
+        // #33: a non-integral loop.for bound used to hit the (long) cast in ForLoopAsync and escape as an unhandled 500
+        // (InvalidCastException is outside the interpreter's catch filters). It is now a classified terminal type_error —
+        // a failed RUN is HTTP 200 with a failure body, never a failed request. POST /runs runs no save-time walker on an
+        // inline payload, so the run-time classification is what catches the typed 2.5 here.
+        const string Payload =
+            """
+            { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
+              "steps": [ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 2.5 }, "do": [] } } ],
+              "result": "null" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput())); // expectedStatus defaults to 200
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        var failure = root.GetProperty("failure");
+        failure.GetProperty("class").GetString().ShouldBe("terminal");
+        failure.GetProperty("code").GetString().ShouldBe("type_error");
+        failure.GetProperty("atStep").GetProperty("index").GetInt32().ShouldBe(0);
+        failure.GetProperty("atStep").GetProperty("kind").GetString().ShouldBe("loop");
+    }
+
+    [Fact]
     public async Task Missing_inputs_fails_with_invalid_backend_binding()
     {
         // No inputs at all: validator allows an absent inputs object; the run then fails because input.backend is null.

@@ -209,9 +209,14 @@ internal sealed class NotNode(ExpressionNode operand) : ExpressionNode
 /// <summary>Arithmetic negation <c>-x</c>: operand must be a number, else a terminal <c>type_error</c>.</summary>
 internal sealed class NegateNode(ExpressionNode operand) : ExpressionNode
 {
+    /// <summary>The negated operand — read to fold a bare negative numeric literal (<c>-2.5</c> parses as this over a
+    /// <see cref="LiteralNode"/>) into a compile-time constant for the save-time bound check
+    /// (<see cref="CrawldadExpression.TryGetConstantNumber"/>).</summary>
+    public ExpressionNode Operand { get; } = operand;
+
     protected override async ValueTask<object?> EvaluateCoreAsync(EvalContext ctx)
     {
-        var value = await operand.EvaluateAsync(ctx);
+        var value = await Operand.EvaluateAsync(ctx);
         return value switch
         {
             long l => (object)unchecked(-l),
@@ -221,10 +226,10 @@ internal sealed class NegateNode(ExpressionNode operand) : ExpressionNode
     }
 
     public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
-        operand.CollectFreeIdentifiers(into, bound);
+        Operand.CollectFreeIdentifiers(into, bound);
 
     public override void CollectInputMembers(ISet<string> into, ISet<string> bound) =>
-        operand.CollectInputMembers(into, bound);
+        Operand.CollectInputMembers(into, bound);
 }
 
 /// <summary>An eager binary operator (<c>+ - * / % == != &lt; &lt;= &gt; &gt;=</c>) applied via a value-model delegate.</summary>
