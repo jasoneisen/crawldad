@@ -25,6 +25,10 @@
     <!-- The expression evaluator's read-only DOM builtins and the record/replay fake backend parse captured HTML
          with AngleSharp. -->
     <PackageVersion Include="AngleSharp" Version="1.7.1" />
+    <!-- The record/replay fake's structured-Sel `xpath` variant (§5.2) evaluates XPath over the AngleSharp DOM to
+         model Playwright's `xpath=` selector engine (the real backend uses Playwright's own engine). AngleSharp.XPath
+         is the AngleSharp-native XPath extension (INode.SelectNodes); MIT, tracks AngleSharp 1.x. -->
+    <PackageVersion Include="AngleSharp.XPath" Version="2.0.6" />
     <!-- Phase 4 real backend adapters wrap Playwright for .NET 1:1 (the shared PlaywrightBrowserSession and the
          local/browserless/browserbase adapters). Pinned to 1.61.0 — the Chromium headless-shell/full v1228 build
          (Chrome 149) is pre-installed under ~/.cache/ms-playwright for this line. -->

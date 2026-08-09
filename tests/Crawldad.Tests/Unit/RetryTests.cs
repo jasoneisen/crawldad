@@ -157,6 +157,10 @@ public class RetryTests
 
         public ILocatorHandle GetByTitle(string title) => throw new NotSupportedException();
 
+        public ILocatorHandle GetByRole(string role, string? name) => throw new NotSupportedException();
+
+        public ILocatorHandle GetByText(string text) => throw new NotSupportedException();
+
         public IFrameHandle FrameLocator(string selector) => throw new NotSupportedException();
 
         public Task AddStyleTagAsync(string content, CancellationToken ct) => Task.CompletedTask;

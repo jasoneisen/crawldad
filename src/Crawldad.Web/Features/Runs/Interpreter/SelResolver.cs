@@ -8,11 +8,15 @@ namespace Crawldad.Web.Features.Runs.Interpreter;
 /// Resolves selectors to lazy <see cref="ILocatorHandle"/>s (§5.2). One resolver serves three shapes: DOM-access
 /// targets from expressions (a CSS string, an opaque handle, or a structured <c>Sel</c> map), and node selectors from
 /// the payload JSON (a string with <b>var-first</b> precedence — a bound handle var wins over CSS — or a structured
-/// object). Structured resolution chains seam calls for <c>css|title|base|nth|first|filter.hasTextRegex</c>. A frame
-/// (<c>in</c>, §5.2) roots CSS resolution inside a bound <see cref="IFrameHandle"/> instead of the page — supplied
-/// either by the enclosing node (<see cref="ResolveNodeAsync"/>'s <c>frame</c> argument) or by the <c>Sel</c> map's own
-/// <c>in</c> key. Malformed structured selectors surface as terminal failures at execution (save-time validation is
-/// Phase 3).
+/// object). Structured resolution roots at exactly one of <c>css</c>/<c>xpath</c>/<c>text</c>/<c>role</c>/<c>title</c>/
+/// <c>base</c> (§5.2) — <c>role</c> taking an optional accessible-name <c>name</c>, <c>base</c> optionally pairing with a
+/// relative <c>css</c> — then chains the refinements <c>nth</c>/<c>first</c>/<c>filter.hasTextRegex</c>. The
+/// Locator-string roots (<c>css</c>, <c>xpath</c>) resolve inside a bound frame; the <c>GetBy*</c> roots (<c>role</c>,
+/// <c>text</c>, <c>title</c>) are page-level. A frame (<c>in</c>, §5.2) roots css/xpath resolution inside a bound
+/// <see cref="IFrameHandle"/> instead of the page — supplied either by the enclosing node
+/// (<see cref="ResolveNodeAsync"/>'s <c>frame</c> argument) or by the <c>Sel</c> map's own <c>in</c> key. The one-root
+/// combination rule is enforced at save time (schema + semantic walker); a malformed structured selector reaching
+/// execution surfaces as a terminal failure.
 /// </summary>
 internal sealed class SelResolver(RunScope scope)
 {
@@ -85,12 +89,31 @@ internal sealed class SelResolver(RunScope scope)
             return RootCss(frame, (string)css!);
         }
 
-        if (map.TryGetValue("title", out var title))
+        if (map.TryGetValue("xpath", out var xpath))
         {
-            return scope.PageHandle.GetByTitle((string)title!); // title is a page-level root (frames expose CSS only)
+            // xpath is a Locator-string engine (Playwright's "xpath=" prefix), so it roots inside a frame exactly as css
+            // does — one code path (RootCss → page/frame Locator) serves both the string and structured xpath forms.
+            return RootCss(frame, "xpath=" + (string)xpath!);
         }
 
-        throw new InterpreterException(InterpreterErrorCodes.MalformedNode, "a Sel object needs one of 'css', 'title', or 'base'");
+        if (map.TryGetValue("text", out var text))
+        {
+            return scope.PageHandle.GetByText((string)text!); // a page-level root (frames expose a Locator-string engine only)
+        }
+
+        if (map.TryGetValue("role", out var role))
+        {
+            var name = map.TryGetValue("name", out var nameValue) ? (string?)nameValue : null;
+            return scope.PageHandle.GetByRole((string)role!, name); // page-level, like title/text
+        }
+
+        if (map.TryGetValue("title", out var title))
+        {
+            return scope.PageHandle.GetByTitle((string)title!); // title is a page-level root (frames expose css/xpath only)
+        }
+
+        throw new InterpreterException(
+            InterpreterErrorCodes.MalformedNode, "a Sel object needs one of 'css', 'xpath', 'text', 'role', 'title', or 'base'");
     }
 
     // Roots a CSS selector at the page (no frame) or inside a bound frame handle (§5.2 `in`).
@@ -162,6 +185,10 @@ internal sealed class SelResolver(RunScope scope)
         {
             case "css":
             case "title":
+            case "xpath":
+            case "text":
+            case "role":
+            case "name":
             case "in":
                 return await CrawldadTemplate.Parse(value.GetString()!).RenderAsync(scope, ct);
             case "base":

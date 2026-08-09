@@ -81,15 +81,31 @@
       "items": { "$ref": "#/$defs/node" }
     },
     "sel": {
-      "description": "A selector (§5.2): a CSS/xpath/text string, or a structured object rooted at css/title/base with optional refinements. Only the keys the engine's SelResolver implements are permitted.",
+      "description": "A selector (§5.2): a CSS/xpath string, or a structured object rooted at EXACTLY ONE of css/xpath/text/role/title/base, with optional refinements. `role` may carry an accessible-name `name`; `base` may pair with a relative `css` (the sole two-root combination). Only the keys the engine's SelResolver implements are permitted.",
       "oneOf": [
         { "type": "string" },
         {
           "type": "object",
           "additionalProperties": false,
-          "minProperties": 1,
           "properties": {
             "css": { "type": "string" },
+            "xpath": { "type": "string" },
+            "text": { "type": "string" },
+            "role": {
+              "description": "An ARIA role (a fixed vocabulary, not a Tmpl) — page.GetByRole. The WAI-ARIA role set the real backend's AriaRole enum accepts, so an unknown role fails at save rather than run.",
+              "enum": [
+                "alert", "alertdialog", "application", "article", "banner", "blockquote", "button", "caption", "cell",
+                "checkbox", "code", "columnheader", "combobox", "complementary", "contentinfo", "definition", "deletion",
+                "dialog", "directory", "document", "emphasis", "feed", "figure", "form", "generic", "grid", "gridcell",
+                "group", "heading", "img", "insertion", "link", "list", "listbox", "listitem", "log", "main", "marquee",
+                "math", "menu", "menubar", "menuitem", "menuitemcheckbox", "menuitemradio", "meter", "navigation", "none",
+                "note", "option", "paragraph", "presentation", "progressbar", "radio", "radiogroup", "region", "row",
+                "rowgroup", "rowheader", "scrollbar", "search", "searchbox", "separator", "slider", "spinbutton", "status",
+                "strong", "subscript", "superscript", "switch", "tab", "table", "tablist", "tabpanel", "term", "textbox",
+                "time", "timer", "toolbar", "tooltip", "tree", "treegrid", "treeitem"
+              ]
+            },
+            "name": { "type": "string" },
             "title": { "type": "string" },
             "base": { "type": "string" },
             "in": { "type": "string" },
@@ -102,10 +118,28 @@
               "properties": { "hasTextRegex": { "type": "string" } }
             }
           },
-          "anyOf": [
-            { "required": ["css"] },
-            { "required": ["title"] },
-            { "required": ["base"] }
+          "allOf": [
+            { "$comment": "`name` is meaningful only as the accessible name of a `role`.",
+              "if": { "required": ["name"] }, "then": { "required": ["role"] } }
+          ],
+          "oneOf": [
+            { "$comment": "Rooted by a selector engine at the page/frame — exactly one root, and `base` absent.",
+              "not": { "required": ["base"] },
+              "oneOf": [
+                { "required": ["css"] },
+                { "required": ["xpath"] },
+                { "required": ["text"] },
+                { "required": ["role"] },
+                { "required": ["title"] }
+              ] },
+            { "$comment": "Rooted at a bound handle — `base`, optionally narrowed by a relative `css`; no other root.",
+              "required": ["base"],
+              "allOf": [
+                { "not": { "required": ["xpath"] } },
+                { "not": { "required": ["text"] } },
+                { "not": { "required": ["role"] } },
+                { "not": { "required": ["title"] } }
+              ] }
           ]
         }
       ]

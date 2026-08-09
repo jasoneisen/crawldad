@@ -63,6 +63,10 @@ internal sealed class FakePageHandle : IPageHandle
 
     public ILocatorHandle GetByTitle(string title) => FakeLocatorHandle.Title(this, title);
 
+    public ILocatorHandle GetByRole(string role, string? name) => FakeLocatorHandle.Role(this, role, name);
+
+    public ILocatorHandle GetByText(string text) => FakeLocatorHandle.Text(this, text);
+
     public IFrameHandle FrameLocator(string selector) => new FakeFrameHandle(this, selector);
 
     public Task AddStyleTagAsync(string content, CancellationToken ct)

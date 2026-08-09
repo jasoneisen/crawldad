@@ -80,6 +80,26 @@ public interface IPageHandle
     ILocatorHandle GetByTitle(string title);
 
     /// <summary>
+    /// Creates a locator matching elements by their ARIA <paramref name="role"/> (<c>page.GetByRole</c>), optionally
+    /// narrowed to those whose accessible name contains <paramref name="name"/> (§5.2). The name match is
+    /// case-insensitive, whitespace-normalised, and a substring — Playwright's <c>GetByRole</c> name default. The
+    /// returned handle is <b>lazy</b> (see <see cref="ILocatorHandle"/>). A page-level root — like <see cref="GetByTitle"/>,
+    /// it is not frame-scoped.
+    /// </summary>
+    /// <param name="role">The ARIA role (e.g. <c>button</c>, <c>link</c>, <c>heading</c>, <c>textbox</c>).</param>
+    /// <param name="name">The accessible-name substring to require, or null to match every element of the role.</param>
+    ILocatorHandle GetByRole(string role, string? name);
+
+    /// <summary>
+    /// Creates a locator matching elements by their text content (<c>page.GetByText</c>, §5.2). Matching is
+    /// case-insensitive, whitespace-normalised, a substring, and resolves the innermost element carrying the text —
+    /// Playwright's <c>GetByText</c> default. The returned handle is <b>lazy</b> (see <see cref="ILocatorHandle"/>). A
+    /// page-level root — like <see cref="GetByTitle"/>, it is not frame-scoped.
+    /// </summary>
+    /// <param name="text">The text substring to match.</param>
+    ILocatorHandle GetByText(string text);
+
+    /// <summary>
     /// Binds a handle to the content of the <c>&lt;iframe&gt;</c> matched by <paramref name="selector"/>
     /// (<c>page.FrameLocator</c>) — the <c>frame</c> node (§5.1). The returned handle is <b>lazy</b>: see the remarks on
     /// <see cref="IFrameHandle"/>. Backs the attachments-iframe traversal (LJCMGClient.cs:533).

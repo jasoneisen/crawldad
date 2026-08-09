@@ -43,6 +43,9 @@ internal sealed class SemanticWalker
     // Checkpoints already seen in the current top-level step — the resume unit permits at most one (reset per step).
     private int _checkpointsInStep;
 
+    // The mutually-exclusive structured-Sel root keys (§5.2), in the resolver's precedence order.
+    private static readonly string[] _selRootKeys = ["css", "xpath", "text", "role", "title", "base"];
+
     public SemanticWalker(List<PayloadIssue> issues) => _issues = issues;
 
     /// <summary>Validates the whole payload: <c>config.backend</c>, then <c>vars</c> (in order), then <c>steps</c>, then <c>result</c>.</summary>
@@ -580,6 +583,10 @@ internal sealed class SemanticWalker
             {
                 case "css":
                 case "title":
+                case "xpath":
+                case "text":
+                case "role":
+                case "name":
                 case "in":
                     CheckTmpl(field.Value.GetString()!, $"{path}/{field.Name}");
                     break;
@@ -595,6 +602,33 @@ internal sealed class SemanticWalker
                 default:
                     break; // `first` is a bool; no other keys pass the schema.
             }
+        }
+
+        CheckSelCombination(selector, path);
+    }
+
+    // §5.2 union coherence: a structured Sel roots at EXACTLY ONE of css/xpath/text/role/title/base — only base+css may
+    // pair (css as the base handle's relative child) — and `name` is the accessible name of a `role`. Enforced here with
+    // a clear message as well as in the JSON Schema, since an ambiguous selector would otherwise be resolved silently by
+    // the resolver's root precedence rather than rejected.
+    private void CheckSelCombination(JsonElement selector, string path)
+    {
+        var roots = _selRootKeys.Where(k => selector.TryGetProperty(k, out _)).ToList();
+        var isBaseCss = roots.Count == 2 && roots.Contains("base", StringComparer.Ordinal) && roots.Contains("css", StringComparer.Ordinal);
+        if (roots.Count > 1 && !isBaseCss)
+        {
+            _issues.Add(new PayloadIssue(
+                path, InterpreterErrorCodes.AmbiguousSelector,
+                $"a selector roots at exactly one of css/xpath/text/role/title/base (only base+css may combine); found {string.Join('+', roots)}",
+                _stepIndex, _stepKind));
+        }
+
+        if (selector.TryGetProperty("name", out _) && !selector.TryGetProperty("role", out _))
+        {
+            _issues.Add(new PayloadIssue(
+                path, InterpreterErrorCodes.AmbiguousSelector,
+                "a selector 'name' is the accessible name of a 'role' — it must accompany a 'role'",
+                _stepIndex, _stepKind));
         }
     }
 

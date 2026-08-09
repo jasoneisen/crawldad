@@ -27,6 +27,12 @@ internal sealed class PlaywrightPageHandle(IPage page) : IPageHandle
 
     public ILocatorHandle GetByTitle(string title) => new PlaywrightLocatorHandle(page.GetByTitle(title));
 
+    public ILocatorHandle GetByRole(string role, string? name) =>
+        new PlaywrightLocatorHandle(page.GetByRole(
+            PlaywrightMap.Role(role), name is null ? null : new PageGetByRoleOptions { Name = name }));
+
+    public ILocatorHandle GetByText(string text) => new PlaywrightLocatorHandle(page.GetByText(text));
+
     public IFrameHandle FrameLocator(string selector) => new PlaywrightFrameHandle(page.FrameLocator(selector));
 
     public Task AddStyleTagAsync(string content, CancellationToken ct) =>

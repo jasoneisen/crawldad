@@ -151,6 +151,10 @@ internal sealed class GatedPage(IPageHandle inner, PageFetchRecorder recorder, R
     /// <inheritdoc />
     public ILocatorHandle GetByTitle(string title) => inner.GetByTitle(title);
 
+    public ILocatorHandle GetByRole(string role, string? name) => inner.GetByRole(role, name);
+
+    public ILocatorHandle GetByText(string text) => inner.GetByText(text);
+
     /// <inheritdoc />
     public IFrameHandle FrameLocator(string selector) => inner.FrameLocator(selector);
 
