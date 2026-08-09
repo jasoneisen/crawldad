@@ -1,0 +1,69 @@
+{
+  "crawldad": "1",
+  "name": "example.login.search",
+  "inputs": {
+    "backend":  { "type": "backend",   "required": true },
+    "username": { "type": "string",    "required": true },
+    "password": { "type": "secretRef", "required": true },
+    "query":    { "type": "string",    "required": true }
+  },
+  "config": {
+    "backend": "input.backend",
+    "defaultTimeoutMs": 120000,
+    "screenshotOnFailure": true
+  },
+  "vars": {
+    "results": [],
+    "hasMorePages": true,
+    "page": 0
+  },
+  "steps": [
+    { "goto": { "url": "https://example.gov/portal/login" } },
+    { "waitForLoadState": { "state": "networkidle" } },
+
+    { "comment": "Structured selectors (#9): address the login form by ARIA role + accessible name, not brittle ids." },
+    { "fill": { "selector": { "role": "textbox", "name": "Username" }, "value": "input.username" } },
+    { "comment": "fill.secret (#6/CD-6): the password is resolved from the vault at fill time and never enters an expression." },
+    { "fill": { "selector": { "role": "textbox", "name": "Password" }, "secret": "input.password" } },
+    { "waitForRequest": {
+        "urlPrefix": "https://example.gov/portal/", "method": "POST",
+        "trigger": [ { "click": { "selector": { "role": "button", "name": "Sign in" } } } ] } },
+    { "waitForLoadState": { "state": "networkidle" } },
+
+    { "comment": "Prove we reached the authenticated portal, then capture a full-page screenshot (#8) for the audit trail." },
+    { "guard": { "cond": "exists({ text: 'Sign out' })",
+        "elseFail": { "class": "terminal", "code": "login_failed",
+                      "message": "Login did not reach the authenticated portal for ${input.username}" } } },
+    { "screenshot": { "name": "after-login" } },
+
+    { "fill": { "selector": { "role": "searchbox", "name": "Search records" }, "value": "input.query" } },
+    { "waitForRequest": {
+        "urlPrefix": "https://example.gov/portal/search", "method": "POST",
+        "trigger": [ { "click": { "selector": { "role": "button", "name": "Search" } } } ] } },
+
+    { "comment": "Checkpointed pagination (§11/#14): a TOP-LEVEL while loop whose FIRST node is the checkpoint, so a host restart resumes from the last completed page against a fresh session instead of from the top." },
+    { "loop": { "maxIterations": 1000, "while": "hasMorePages", "do": [
+        { "checkpoint": { "name": "resultsPage",
+            "cursor": "{ resumeUrl: pageUrl(), page: page + 1 }",
+            "resume": [
+              { "goto": { "url": "${checkpoint.resumeUrl}" } },
+              { "waitForLoadState": { "state": "networkidle" } }
+            ] } },
+        { "set": { "var": "page", "value": "page + 1" } },
+        { "locate": { "var": "rows", "selector": { "xpath": "//table[@id='results']//tr[position()>1]" } } },
+        { "loop": { "maxIterations": 1000,
+            "for": { "var": "i", "from": 0, "to": "count(rows)", "exclusiveTo": true },
+            "do": [
+              { "locate": { "var": "row", "from": "rows", "nth": "i" } },
+              { "push": { "into": "results", "value": "{ recordNumber: trim(coalesce(text(row,'td:nth-child(1)'),'')), status: trim(coalesce(text(row,'td:nth-child(2)'),'')) }" } }
+            ] } },
+        { "set": { "var": "hasMorePages", "value": "exists({ role: 'link', name: 'Next' })" } },
+        { "if": { "cond": "hasMorePages", "then": [
+            { "waitForRequest": {
+                "urlPrefix": "https://example.gov/portal/search", "method": "POST",
+                "trigger": [ { "click": { "selector": { "role": "link", "name": "Next" } } } ] } }
+        ] } }
+    ] } }
+  ],
+  "result": "{ query: input.query, pages: page, records: results }"
+}

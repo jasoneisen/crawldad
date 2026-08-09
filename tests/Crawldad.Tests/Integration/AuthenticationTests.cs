@@ -22,8 +22,16 @@ public class AuthenticationTests(AppFixture fixture)
     private IAlbaHost Host => fixture.Host;
 
     // The routes that are intentionally anonymous. A new anonymous route must be added here deliberately — otherwise the
-    // enumeration below fails, which is the point (no route escapes the tenant gate by accident).
-    private static readonly HashSet<string> _anonymousRoutes = new(StringComparer.Ordinal) { "/health" };
+    // enumeration below fails, which is the point (no route escapes the tenant gate by accident). Besides the /health
+    // liveness probe, the #20 docs surface is anonymous by design: the payload JSON Schema and the llms.txt discovery index
+    // are public, tenant-independent product artifacts (no tenant data), only useful when reachable without a key — the same
+    // deliberate opt-out as /health, decided in SchemaEndpoint / LlmsEndpoint.
+    private static readonly HashSet<string> _anonymousRoutes = new(StringComparer.Ordinal)
+    {
+        "/health",
+        "/schema/crawldad-1.schema.json",
+        "/llms.txt",
+    };
 
     [Fact]
     public async Task Every_non_anonymous_route_rejects_an_unauthenticated_request()

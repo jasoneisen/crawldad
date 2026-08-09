@@ -14,7 +14,12 @@ internal static class PayloadSchema
 {
     private const string _resourceName = "crawldad-1.schema.json";
 
-    private static readonly JsonSchema _schema = Load();
+    /// <summary>The raw payload v1 JSON Schema document — the embedded <c>crawldad-1.schema.json</c>, read once. Served
+    /// verbatim at <c>GET /schema/crawldad-1.schema.json</c> (Deliverable 2, #20) so an editor or an LLM consumes exactly
+    /// the normative DSL reference this save-time validator enforces (the served bytes and the validated bytes are one file).</summary>
+    public static string Json { get; } = ReadEmbedded();
+
+    private static readonly JsonSchema _schema = JsonSchema.FromText(Json);
 
     private static readonly EvaluationOptions _options = new() { OutputFormat = OutputFormat.List };
 
@@ -56,12 +61,12 @@ internal static class PayloadSchema
         }
     }
 
-    private static JsonSchema Load()
+    private static string ReadEmbedded()
     {
         // The schema is embedded by Crawldad.Web.csproj under this exact logical name, so the stream is always present;
         // a missing resource is a build misconfiguration that fails loudly here at first use (no coverable branch).
         using var stream = typeof(PayloadSchema).Assembly.GetManifestResourceStream(_resourceName)!;
         using var reader = new StreamReader(stream);
-        return JsonSchema.FromText(reader.ReadToEnd());
+        return reader.ReadToEnd();
     }
 }

@@ -26,6 +26,9 @@
        dependency; the same file is what an external tool/typed client would consume. -->
   <ItemGroup>
     <EmbeddedResource Include="..\..\schema\crawldad-1.schema.json" Link="crawldad-1.schema.json" LogicalName="crawldad-1.schema.json" />
+    <!-- The committed llms.txt (repo root, Deliverable 4/#20) is embedded so GET /llms.txt serves the exact checked-in
+         bytes — one source of truth for the LLM-facing discovery index, no file-path dependency at runtime. -->
+    <EmbeddedResource Include="..\..\llms.txt" Link="llms.txt" LogicalName="llms.txt" />
   </ItemGroup>
 
   <ItemGroup>
