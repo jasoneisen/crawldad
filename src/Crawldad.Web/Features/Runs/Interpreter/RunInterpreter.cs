@@ -888,17 +888,17 @@ internal sealed class RunInterpreter
         var varName = forSpec.GetProperty("var").GetString()!;
         var toExpr = forSpec.GetProperty("to");
         var inclusive = forSpec.TryGetProperty("inclusiveTo", out var inc) && inc.GetBoolean();
-        var step = forSpec.TryGetProperty("step", out var s) ? (long)(await ExprAsync(s, ct))! : 1L;
+        var step = forSpec.TryGetProperty("step", out var s) ? (long)(await BoundAsync(s, ct))! : 1L;
         var doBlock = body.GetProperty("do");
 
-        var i = (long)(await ExprAsync(forSpec.GetProperty("from"), ct))!;
+        var i = (long)(await BoundAsync(forSpec.GetProperty("from"), ct))!;
         var iterations = 0L;
         using var shadow = _scope.Shadow((varName, (object?)i));
 
         while (true)
         {
             _scope.Set(varName, i);
-            var to = (long)(await ExprAsync(toExpr, ct))!; // re-evaluated each iteration, matching the reference's condition
+            var to = (long)(await BoundAsync(toExpr, ct))!; // re-evaluated each iteration, matching the reference's condition
             if (inclusive ? i > to : i >= to)
             {
                 break;
@@ -1034,6 +1034,15 @@ internal sealed class RunInterpreter
 
     private ValueTask<object?> ExprAsync(JsonElement expr, CancellationToken ct) =>
         CrawldadExpression.Parse(expr.GetString()!).EvaluateAsync(_scope, ct);
+
+    // A loop-for bound (from/to/step) is either an Expr string (§6) or a typed JSON number literal (CD-10). Both are
+    // evaluated through the very same expression parser — a number is parsed from its raw text — so a JSON number N
+    // behaves exactly as the Expr "N" (an integral literal ⇒ long, else double; a non-integral or otherwise unparseable
+    // literal fails identically). The two forms are fully interchangeable, and a typed 0 is a non-advancing step caught
+    // by maxIterations, just as the Expr "0" is.
+    private ValueTask<object?> BoundAsync(JsonElement bound, CancellationToken ct) =>
+        CrawldadExpression.Parse(bound.ValueKind == JsonValueKind.String ? bound.GetString()! : bound.GetRawText())
+            .EvaluateAsync(_scope, ct);
 
     private static long ReadMaxIterations(JsonElement body) => body.GetProperty("maxIterations").GetInt64();
 

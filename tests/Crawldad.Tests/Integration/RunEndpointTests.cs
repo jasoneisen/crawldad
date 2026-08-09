@@ -147,6 +147,25 @@ public class RunEndpointTests(AppFixture fixture)
     }
 
     [Fact]
+    public async Task Loop_with_typed_number_bounds_runs_end_to_end()
+    {
+        // CD-10: from/to/step as typed JSON numbers drive the loop end-to-end (schema → semantic pass → interpreter),
+        // behaving exactly as the Expr-string form — inclusive 0..4 by 2 accumulates [0, 2, 4].
+        const string Payload =
+            """
+            { "name": "typed-loop", "config": { "backend": "input.backend" }, "vars": { "acc": [] },
+              "steps": [ { "loop": { "maxIterations": 100, "for": { "var": "i", "from": 0, "to": 4, "inclusiveTo": true, "step": 2 },
+                "do": [ { "push": { "into": "acc", "value": "i" } } ] } } ],
+              "result": "acc" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput()));
+
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+        root.GetProperty("result").EnumerateArray().Select(e => e.GetInt64()).ShouldBe([0L, 2L, 4L]);
+    }
+
+    [Fact]
     public async Task Missing_inputs_fails_with_invalid_backend_binding()
     {
         // No inputs at all: validator allows an absent inputs object; the run then fails because input.backend is null.

@@ -89,6 +89,41 @@ public class RunInterpreterTests
             .Code.ShouldBe(InterpreterErrorCodes.MaxIterationsExceeded);
     }
 
+    // CD-10: a typed JSON number bound behaves exactly as the Expr string "N". The same loop with typed from/to/step and
+    // with the equivalent Expr-string bounds yields an identical [0, 2, 4].
+    [Fact]
+    public async Task Loop_for_typed_number_bounds_match_the_expr_string_form()
+    {
+        const string Typed = """[ { "loop": { "maxIterations": 100, "for": { "var": "i", "from": 0, "to": 4, "inclusiveTo": true, "step": 2 }, "do": [ { "push": { "into": "acc", "value": "i" } } ] } } ]""";
+        const string Strung = """[ { "loop": { "maxIterations": 100, "for": { "var": "i", "from": "0", "to": "4", "inclusiveTo": true, "step": "2" }, "do": [ { "push": { "into": "acc", "value": "i" } } ] } } ]""";
+
+        Longs(Ok(await Run(Typed, result: "acc", vars: """{ "acc": [] }"""))).ShouldBe([0, 2, 4]);
+        Longs(Ok(await Run(Strung, result: "acc", vars: """{ "acc": [] }"""))).ShouldBe([0, 2, 4]);
+    }
+
+    // A typed negative step decrements i exactly as the Expr "-1" does; with from ≤ to the loop runs to its cap, and
+    // onMaxIterations:"warn" stops it cleanly — [0, -1, -2] for both the typed and the string form.
+    [Fact]
+    public async Task Loop_for_typed_negative_step_matches_the_expr_string_form()
+    {
+        const string Typed = """[ { "loop": { "maxIterations": 3, "onMaxIterations": "warn", "for": { "var": "i", "from": 0, "to": 3, "step": -1 }, "do": [ { "push": { "into": "acc", "value": "i" } } ] } } ]""";
+        const string Strung = """[ { "loop": { "maxIterations": 3, "onMaxIterations": "warn", "for": { "var": "i", "from": "0", "to": "3", "step": "-1" }, "do": [ { "push": { "into": "acc", "value": "i" } } ] } } ]""";
+
+        Longs(Ok(await Run(Typed, result: "acc", vars: """{ "acc": [] }"""))).ShouldBe([0, -1, -2]);
+        Longs(Ok(await Run(Strung, result: "acc", vars: """{ "acc": [] }"""))).ShouldBe([0, -1, -2]);
+    }
+
+    // A typed zero step never advances i — there is no save-time rejection (identical to the Expr "0" form), so the loop
+    // runs to its maxIterations cap: terminal max_iterations_exceeded for both the typed 0 and the Expr "0".
+    [Fact]
+    public async Task Loop_for_typed_zero_step_hits_the_cap_like_the_expr_string_form()
+    {
+        Fail(await Run("""[ { "loop": { "maxIterations": 3, "for": { "var": "i", "from": 0, "to": 3, "step": 0 }, "do": [] } } ]"""))
+            .Code.ShouldBe(InterpreterErrorCodes.MaxIterationsExceeded);
+        Fail(await Run("""[ { "loop": { "maxIterations": 3, "for": { "var": "i", "from": "0", "to": "3", "step": "0" }, "do": [] } } ]"""))
+            .Code.ShouldBe(InterpreterErrorCodes.MaxIterationsExceeded);
+    }
+
     [Fact]
     public async Task ForEach_over_an_array_with_index_and_continue_and_break()
     {

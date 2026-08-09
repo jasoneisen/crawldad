@@ -294,14 +294,14 @@ internal sealed class SemanticWalker
     {
         if (body.TryGetProperty("for", out var forSpec))
         {
-            CheckExpr(forSpec.GetProperty("from").GetString()!, $"{p}/for/from");
+            CheckBound(forSpec.GetProperty("from"), $"{p}/for/from");
             if (forSpec.TryGetProperty("step", out var step))
             {
-                CheckExpr(step.GetString()!, $"{p}/for/step");
+                CheckBound(step, $"{p}/for/step");
             }
 
             var added = EnterScope(forSpec.GetProperty("var").GetString()!);
-            CheckExpr(forSpec.GetProperty("to").GetString()!, $"{p}/for/to"); // `to` re-evaluates with the loop var in scope.
+            CheckBound(forSpec.GetProperty("to"), $"{p}/for/to"); // `to` re-evaluates with the loop var in scope.
             WalkBlock(body.GetProperty("do"), $"{p}/do");
             ExitScope(added);
         }
@@ -365,6 +365,13 @@ internal sealed class SemanticWalker
         CheckDefined(expr.FreeIdentifiers(), path);
         CheckNoSecretRefs(expr.InputMemberReferences(), path);
     }
+
+    // A loop-for bound (from/to/step, CD-10) is an Expr string or a typed JSON number literal. Both are checked through
+    // the same expression parser — the number via its raw text — so a typed number N is validated exactly as the Expr
+    // "N" of the same digits: a plain literal has no free identifiers and validates clean, while an unparseable one is
+    // rejected here at save time, just like its Expr-string spelling.
+    private void CheckBound(JsonElement bound, string path) =>
+        CheckExpr(bound.ValueKind == JsonValueKind.String ? bound.GetString()! : bound.GetRawText(), path);
 
     private void CheckTmpl(string source, string path)
     {
