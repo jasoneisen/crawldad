@@ -43,6 +43,28 @@ public class PayloadSchemaTests
     public void A_screenshot_node_with_an_unknown_property_fails_the_schema() => // #8: additionalProperties:false — no to/selector/fullPage yet
         PayloadSchema.Validate(Parse(Steps("""[ { "screenshot": { "selector": "#x" } } ]"""))).ShouldNotBeEmpty();
 
+    // #9: the structured-Sel role/text/xpath variants (§5.2), each as a lone root, role with an accessible-name `name`,
+    // and the base+css pair (the sole two-root combination) satisfy the schema.
+    [Theory]
+    [InlineData("""[ { "click": { "selector": { "role": "button", "name": "Go" } } } ]""")]
+    [InlineData("""[ { "click": { "selector": { "role": "textbox" } } } ]""")]
+    [InlineData("""[ { "click": { "selector": { "text": "Open" } } } ]""")]
+    [InlineData("""[ { "click": { "selector": { "xpath": "//button" } } } ]""")]
+    [InlineData("""[ { "waitFor": { "selector": { "base": "row", "css": "td" } } } ]""")]
+    public void A_structured_selector_variant_satisfies_the_schema(string steps) =>
+        PayloadSchema.Validate(Parse(Steps(steps))).ShouldBeEmpty();
+
+    // #9: exactly one root, only base+css may combine, and `name` requires `role` — the schema rejects every violation.
+    [Theory]
+    [InlineData("""[ { "click": { "selector": { "css": "#a", "title": "b" } } } ]""")]     // two page/frame roots
+    [InlineData("""[ { "click": { "selector": { "role": "button", "text": "x" } } } ]""")]  // two page/frame roots
+    [InlineData("""[ { "click": { "selector": { "base": "row", "title": "x" } } } ]""")]    // base + a non-css root
+    [InlineData("""[ { "click": { "selector": { "css": "#a", "name": "x" } } } ]""")]       // name without role
+    [InlineData("""[ { "click": { "selector": { "nth": "0" } } } ]""")]                      // no root at all
+    [InlineData("""[ { "click": { "selector": { "role": "button", "bogus": "x" } } } ]""")]  // unknown key
+    public void An_invalid_structured_selector_fails_the_schema(string steps) =>
+        PayloadSchema.Validate(Parse(Steps(steps))).ShouldNotBeEmpty();
+
     [Fact]
     public void A_download_node_carrying_the_removed_idempotency_key_fails_the_schema()
     {

@@ -46,6 +46,11 @@ internal static class InterpreterErrorCodes
     /// <summary>A node was structurally malformed (missing/mistyped required field) — a stand-in for Phase 3 save-time validation.</summary>
     public const string MalformedNode = "malformed_node";
 
+    /// <summary>Save-time (§5.2): a structured <c>Sel</c> combined more than one root selector (<c>css</c>/<c>xpath</c>/
+    /// <c>text</c>/<c>role</c>/<c>title</c>/<c>base</c> — only <c>base</c>+<c>css</c> may pair), or carried a <c>name</c>
+    /// without a <c>role</c>. Ambiguous selectors are rejected rather than silently resolved by precedence.</summary>
+    public const string AmbiguousSelector = "ambiguous_selector";
+
     /// <summary>A <c>download.to</c> did not resolve to a <c>storageTarget</c> object with a string <c>kind</c>.</summary>
     public const string InvalidDownloadTarget = "invalid_download_target";
 

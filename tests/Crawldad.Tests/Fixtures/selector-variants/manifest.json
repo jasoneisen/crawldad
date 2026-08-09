@@ -1,0 +1,10 @@
+{
+  "initialState": "page",
+  "states": {
+    "page": { "gotoUrl": "https://variants.test/page", "url": "https://variants.test/page", "html": "page.html" },
+    "record": { "url": "https://variants.test/record", "html": "record.html" }
+  },
+  "transitions": [
+    { "from": "page", "on": { "click": "#openRecord" }, "to": "record" }
+  ]
+}

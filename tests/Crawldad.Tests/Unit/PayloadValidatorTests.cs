@@ -111,6 +111,58 @@ public class PayloadValidatorTests
               "result": "null" }
             """)).ShouldBeEmpty();
 
+    // #9: the structured-Sel role/text/xpath variants (§5.2) validate clean through schema + semantic — each as a lone
+    // root, role carrying an accessible-name `name`, and the base+css pair (the sole two-root combination). The `name`
+    // and `text` templates interpolate an input without being resolved as references (§12 walker leniency).
+    [Fact]
+    public void Structured_selector_variants_validate_clean() =>
+        ValidateAll(Parse(Steps(
+            """
+            [ { "locate": { "var": "row", "selector": "tr" } },
+              { "click": { "selector": { "role": "button", "name": "Search ${input.tag}" } } },
+              { "click": { "selector": { "text": "Open ${input.tag}" } } },
+              { "click": { "selector": { "xpath": "//a[@id='go']" } } },
+              { "waitFor": { "selector": { "base": "row", "css": "td", "nth": "0" } } } ]
+            """))).ShouldBeEmpty();
+
+    // #9: an ambiguous selector combining two page/frame roots is rejected by the semantic walker with a clear message,
+    // rather than silently resolved by the resolver's root precedence. (The schema rejects it too; Semantic() exercises
+    // the walker branch directly.)
+    [Fact]
+    public void A_selector_combining_two_roots_is_rejected()
+    {
+        var issues = Semantic(Steps("""[ { "click": { "selector": { "css": "#a", "title": "b" } } } ]"""));
+        var ambiguous = issues.ShouldHaveSingleItem();
+        ambiguous.Code.ShouldBe(InterpreterErrorCodes.AmbiguousSelector);
+        ambiguous.Path.ShouldBe("/steps/0/click/selector");
+    }
+
+    [Fact]
+    public void A_selector_combining_role_and_text_is_rejected() =>
+        Semantic(Steps("""[ { "click": { "selector": { "role": "button", "text": "x" } } } ]"""))
+            .ShouldContain(i => i.Code == InterpreterErrorCodes.AmbiguousSelector);
+
+    // base pairs only with a relative css; base+another-root (here base+title) is ambiguous.
+    [Fact]
+    public void A_base_with_a_non_css_root_is_rejected() =>
+        Semantic(Steps(
+            """[ { "locate": { "var": "row", "selector": "tr" } }, { "click": { "selector": { "base": "row", "title": "x" } } } ]"""))
+            .ShouldContain(i => i.Code == InterpreterErrorCodes.AmbiguousSelector && i.Path == "/steps/1/click/selector");
+
+    // `name` is meaningless without a `role`.
+    [Fact]
+    public void A_name_without_a_role_is_rejected() =>
+        Semantic(Steps("""[ { "click": { "selector": { "css": "#a", "name": "x" } } } ]"""))
+            .ShouldContain(i => i.Code == InterpreterErrorCodes.AmbiguousSelector);
+
+    // A reference inside a variant field (text/role/name/xpath) is still checked, exactly like css/title.
+    [Fact]
+    public void An_undefined_reference_in_a_variant_field_is_rejected()
+    {
+        var issues = Semantic(Steps("""[ { "click": { "selector": { "text": "${undefinedThing}" } } } ]"""));
+        issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/click/selector/text");
+    }
+
     private static string Steps(string steps) =>
         $$"""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend" }, "vars": {}, "steps": {{steps}}, "result": "null" }""";
 

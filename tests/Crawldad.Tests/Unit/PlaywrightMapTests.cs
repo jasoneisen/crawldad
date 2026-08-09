@@ -1,3 +1,4 @@
+using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Infrastructure.Browser.Real;
 using Microsoft.Playwright;
 
@@ -47,4 +48,21 @@ public class PlaywrightMapTests
     [InlineData("bogus", WaitForSelectorState.Visible)] // default arm
     public void WaitForState_maps_each_state(string input, WaitForSelectorState expected) =>
         PlaywrightMap.WaitForState(input).ShouldBe(expected);
+
+    [Theory]
+    [InlineData("button", AriaRole.Button)]
+    [InlineData("link", AriaRole.Link)]
+    [InlineData("heading", AriaRole.Heading)]
+    [InlineData("textbox", AriaRole.Textbox)]
+    [InlineData("listitem", AriaRole.Listitem)]
+    [InlineData("SWITCH", AriaRole.Switch)] // case-insensitive; role names map 1:1 onto the enum
+    public void Role_maps_each_aria_role(string input, AriaRole expected) =>
+        PlaywrightMap.Role(input).ShouldBe(expected);
+
+    [Theory]
+    [InlineData("bogus")] // not an ARIA role
+    [InlineData("7")]     // a numeric string must not be coerced onto an enum value
+    [InlineData("")]      // empty
+    public void Role_rejects_a_non_role_as_terminal(string input) =>
+        Should.Throw<InterpreterException>(() => PlaywrightMap.Role(input)).Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
 }

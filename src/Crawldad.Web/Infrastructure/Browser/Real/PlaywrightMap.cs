@@ -1,3 +1,4 @@
+using Crawldad.Web.Features.Runs.Interpreter;
 using Microsoft.Playwright;
 
 namespace Crawldad.Web.Infrastructure.Browser.Real;
@@ -33,6 +34,19 @@ internal static class PlaywrightMap
         "networkidle" => Microsoft.Playwright.LoadState.NetworkIdle,
         _ => Microsoft.Playwright.LoadState.Load,
     };
+
+    /// <summary>
+    /// A structured <c>Sel</c>'s <c>role</c> (§5.2) as a Playwright <see cref="AriaRole"/>. The ARIA role names map
+    /// 1:1 onto the enum (case-insensitively): <c>button</c> ⇒ <see cref="AriaRole.Button"/>, <c>listitem</c> ⇒
+    /// <see cref="AriaRole.Listitem"/>, and so on across the full role set. An unrecognised role is a terminal
+    /// <c>malformed_node</c> — a payload authoring error, surfaced at the selector rather than silently matching nothing.
+    /// </summary>
+    /// <param name="role">The ARIA role name from the selector.</param>
+    /// <exception cref="InterpreterException">When <paramref name="role"/> names no ARIA role.</exception>
+    public static AriaRole Role(string role) =>
+        char.IsLetter(role.FirstOrDefault()) && Enum.TryParse<AriaRole>(role, ignoreCase: true, out var parsed)
+            ? parsed
+            : throw new InterpreterException(InterpreterErrorCodes.MalformedNode, $"unknown ARIA role '{role}'");
 
     /// <summary>The <c>waitFor</c> node's element state (§5.1) as a Playwright <see cref="WaitForSelectorState"/>.</summary>
     /// <param name="state">The element state to await.</param>

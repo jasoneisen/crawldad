@@ -114,6 +114,10 @@ public class RunScreenshotTests
 
             public ILocatorHandle GetByTitle(string title) => inner.GetByTitle(title);
 
+            public ILocatorHandle GetByRole(string role, string? name) => inner.GetByRole(role, name);
+
+            public ILocatorHandle GetByText(string text) => inner.GetByText(text);
+
             public IFrameHandle FrameLocator(string selector) => inner.FrameLocator(selector);
 
             public Task AddStyleTagAsync(string content, CancellationToken ct) => inner.AddStyleTagAsync(content, ct);
