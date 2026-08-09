@@ -48,6 +48,7 @@ public class PayloadSchemaTests
     [Theory]
     [InlineData("""[ { "click": { "selector": { "role": "button", "name": "Go" } } } ]""")]
     [InlineData("""[ { "click": { "selector": { "role": "textbox" } } } ]""")]
+    [InlineData("""[ { "click": { "selector": { "role": "switch" } } } ]""")] // the fuller ARIA vocabulary, not just the common few
     [InlineData("""[ { "click": { "selector": { "text": "Open" } } } ]""")]
     [InlineData("""[ { "click": { "selector": { "xpath": "//button" } } } ]""")]
     [InlineData("""[ { "waitFor": { "selector": { "base": "row", "css": "td" } } } ]""")]
@@ -62,6 +63,7 @@ public class PayloadSchemaTests
     [InlineData("""[ { "click": { "selector": { "css": "#a", "name": "x" } } } ]""")]       // name without role
     [InlineData("""[ { "click": { "selector": { "nth": "0" } } } ]""")]                      // no root at all
     [InlineData("""[ { "click": { "selector": { "role": "button", "bogus": "x" } } } ]""")]  // unknown key
+    [InlineData("""[ { "click": { "selector": { "role": "notarole" } } } ]""")]              // role outside the ARIA vocabulary
     public void An_invalid_structured_selector_fails_the_schema(string steps) =>
         PayloadSchema.Validate(Parse(Steps(steps))).ShouldNotBeEmpty();
 

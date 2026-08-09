@@ -213,6 +213,23 @@ Comma-union CSS (`"#a, #b"`) is passed through verbatim (`:233`). **Frames:** `f
 handles bound by `locate` are lazy (re-queried on use), matching Playwright semantics — the reference
 relies on this when the grid re-renders after a postback.
 
+**Root rule & combination (#9).** A structured `Sel` roots at **exactly one** of
+`css`/`xpath`/`text`/`role`/`title`/`base`, with two refinements: `base` may pair with a relative
+`css` (the child-locator form — the sole two-root combination), and `name` accompanies `role` only
+(its accessible name). `role` is a **fixed ARIA vocabulary** (schema `enum`, like `waitFor.state`);
+`css`/`xpath`/`text`/`title`/`name` are `Tmpl`. The Locator-string roots (`css`, `xpath`) resolve
+inside a bound frame (`in`); the `GetBy*` roots (`role`, `text`, `title`) are page-level. The rule is
+enforced at **save time** in both the JSON Schema and the semantic walker; a violation
+(≥2 page-roots, `base`+a-non-`css`-root, `name` without `role`) is `ambiguous_selector`, rejected
+rather than silently resolved by the resolver's root precedence.
+
+*Migration.* This tightens shapes the earlier `anyOf` schema accepted: `{css,title}`, `{base,title}`,
+`{base,role}` (and any other multi-root or `name`-without-`role`) now fail **at save**. Payloads
+**already saved** with such a shape still **run unchanged** — run launch validates structure only
+(`ValidateStructure`), not this union rule, and the resolver's precedence (`base` first, then
+`css`→`xpath`→`text`→`role`→`title`) is untouched, so it resolves them exactly as before. Re-saving
+surfaces the rejection: that save-time reject is the intended migration path.
+
 `locate` has two forms, mirroring Playwright exactly:
 - **from a selector:** `{ "locate": { "var": "rows", "selector": "#…gdvPermitList tr" } }` → `page.Locator(…)`
 - **derived from a handle:** `{ "locate": { "var": "row", "from": "rows", "nth": "i" } }` → `rows.Nth(i)`

@@ -45,7 +45,8 @@ public sealed class RealChromiumSelectorParityTests(RealChromiumFixture fixture)
         (await page.GetByRole("heading", null).CountAsync(_ct)).ShouldBe(1);
         (await page.GetByRole("textbox", null).CountAsync(_ct)).ShouldBe(1);
         (await page.GetByRole("listitem", null).CountAsync(_ct)).ShouldBe(3);
-        (await page.GetByRole("switch", null).CountAsync(_ct)).ShouldBe(1); // AriaRole.Switch, an explicit role
+        (await page.GetByRole("switch", null).CountAsync(_ct)).ShouldBe(1);      // AriaRole.Switch, an explicit role
+        (await page.GetByRole("switch", "Toggle").CountAsync(_ct)).ShouldBe(1);  // …and its accessible name (text)
 
         // accessible name (the option-bearing GetByRole path): text and aria-label sources, case-insensitive substring
         (await page.GetByRole("button", "Search Records").CountAsync(_ct)).ShouldBe(1);

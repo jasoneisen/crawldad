@@ -183,17 +183,17 @@ public class SelectorVariantTests
     }
 
     [Fact]
-    public async Task ResolveNode_interpolates_role_and_name_fields()
+    public async Task ResolveNode_interpolates_the_name_field()
     {
-        // role/name/text/xpath are templates (like css/title) — an ${input.…} reference renders before resolution.
+        // name (like css/text/xpath/title) is a template — an ${input.…} reference renders before resolution. role is a
+        // fixed ARIA vocabulary (schema enum), so it stays literal.
         var scope = new RunScope(new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["role"] = "button",
             ["label"] = "Search Records",
         });
         scope.Bind(await PageAsync());
 
-        var handle = await scope.Sel.ResolveNodeAsync(Json("""{ "role": "${input.role}", "name": "${input.label}" }"""), null, _ct);
+        var handle = await scope.Sel.ResolveNodeAsync(Json("""{ "role": "button", "name": "${input.label}" }"""), null, _ct);
         (await handle.CountAsync(_ct)).ShouldBe(1);
     }
 
