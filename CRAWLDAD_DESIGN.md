@@ -281,6 +281,11 @@ startsWith X → field Y" ladders (`:389-397`, `:297-353`).
   reference's exact behaviour), rather than failing.
 - `onMaxIterations` defaults to `"fail"` (terminal) for `while`/`forEach`; the attachment loop opts
   into `"warn"`.
+- A `for` bound (`from`/`to`/`step`) must evaluate to an integer — the counter is a `long`. A
+  non-integral value (a fractional literal, or a computed non-integer such as `5.0 / 2`) is a terminal
+  `type_error` (§8.3); a bare non-integral literal (typed `2.5` or the Expr `"2.5"`) is rejected at
+  save time with the same code (#33). An integral-valued double (`2.0`) is accepted and coerced, exactly
+  as an array index is — so `2.0` ≡ `2`, and only a fraction rejects.
 
 ### `break` / `continue`
 ```jsonc

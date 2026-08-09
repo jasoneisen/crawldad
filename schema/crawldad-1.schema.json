@@ -145,7 +145,7 @@
       ]
     },
     "numExpr": {
-      "description": "A numeric loop bound (§6): either an Expr string that evaluates to a number, or a typed JSON number literal (CD-10). A number N behaves exactly as the Expr \"N\" (an integral literal ⇒ long, else double), so the two forms are interchangeable.",
+      "description": "An integer loop bound (§6): either an Expr string that evaluates to a whole number, or a typed JSON number literal (CD-10). A number N behaves exactly as the Expr \"N\" (an integral literal ⇒ long, else double), so the two forms are interchangeable. The loop counter is an integer, so a non-integral value — a fractional literal (2.5) or a computed non-integer (5.0/2) — is a terminal type_error (§8.3, #33); a bare non-integral literal is rejected at save time with the same code, while an integral-valued double (2.0) is accepted and coerced.",
       "oneOf": [ { "type": "string" }, { "type": "number" } ]
     },
     "failure": {

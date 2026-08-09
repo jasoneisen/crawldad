@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
@@ -322,14 +323,14 @@ internal sealed class SemanticWalker
         var loop = EnterLoop(isWhileForm); // §11: classify this loop as a checkpoint host (top-level while) or not
         if (!isWhileForm)
         {
-            CheckBound(forSpec.GetProperty("from"), $"{p}/for/from");
+            CheckBound(forSpec.GetProperty("from"), "from", $"{p}/for/from");
             if (forSpec.TryGetProperty("step", out var step))
             {
-                CheckBound(step, $"{p}/for/step");
+                CheckBound(step, "step", $"{p}/for/step");
             }
 
             var added = EnterScope(forSpec.GetProperty("var").GetString()!);
-            CheckBound(forSpec.GetProperty("to"), $"{p}/for/to"); // `to` re-evaluates with the loop var in scope.
+            CheckBound(forSpec.GetProperty("to"), "to", $"{p}/for/to"); // `to` re-evaluates with the loop var in scope.
             WalkBlock(body.GetProperty("do"), $"{p}/do");
             ExitScope(added);
         }
@@ -474,12 +475,37 @@ internal sealed class SemanticWalker
         CheckNoSecretRefs(expr.InputMemberReferences(), path);
     }
 
-    // A loop-for bound (from/to/step, CD-10) is an Expr string or a typed JSON number literal. Both are checked through
+    // A loop-for bound (from/to/step, CD-10) is an Expr string or a typed JSON number literal. Both are parsed through
     // the same expression parser — the number via its raw text — so a typed number N is validated exactly as the Expr
-    // "N" of the same digits: a plain literal has no free identifiers and validates clean, while an unparseable one is
-    // rejected here at save time, just like its Expr-string spelling.
-    private void CheckBound(JsonElement bound, string path) =>
-        CheckExpr(bound.ValueKind == JsonValueKind.String ? bound.GetString()! : bound.GetRawText(), path);
+    // "N" of the same digits: a plain literal has no free identifiers and validates clean, an unparseable one is rejected
+    // here, and (#33) a bare NON-INTEGRAL literal (typed 2.5 or the Expr "2.5", either sign) is rejected too — the long
+    // loop counter can never take a fractional value, so it is a save-time type_error, the same code the run-time
+    // integral check raises (RunInterpreter.RequireIntegralBound). A computed expression is not a constant literal and is
+    // left to that run-time check; an integral-valued double (2.0) is accepted (it coerces), so only fractions reject.
+    private void CheckBound(JsonElement bound, string boundName, string path)
+    {
+        CrawldadExpression expr;
+        try
+        {
+            expr = CrawldadExpression.Parse(bound.ValueKind == JsonValueKind.String ? bound.GetString()! : bound.GetRawText());
+        }
+        catch (ExpressionParseException ex)
+        {
+            _issues.Add(new PayloadIssue(path, ex.Code, ex.Message, _stepIndex, _stepKind));
+            return;
+        }
+
+        CheckDefined(expr.FreeIdentifiers(), path);
+        CheckNoSecretRefs(expr.InputMemberReferences(), path);
+
+        if (expr.TryGetConstantNumber(out var value, out var isIntegral) && !isIntegral)
+        {
+            _issues.Add(new PayloadIssue(
+                path, ExpressionErrorCodes.TypeError,
+                $"loop.for bound '{boundName}' must be an integer, got {value.ToString(CultureInfo.InvariantCulture)}",
+                _stepIndex, _stepKind));
+        }
+    }
 
     private void CheckTmpl(string source, string path)
     {
