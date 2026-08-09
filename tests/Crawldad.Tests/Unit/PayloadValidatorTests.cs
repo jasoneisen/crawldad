@@ -190,4 +190,142 @@ public class PayloadValidatorTests
         Semantic(Steps("""[ { "set": { "var": "m", "value": "{}", "path": "[oops" } } ]"""))
             .ShouldHaveSingleItem().Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
     }
+
+    // ----- checkpoint placement (§11): only a top-level `while` loop can host a resumable checkpoint --------------
+
+    // The canonical shape: a checkpoint heading a top-level `while` loop, with a resume sub-program. (The B.1/B.2
+    // fixtures above already prove this end-to-end; this is the minimal spelling.)
+    [Fact]
+    public void A_checkpoint_heading_a_top_level_while_loop_validates_clean() =>
+        ValidateAll(Parse(Steps(
+            """
+            [ { "loop": { "maxIterations": 100, "while": "false", "do": [
+                { "checkpoint": { "name": "page", "cursor": "1", "resume": [ { "goto": { "url": "${checkpoint}" } } ] } }
+            ] } } ]
+            """))).ShouldBeEmpty();
+
+    // A checkpoint may be guarded by an `if`/`switch` inside the top-level `while` loop — those are not loop boundaries,
+    // so the checkpoint still heads the top-level resume unit.
+    [Fact]
+    public void A_checkpoint_guarded_by_an_if_in_a_top_level_while_loop_validates_clean() =>
+        ValidateAll(Parse(Steps(
+            """
+            [ { "loop": { "maxIterations": 100, "while": "false", "do": [
+                { "if": { "cond": "true", "then": [ { "checkpoint": { "name": "page", "cursor": "1" } } ] } }
+            ] } } ]
+            """))).ShouldBeEmpty();
+
+    // Two SEPARATE top-level `while` loops may each carry one checkpoint — each is its own resume unit, and resume
+    // re-enters at the last one reached, skipping the earlier (completed) loop.
+    [Fact]
+    public void Two_top_level_while_loops_each_with_one_checkpoint_validate_clean() =>
+        ValidateAll(Parse(Steps(
+            """
+            [ { "loop": { "maxIterations": 100, "while": "false", "do": [ { "checkpoint": { "name": "a", "cursor": "1" } } ] } },
+              { "loop": { "maxIterations": 100, "while": "false", "do": [ { "checkpoint": { "name": "b", "cursor": "1" } } ] } } ]
+            """))).ShouldBeEmpty();
+
+    // A bare checkpoint outside any loop heads no iteration — resume would re-run every following top-level step.
+    [Fact]
+    public void A_checkpoint_outside_any_loop_is_rejected()
+    {
+        var issue = Semantic(Steps("""[ { "checkpoint": { "name": "cp", "cursor": "1" } } ]""")).ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointMisplaced);
+        issue.Message.ShouldContain("heads no loop");
+        issue.Path.ShouldBe("/steps/0/checkpoint");
+    }
+
+    // A `for` loop re-initialises its counter from `from` at entry, so its checkpointed iteration cannot be resumed.
+    [Fact]
+    public void A_checkpoint_in_a_for_loop_is_rejected()
+    {
+        var issue = Semantic(Steps(
+            """[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": "0", "to": "5" }, "do": [ { "checkpoint": { "name": "cp", "cursor": "i" } } ] } } ]"""))
+            .ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointMisplaced);
+        issue.Message.ShouldContain("must be a while loop");
+    }
+
+    // A `forEach` re-iterates its source from index 0 on resume, so it is never a resumable checkpoint host.
+    [Fact]
+    public void A_checkpoint_in_a_forEach_loop_is_rejected()
+    {
+        var issue = Semantic(Steps(
+            """[ { "forEach": { "in": "['a']", "as": "x", "maxIterations": 10, "do": [ { "checkpoint": { "name": "cp", "cursor": "x" } } ] } } ]"""))
+            .ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointMisplaced);
+        issue.Message.ShouldContain("must be a while loop");
+    }
+
+    // Resume re-enters only at the top-level step, so an inner loop's position cannot be restored.
+    [Fact]
+    public void A_checkpoint_in_a_nested_loop_is_rejected()
+    {
+        var issue = Semantic(Steps(
+            """
+            [ { "loop": { "maxIterations": 10, "while": "false", "do": [
+                { "loop": { "maxIterations": 10, "while": "false", "do": [ { "checkpoint": { "name": "cp", "cursor": "1" } } ] } }
+            ] } } ]
+            """)).ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointMisplaced);
+        issue.Message.ShouldContain("nested loop");
+    }
+
+    // A `while` loop buried under a top-level `if` is not itself a top-level step, so resume cannot re-enter it directly.
+    [Fact]
+    public void A_checkpoint_in_a_while_loop_below_a_top_level_step_is_rejected()
+    {
+        var issue = Semantic(Steps(
+            """
+            [ { "if": { "cond": "true", "then": [
+                { "loop": { "maxIterations": 10, "while": "false", "do": [ { "checkpoint": { "name": "cp", "cursor": "1" } } ] } }
+            ] } } ]
+            """)).ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointMisplaced);
+        issue.Message.ShouldContain("top-level step");
+    }
+
+    // A `trigger` sub-program re-runs on resume and records no checkpoint of its own — a checkpoint inside it is rejected.
+    [Fact]
+    public void A_checkpoint_in_a_trigger_sub_program_is_rejected()
+    {
+        var issue = Semantic(Steps(
+            """
+            [ { "loop": { "maxIterations": 10, "while": "false", "do": [
+                { "download": { "to": "input.store", "var": "dl", "trigger": [ { "checkpoint": { "name": "cp", "cursor": "1" } } ] } }
+            ] } } ]
+            """)).ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointMisplaced);
+        issue.Message.ShouldContain("resume or trigger");
+    }
+
+    // A checkpoint inside another checkpoint's `resume` block is rejected — the resume sub-program re-runs on resume.
+    [Fact]
+    public void A_checkpoint_in_a_resume_sub_program_is_rejected()
+    {
+        var issue = Semantic(Steps(
+            """
+            [ { "loop": { "maxIterations": 10, "while": "false", "do": [
+                { "checkpoint": { "name": "outer", "cursor": "1", "resume": [ { "checkpoint": { "name": "inner", "cursor": "1" } } ] } }
+            ] } } ]
+            """)).ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointMisplaced);
+        issue.Message.ShouldContain("resume or trigger");
+    }
+
+    // Resume restores a single stored cursor and re-enters at the first checkpoint reached, so a second checkpoint in the
+    // same top-level loop is unrepresentable — the first is fine, the second is the rejection.
+    [Fact]
+    public void A_second_checkpoint_in_the_same_top_level_loop_is_rejected()
+    {
+        var issue = Semantic(Steps(
+            """
+            [ { "loop": { "maxIterations": 10, "while": "false", "do": [
+                { "checkpoint": { "name": "a", "cursor": "1" } },
+                { "checkpoint": { "name": "b", "cursor": "1" } }
+            ] } } ]
+            """)).ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CheckpointNotUnique);
+        issue.Message.ShouldContain("at most one checkpoint");
+    }
 }

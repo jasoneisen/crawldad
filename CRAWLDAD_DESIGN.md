@@ -611,7 +611,96 @@ does not itself contain).
   the last completed page, not from a replayed browser. If the backend provider supports session
   reconnect by id (stored in the saga), we reconnect; otherwise the run is *interrupted* and resumes
   from its last checkpoint. v1 ships checkpoints for the two LJCMG loops; general resumability is a
-  payload-authoring concern, documented, not magic.
+  payload-authoring concern — **authored in §11.1 and enforced at save time**, not magic.
+
+### 11.1 Authoring resumable checkpoints
+
+A `checkpoint` is how a long-running loop survives a process death, a host restart, or a backend session
+that cannot be reconnected: the run resumes from the last checkpoint against a *fresh* browser session
+instead of from the top. This is a **payload-authoring contract** — the engine cannot make an arbitrary
+loop resumable, so the author places the checkpoint where resume can honour it and keeps the loop's
+per-iteration work replay-safe. The two LJCMG loops (`SearchEnforcementRecords` pagination and the
+attachment-page walk in `ScrapeEnforcementRecord`) are the worked examples; this section is the general
+rule, and the save-time validator (§12) rejects placements the resume machinery cannot honour.
+
+**What a checkpoint captures.** Reaching a `checkpoint` node durably records — overwriting the run's
+*single* stored checkpoint:
+- `name` — the stable resume anchor; and a monotonic `sequence` (ordering only, it keeps climbing across
+  a resume).
+- the **enclosing top-level step index** — the loop the checkpoint heads. This is the *only* position
+  recorded: it is tracked at the top level and is never finer-grained than "which top-level step."
+  Resume re-enters exactly there.
+- the **cursor** — the value of the checkpoint's `cursor` expression (a page number, a resume URL, a
+  frontier position): the author's declaration of *where the browser must be to continue*. It is bound to
+  the `checkpoint` variable for the `resume` sub-program.
+- a **snapshot of every declared variable** — everything `vars`/`set`/`push` have accumulated (the
+  result-so-far) *except* `input` (re-supplied at resume) and opaque locator/frame handles (they point
+  into a dead page and are re-derived).
+
+**What resume restores, re-derives, and re-resolves.** A resumed run is a brand-new interpreter over a
+fresh session that:
+- **restores** the variable snapshot and binds the cursor to `checkpoint`, then **skips every top-level
+  step before the checkpoint's** — the initial navigation, the search form, earlier pages are never
+  refetched — and re-enters the loop.
+- **re-derives** transient state: the session and page are new; locator/frame handles are re-bound by the
+  loop body against the fresh page. The checkpoint's `resume` sub-program runs **once, at the first
+  checkpoint reached**, to re-navigate the fresh session to the cursor (`goto ${checkpoint.resumeUrl}`, or
+  click forward to the checkpointed page) *before* the loop body continues.
+- **re-resolves** secrets: a `fill.secret` resolves its `secretRef` against the vault at action time on
+  every execution and is never persisted (§12/CD-6), so a resumed run re-resolves naturally — the variable
+  snapshot and stored cursor never contain a secret.
+
+**Where a checkpoint may legally appear** — enforced at save time (`checkpoint_misplaced` /
+`checkpoint_not_unique`), the message naming the reason:
+- **Inside a top-level `while` loop, and only there.** The loop must be a direct member of `steps` (resume
+  re-enters at a *top-level* step, so a loop nested under a top-level `if`/`switch` cannot be re-entered
+  directly) and must be the `while` form. A `for`/`forEach` re-initialises its counter/binding from
+  `from`/`in` on entry, discarding any restored value, so its iteration cannot be resumed — a resumable
+  loop instead drives its own continuation from restored variables (`while: "hasMorePages"`) plus the
+  cursor re-navigation, which is exactly what the `while` (do-while) form does.
+- **Not inside a second, nested loop** — only the top-level step is recorded, so an inner loop's position
+  is unrepresentable.
+- **Not inside a `resume` or `trigger` sub-program** — those re-run wholesale on resume and record no
+  checkpoint of their own.
+- **At most one per top-level loop** — resume restores a single cursor and re-enters at the first
+  checkpoint reached, so a second is ambiguous. (Two *separate* top-level loops may each carry one — each
+  is its own resume unit, and resume re-enters at the last one reached, skipping the completed earlier one.)
+
+**What breaks resumability** — the author's responsibility, beyond what static validation can see:
+- **The checkpoint must head the iteration.** On resume the loop body runs from its first node, but the
+  fresh session has navigated nowhere until the checkpoint's `resume` block runs. Any node *before* the
+  checkpoint therefore executes against a blank page (page reads return nothing) *and* re-executes on every
+  resume. Put the checkpoint at the head of the loop body — the only thing before it should be a `comment`
+  (both LJCMG loops do exactly this).
+- **The checkpointed iteration is replayed, so its per-iteration work must be idempotent.** When the run
+  dies partway through the iteration the checkpoint recorded, resume redoes that whole iteration from the
+  checkpoint. That is safe only because the work is replay-safe: `download` is content-addressed and
+  short-circuits when the blob already exists (§9.3), so no bytes re-transfer; the accumulator `push`
+  appends the *current* page's rows, which were **not** in the snapshot (the checkpoint sits before the
+  extraction), so nothing double-counts. A non-idempotent effect *after* the checkpoint — a submit/confirm
+  click, a POST that is not naturally deduplicated — will repeat. Keep such effects out of a checkpointed
+  loop, or gate them on state the snapshot carries.
+- **The cursor must be sufficient to re-establish position.** The `resume` sub-program gets only the
+  restored variables and the cursor; it must re-navigate from those alone (a directly navigable URL, or a
+  page number to click forward to). If the checkpoint is guarded by an `if`, it must still be reached on
+  the first resumed iteration, or the `resume` block never runs and the session is never re-established.
+
+**The safe pattern**, distilled:
+```jsonc
+{ "loop": { "maxIterations": …, "while": "<continue from restored state>", "do": [
+    { "comment": "checkpoint FIRST — nothing page-touching or side-effecting before it" },
+    { "checkpoint": { "name": "…", "cursor": "<enough to re-navigate>",
+        "resume": [ /* re-open the session at the cursor: goto / click-forward, re-bind handles */ ] } },
+    /* … the iteration's replay-safe work: extract, content-addressed download, push the result-so-far … */
+    /* … advance the cursor / set the while condition for the next iteration … */
+] } }
+```
+
+**Deferred — the fully-dynamic streaming stop path (§15 tension #1(c)).** Checkpoint resumability covers
+loops whose continuation is *declarative* (a restored condition plus a re-navigable cursor). A workload
+whose per-item stop/continue decision needs genuinely dynamic host logic *beyond* a predicate belongs on
+the SSE-streaming + cancel control channel of §15 #1(c), which stays deferred until the first non-LJCMG
+long-running workload arrives; general (non-checkpoint) resumability remains out of scope with it.
 
 ---
 
