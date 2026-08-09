@@ -231,7 +231,9 @@ when a workload needs push notification of run completion/drift.
 into payloads.
 
 ### [#14](https://github.com/jasoneisen/crawldad/issues/14) General checkpoint resumability beyond the two LJCMG loops
-**Status:** partially exists — the `checkpoint` node is generic (any top-level loop can carry one);
-what's missing is the documented authoring guidance + validation for arbitrary payloads and the
-fully-dynamic streaming stop path (§11 note). Revisit with the first non-LJCMG long-running
+**Status:** shipped 2026-08-09 (PR #34, reviewer-approved first round with each constraint
+derivation independently falsification-tested). Authoring guidance in `CRAWLDAD_DESIGN.md` §11.1 +
+save-time placement validation (`checkpoint_misplaced` / `checkpoint_not_unique`; only top-level
+`while` loops resume — `for`/`forEach` re-init their counters at entry). The fully-dynamic
+streaming stop path remains deferred (recorded in §11.1) awaiting the first non-LJCMG long-running
 workload.
