@@ -197,9 +197,12 @@ TTL, tenant partitioning); `Screenshotted` trace event + additive timeline `Scre
 sync fast-path inert. Element-scope (`sel`/`in`) and `fullPage` flag deferred alongside #9.
 
 ### [#9](https://github.com/jasoneisen/crawldad/issues/9) Structured `Sel` role/text/xpath
-**Status:** open. **Ref:** §5.2. `Sel` carries css + title today; the acceptance suite needs no
-more. Add role/text/xpath variants with parity coverage when a workload needs them (XPath is
-carried in the design, not gated on).
+**Status:** shipped 2026-08-09 (PR #35, reviewer-approved after a two-round loop — round 1 was a
+documentation-only required change plus two optional hardenings, all taken). `{role, name?}` /
+`{text}` / `{xpath}` via a shared `SelResolver` (every Sel consumer, no per-node code); role
+vocabulary save-time-validated (schema enum verified an exact match to Playwright `AriaRole`);
+union rules tightened to one root (`ambiguous_selector`) with the saved-payloads-still-run
+migration documented in §5.2. Fake parity over AngleSharp (+ AngleSharp.XPath, fake-only).
 
 ### [#10](https://github.com/jasoneisen/crawldad/issues/10) `loop.for.step` as a typed number
 **Status:** shipped 2026-08-08 (PR #32, reviewer-approved first round). All three `loop.for`
