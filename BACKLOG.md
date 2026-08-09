@@ -222,9 +222,18 @@ rejects bare non-integral literals at save. Non-numeric bounds (also 500s before
 same classification. Sibling `locate.nth` cast filed as #37.
 
 ### [#37](https://github.com/jasoneisen/crawldad/issues/37) Classify `locate.nth` non-integral failure
-**Status:** filed 2026-08-09 (sibling of #33, confirmed by implementer + reviewer). `nth`'s
-`(int)(long)` cast throws outside the catch filters for non-integral/non-numeric/out-of-int-range
-values → unhandled 500; no save-time check either. Fix analogous to #36 plus an int-range check.
+**Status:** shipped 2026-08-09 (PR #40, reviewer-approved first round with an independent cast
+sweep). Both nth sites (locate.from + structured Sel, the latter found by the implementer's sweep)
+route through shared `RequireNthIndex`: non-integers → `type_error`, out-of-`[0, int.MaxValue]` →
+`index_out_of_range` (checked before the int narrowing — silent truncation gone); negative nth
+rejected on empirically-confirmed backend divergence; save-time `CheckNth` on both surfaces.
+
+### [#41](https://github.com/jasoneisen/crawldad/issues/41) Classify `SelResolver` `(bool)first!` failure
+**Status:** filed 2026-08-09 (third sibling of #33/#37; found and reproduced by the #40 reviewer;
+pre-existing since Phase 1). A non-bool `first` in a structured Sel via the expression path throws
+`InvalidCastException` out of `RunAsync` → unhandled 500. Fix: `RequireBool`-style classified
+`type_error` + save-time literal check where cheap; widen the sweep beyond `(int)`/`(long)` to
+remaining raw unbox casts on expression results.
 
 ### [#38](https://github.com/jasoneisen/crawldad/issues/38) `SlotQueueTests` intermittent timing flakes
 **Status:** filed 2026-08-09 after the second poll-timeout flake in ~24 h (enqueue-nudge on a slow
