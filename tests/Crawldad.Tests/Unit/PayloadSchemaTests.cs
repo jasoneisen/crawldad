@@ -70,6 +70,23 @@ public class PayloadSchemaTests
         errors.ShouldContain(e => e.Path.StartsWith("/steps/0", StringComparison.Ordinal));
     }
 
+    [Theory]
+    // CD-10: loop.for from/to/step accept a typed JSON number as well as an Expr string. All-typed, a computed Expr `to`
+    // mixed with typed from/step, and a negative typed step all satisfy the number|string union.
+    [InlineData("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 5, "step": 2 }, "do": [] } } ]""")]
+    [InlineData("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "count(rows)", "step": 1 }, "do": [] } } ]""")]
+    [InlineData("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 5, "to": 0, "step": -1 }, "do": [] } } ]""")]
+    public void A_loop_with_typed_numeric_bounds_satisfies_the_schema(string steps) =>
+        PayloadSchema.Validate(Parse(Steps(steps))).ShouldBeEmpty();
+
+    [Fact]
+    public void A_loop_bound_that_is_neither_a_number_nor_a_string_fails_the_schema() // CD-10: the number|string union rejects a boolean step
+    {
+        var errors = PayloadSchema.Validate(Parse(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 5, "step": true }, "do": [] } } ]""")));
+        errors.ShouldNotBeEmpty();
+        errors.ShouldContain(e => e.Path.StartsWith("/steps/0", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void A_forEach_missing_max_iterations_fails_the_schema() =>
         PayloadSchema.Validate(Parse(Steps("""[ { "forEach": { "in": "['a']", "as": "x", "do": [] } } ]""")))

@@ -99,6 +99,18 @@ public class PayloadValidatorTests
     public void Screenshot_nodes_with_and_without_a_name_validate_clean() =>
         ValidateAll(Parse(Steps("""[ { "screenshot": {} }, { "screenshot": { "name": "shot-${input.tag}" } } ]"""))).ShouldBeEmpty();
 
+    // CD-10: loop.for from/to/step accept a typed JSON number as well as an Expr string. A numeric literal is checked
+    // through the same parser as its Expr spelling but has no free identifiers, so a loop mixing typed bounds with a
+    // computed Expr `to` (its `rows` reference in scope) validates clean.
+    [Fact]
+    public void Loop_for_with_typed_numeric_bounds_validates_clean() =>
+        ValidateAll(Parse(
+            """
+            { "crawldad": "1", "name": "typed", "config": { "backend": "input.backend" }, "vars": { "rows": [] },
+              "steps": [ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "count(rows)", "step": 2 }, "do": [] } } ],
+              "result": "null" }
+            """)).ShouldBeEmpty();
+
     private static string Steps(string steps) =>
         $$"""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend" }, "vars": {}, "steps": {{steps}}, "result": "null" }""";
 
@@ -117,6 +129,15 @@ public class PayloadValidatorTests
     {
         var issues = Semantic(Steps("""[ { "push": { "into": "notDefined", "value": "1" } } ]"""));
         issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/push/into");
+    }
+
+    // CD-10: a typed numeric `from` (which parses to a bare literal with nothing to resolve) must not suppress checking
+    // of a sibling Expr-string `to` — its undefined reference is still caught by the walker's string branch.
+    [Fact]
+    public void A_typed_numeric_from_still_checks_a_computed_expr_to()
+    {
+        var issues = Semantic(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "undefinedCount" }, "do": [] } } ]"""));
+        issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/loop/for/to");
     }
 
     [Fact]
