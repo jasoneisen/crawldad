@@ -211,10 +211,22 @@ parser as the string form, so `N` ≡ `"N"` by construction (verified with a 13-
 probe). Review surfaced pre-existing #33 (non-integral bound → unhandled 500), filed separately.
 
 ### [#33](https://github.com/jasoneisen/crawldad/issues/33) Classify non-integral `loop.for` bound failure
-**Status:** filed 2026-08-09 (pre-existing bug found during the #10 review; affects Expr and typed
-forms identically). A bound evaluating to a non-integer hits the `(long)` cast in `ForLoopAsync`
-outside the interpreter's catch filters → unhandled 500 instead of a classified terminal failure.
-Fix: save-time rejection where cheap and/or run-time classification per §8.3.
+**Status:** shipped 2026-08-09 (PR #36, reviewer-approved first round). Run-time
+`RequireIntegralBound` → terminal `type_error` (integral-valued doubles now coerce like
+`RequireIndex` — documented behavior change: `2.0` succeeds where it previously 500'd); walker
+rejects bare non-integral literals at save. Non-numeric bounds (also 500s before) folded into the
+same classification. Sibling `locate.nth` cast filed as #37.
+
+### [#37](https://github.com/jasoneisen/crawldad/issues/37) Classify `locate.nth` non-integral failure
+**Status:** filed 2026-08-09 (sibling of #33, confirmed by implementer + reviewer). `nth`'s
+`(int)(long)` cast throws outside the catch filters for non-integral/non-numeric/out-of-int-range
+values → unhandled 500; no save-time check either. Fix analogous to #36 plus an int-range check.
+
+### [#38](https://github.com/jasoneisen/crawldad/issues/38) `SlotQueueTests` intermittent timing flakes
+**Status:** filed 2026-08-09 after the second poll-timeout flake in ~24 h (enqueue-nudge on a slow
+CI runner; deadline-starts-at-execution locally under concurrent-agent load — different class from
+the #26 ObjectDisposedException flakes, which are fixed). Raise/adapt the 20–30 s poll windows
+after ruling out a real promotion slow path; done when 10 consecutive loaded runs are clean.
 
 ### [#11](https://github.com/jasoneisen/crawldad/issues/11) Honor `download.idempotencyKey`
 **Status:** resolved 2026-08-08 — REMOVED (PR #31, reviewer-approved first round). The field's own
