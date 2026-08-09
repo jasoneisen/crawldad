@@ -235,6 +235,14 @@ surfaces the rejection: that save-time reject is the intended migration path.
 - **derived from a handle:** `{ "locate": { "var": "row", "from": "rows", "nth": "i" } }` → `rows.Nth(i)`
   (also `first: true`, `filter: {hasTextRegex}`).
 
+`nth` (both the structured-`Sel` refinement and the `from`-handle form) must evaluate to a whole, non-negative
+0-based index — a `long`, or an integral-valued double (`2.0`), coerced exactly as an array index is. A non-integral
+value (`2.5`, or a computed `5.0/2`) is a terminal `type_error` (§8.3); a negative index — 0-based `nth` has no
+from-the-end meaning, and the backends diverge on it (the fake yields no match, Playwright's `Nth(-1)` counts from the
+end) — or one past `int.MaxValue` is a terminal `index_out_of_range`, exactly as an out-of-range collection `nth(x,i)`
+index is. A bare non-integral or out-of-range literal is rejected at save time with the same code (#37); a computed
+expression defers to the run-time check.
+
 Read-only DOM access from **expressions** goes through the enumerated builtins `count/exists/text/
 innerText/innerHtml/attr` (§7), which accept either a page-scoped selector string or a bound locator
 var, plus a relative form `text(baseVar, "css")`. That is the *only* page access an expression has

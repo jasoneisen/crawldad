@@ -183,6 +183,55 @@ public class RunInterpreterTests
             result: "acc", vars: """{ "acc": [] }"""))).ShouldBe([0, 1, 2]);
     }
 
+    // A from-handle locate.nth over a first-bound `rows` handle: the nth Expr is `nthExpr`. The refinement is lazy, so a
+    // classification failure surfaces at the second locate step (index 1) with no DOM touched.
+    private static async Task<RunFailureDetail> NthFromHandle(string nthExpr) =>
+        Fail(await Run($$"""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "{{nthExpr}}" } } ]"""));
+
+    // #37: a locate.nth that evaluates to a non-integer is a terminal type_error at run time — never the raw (int)(long)
+    // unbox that escaped LocateFromHandleAsync as an unhandled 500 (InvalidCastException for a double/string/bool,
+    // NullReferenceException for null — outside the retry layer's catch filters). Covers a literal 2.5, a COMPUTED
+    // non-integral double (5.0/2), a computed +Infinity (1.0/0.0), and the non-numbers string/null/bool; and the
+    // structured-Sel nth (SelResolver, via a node selector) routes through the same RequireNthIndex, so it classifies
+    // identically (a click never happens — the refinement throws first).
+    [Fact]
+    public async Task Locate_nth_non_integral_or_non_numeric_is_a_terminal_type_error()
+    {
+        (await NthFromHandle("2.5")).Code.ShouldBe(ExpressionErrorCodes.TypeError);
+        (await NthFromHandle("5.0 / 2")).Code.ShouldBe(ExpressionErrorCodes.TypeError);   // computed non-integral
+        (await NthFromHandle("1.0 / 0.0")).Code.ShouldBe(ExpressionErrorCodes.TypeError); // +Infinity, never an integer
+        (await NthFromHandle("'nope'")).Code.ShouldBe(ExpressionErrorCodes.TypeError);    // string
+        (await NthFromHandle("null")).Code.ShouldBe(ExpressionErrorCodes.TypeError);      // null (was a NullReferenceException)
+        (await NthFromHandle("true")).Code.ShouldBe(ExpressionErrorCodes.TypeError);      // bool
+
+        Fail(await Run("""[ { "click": { "selector": { "css": "tr", "nth": "2.5" } } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError); // structured Sel nth, same helper
+    }
+
+    // #37: a type-correct integer OUTSIDE the valid 0-based 32-bit range is a terminal index_out_of_range — a negative
+    // index (the backends diverge: the fake yields no match, Playwright's Nth(-1) is the last, so it is rejected before
+    // reaching either) or one past int.MaxValue (the (int) narrowing would otherwise silently truncate to a garbage
+    // index). This mirrors how an out-of-range collection nth(x,i) index classifies. Both nth surfaces reach it.
+    [Fact]
+    public async Task Locate_nth_negative_or_out_of_int_range_is_a_terminal_index_out_of_range()
+    {
+        (await NthFromHandle("-1")).Code.ShouldBe(ExpressionErrorCodes.IndexOutOfRange);
+        (await NthFromHandle("3000000000")).Code.ShouldBe(ExpressionErrorCodes.IndexOutOfRange); // > int.MaxValue
+
+        Fail(await Run("""[ { "click": { "selector": { "css": "tr", "nth": "-1" } } } ]"""))
+            .Code.ShouldBe(ExpressionErrorCodes.IndexOutOfRange); // structured Sel nth, same helper
+    }
+
+    // #37: an integral-VALUED double nth (6.0/2 == 3.0, or a bare 3) coerces to the int the .Nth refinement takes,
+    // exactly as a long would — so the locate SUCCEEDS just as `nth: "3"` does. Only a fractional/negative/out-of-range
+    // value rejects; the fix does not over-reject a whole-valued double.
+    [Fact]
+    public async Task Locate_nth_integral_double_is_accepted_and_coerced()
+    {
+        Ok(await Run("""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "6.0 / 2" } } ]"""));
+        Ok(await Run("""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "3" } } ]"""));
+    }
+
     [Fact]
     public async Task ForEach_over_an_array_with_index_and_continue_and_break()
     {

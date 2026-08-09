@@ -211,6 +211,46 @@ internal static class ExpressionValues
     };
 
     /// <summary>
+    /// Coerces <paramref name="value"/> to the non-negative 32-bit index a lazy DOM <c>locator.Nth</c> refinement takes
+    /// (§5.2 <c>nth</c>) — the DOM counterpart of the collection <c>nth(array, i)</c> index, classified with the same
+    /// taxonomy. Accepts a <see cref="long"/> or an integral-valued <see cref="double"/> (<c>2.0</c> → <c>2</c>, exactly
+    /// as <see cref="RequireIndex"/> coerces an array index) that fits <c>[0, int.MaxValue]</c>; anything else is a
+    /// terminal failure — never the raw <c>(int)(long)</c> unbox the <c>nth</c> call sites used to do, which escaped the
+    /// interpreter's retry/catch layer as an unhandled 500 (<see cref="InvalidCastException"/> for a double/string/bool,
+    /// <see cref="NullReferenceException"/> for null) or, in an unchecked context, silently truncated an
+    /// out-of-<see cref="int"/>-range value to a garbage index (#37):
+    /// <list type="bullet">
+    /// <item>a NON-INTEGER — a fractional/infinite double (<c>2.5</c>, <c>5.0/2</c>, <c>1.0/0.0</c>), or a non-number
+    /// (<c>string</c>/<c>bool</c>/<c>null</c>/array/map/handle) from a computed Expr — is a <c>type_error</c> (the value
+    /// named when numeric, the type otherwise, matching the evaluator's own type-error messages);</item>
+    /// <item>a type-correct integer OUTSIDE <c>[0, int.MaxValue]</c> is an <c>index_out_of_range</c>, exactly as an
+    /// out-of-range collection <c>nth</c> index is: a NEGATIVE index has no 0-based meaning and the backends diverge on
+    /// it (the fake yields no match, Playwright's <c>Nth(-1)</c> counts from the end), and a value past
+    /// <c>int.MaxValue</c> cannot be an <c>ILocatorHandle.Nth</c> argument.</item>
+    /// </list>
+    /// </summary>
+    /// <param name="value">The evaluated <c>nth</c> expression result.</param>
+    /// <returns>The index as a non-negative <see cref="int"/> in <c>[0, int.MaxValue]</c>.</returns>
+    /// <exception cref="ExpressionEvaluationException">A non-integer (<c>type_error</c>), or an out-of-range integer
+    /// (<c>index_out_of_range</c>).</exception>
+    public static int RequireNthIndex(object? value)
+    {
+        var index = value switch
+        {
+            long l => l,
+            double d when !double.IsInfinity(d) && d == Math.Floor(d) => (long)d,
+            double => throw TypeError($"nth must be an integer, got {ToStringValue(value)}"),
+            _ => throw TypeError($"nth must be an integer, got {TypeName(value)}"),
+        };
+
+        return index is >= 0 and <= int.MaxValue
+            ? (int)index
+            : throw new ExpressionEvaluationException(
+                ExpressionErrorCodes.IndexOutOfRange,
+                $"nth index {index} is out of range: a 0-based locator index must be between 0 and {int.MaxValue}");
+    }
+
+    /// <summary>
     /// Value-model scalar equality for <c>distinct</c> dedup: the same notion as <c>==</c> (null-safe, numeric across
     /// int/double, ordinal string, bool), so <c>1</c> and <c>1.0</c> dedup as equal. Numbers hash through
     /// <see cref="double"/> so equal numbers share a bucket; a hash collision on two distinct large integers stays

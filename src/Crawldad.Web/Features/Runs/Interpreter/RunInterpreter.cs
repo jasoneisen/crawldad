@@ -662,7 +662,9 @@ internal sealed class RunInterpreter
 
         if (body.TryGetProperty("nth", out var nth))
         {
-            handle = handle.Nth((int)(long)(await ExprAsync(nth, ct))!);
+            // #37: classify a non-integral/non-numeric/out-of-range nth (terminal type_error / index_out_of_range),
+            // never the raw (int)(long) unbox that escaped the retry layer as a 500 (or silently truncated a > int value).
+            handle = handle.Nth(ExpressionValues.RequireNthIndex(await ExprAsync(nth, ct)));
         }
 
         if (body.TryGetProperty("first", out var first) && first.GetBoolean())

@@ -62,7 +62,9 @@ internal sealed class SelResolver(RunScope scope)
 
         if (map.TryGetValue("nth", out var nth))
         {
-            handle = handle.Nth((int)(long)nth!);
+            // #37: the sibling of the locate.from nth cast — a structured Sel nth is an already-evaluated Expr result, so
+            // it classifies through the same RequireNthIndex (terminal type_error / index_out_of_range), never a raw unbox.
+            handle = handle.Nth(ExpressionValues.RequireNthIndex(nth));
         }
 
         // `first` is always a bool when present (from an object literal or GetBoolean); the direct unbox avoids a

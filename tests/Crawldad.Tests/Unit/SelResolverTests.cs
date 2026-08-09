@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs.Interpreter;
+using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Unit;
@@ -60,6 +61,49 @@ public class SelResolverTests
         (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("first", true))).CountAsync(CapHome.Ct)).ShouldBe(1);
         (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("first", false))).CountAsync(CapHome.Ct)).ShouldBe(15); // first:false ignored
         (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("filter", Map(("hasTextRegex", "Void"))))).CountAsync(CapHome.Ct)).ShouldBe(1);
+    }
+
+    // #37: a structured Sel nth is an already-evaluated Expr result narrowed by .Nth — a non-integer (a fractional
+    // double, or a non-number string/null/bool from a computed Expr) is a terminal type_error, never the raw (int)(long)
+    // unbox that escaped ResolveMap as an unhandled 500 (InvalidCastException / NullReferenceException). This is the
+    // sibling of the from-handle nth cast, and classifies through the same ExpressionValues.RequireNthIndex.
+    [Fact]
+    public async Task ResolveMap_nth_non_integral_or_non_numeric_is_a_terminal_type_error()
+    {
+        var scope = await ScopeAsync();
+
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", 2.5))))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // fractional double
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", "x"))))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // string
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", null))))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // null
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", true))))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // bool
+    }
+
+    // #37: a type-correct integer outside the valid 0-based 32-bit range is index_out_of_range — a negative index (the
+    // backends diverge: the fake yields no match, Playwright counts from the end) or one past int.MaxValue.
+    [Fact]
+    public async Task ResolveMap_nth_negative_or_out_of_range_is_index_out_of_range()
+    {
+        var scope = await ScopeAsync();
+
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", -1L))))
+            .Code.ShouldBe(ExpressionErrorCodes.IndexOutOfRange);
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", 3_000_000_000L))))
+            .Code.ShouldBe(ExpressionErrorCodes.IndexOutOfRange); // > int.MaxValue
+    }
+
+    // #37: an integral-VALUED double nth coerces to the same index a long does (3.0 ≡ 3L), so it narrows identically —
+    // the accepted-domain coercion parity the fix preserves on the fake (real≡fake for the accepted 0-based domain).
+    [Fact]
+    public async Task ResolveMap_nth_integral_double_coerces_like_a_long()
+    {
+        var scope = await ScopeAsync();
+
+        (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", 3.0))).CountAsync(CapHome.Ct)).ShouldBe(1);
+        (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", 3L))).CountAsync(CapHome.Ct)).ShouldBe(1);
     }
 
     [Fact]
