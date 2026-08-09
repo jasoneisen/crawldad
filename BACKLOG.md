@@ -202,8 +202,16 @@ more. Add role/text/xpath variants with parity coverage when a workload needs th
 carried in the design, not gated on).
 
 ### [#10](https://github.com/jasoneisen/crawldad/issues/10) `loop.for.step` as a typed number
-**Status:** open (minor). `step` is an Expr string today; accept a JSON number, keep the Expr form
-for computed steps.
+**Status:** shipped 2026-08-08 (PR #32, reviewer-approved first round). All three `loop.for`
+bounds (`from`/`to`/`step`) accept JSON numbers; the raw text routes through the same expression
+parser as the string form, so `N` ≡ `"N"` by construction (verified with a 13-case equivalence
+probe). Review surfaced pre-existing #33 (non-integral bound → unhandled 500), filed separately.
+
+### [#33](https://github.com/jasoneisen/crawldad/issues/33) Classify non-integral `loop.for` bound failure
+**Status:** filed 2026-08-09 (pre-existing bug found during the #10 review; affects Expr and typed
+forms identically). A bound evaluating to a non-integer hits the `(long)` cast in `ForLoopAsync`
+outside the interpreter's catch filters → unhandled 500 instead of a classified terminal failure.
+Fix: save-time rejection where cheap and/or run-time classification per §8.3.
 
 ### [#11](https://github.com/jasoneisen/crawldad/issues/11) Honor `download.idempotencyKey`
 **Status:** resolved 2026-08-08 — REMOVED (PR #31, reviewer-approved first round). The field's own
