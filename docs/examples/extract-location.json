@@ -1,0 +1,44 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.scrape.location",
+  "inputs": {
+    "backend": { "type": "backend", "required": true },
+    "link":    { "type": "string",  "required": true }
+  },
+  "config": { "backend": "input.backend", "defaultTimeoutMs": 120000 },
+  "vars": { "locations": [] },
+  "steps": [
+    { "goto": { "url": "${input.link}" } },
+    { "waitForLoadState": { "state": "load" } },
+    { "guard": { "cond": "contains(lower(pageUrl()), 'capdetail.aspx')",
+        "elseFail": { "class": "terminal", "code": "record_not_accessible",
+                      "message": "Record not accessible (redirected to ${urlPath(pageUrl())}): ${input.link}" } } },
+
+    { "comment": "===== LOCATION (:229-268) =====" },
+    { "if": { "cond": "count('#tbl_worklocation') > 0", "then": [
+      { "locate": { "var": "addrRows", "selector": "#tbl_worklocation tr:first-child, #tbl_worklocation tr[tips='tr_additional_locations']" } },
+      { "forEach": { "in": "addrRows", "as": "addressRow", "maxIterations": 100000, "do": [
+        { "locate": { "var": "addressBlock", "base": "addressRow", "selector": "td:nth-child(2)" } },
+        { "set": { "var": "html",         "value": "innerHtml(addressBlock)" } },
+        { "set": { "var": "addressLines", "value": "length(split(html, '<br>'))" } },
+        { "set": { "var": "address1",     "value": "trim(replace(coalesce(text(addressBlock,'span:first-child'),''), '*', ''))" } },
+        { "set": { "var": "address2",     "value": "''" } },
+        { "set": { "var": "cityStateZip", "value": "''" } },
+        { "switch": { "cases": [
+            { "when": "addressLines == 3", "do": [
+                { "set": { "var": "cityStateZip", "value": "split(split(trim(html),'<br>')[1], '<span')[0]" } } ] },
+            { "when": "addressLines == 4", "do": [
+                { "set": { "var": "address2",     "value": "split(trim(html),'<br>')[1]" } },
+                { "set": { "var": "cityStateZip", "value": "split(split(trim(html),'<br>')[2], '<span')[0]" } } ] },
+            { "when": "addressLines == 5", "do": [
+                { "set": { "var": "address2",     "value": "split(trim(html),'<br>')[1]" } },
+                { "set": { "var": "cityStateZip", "value": "split(trim(html),'<br>')[2]" } } ] }
+          ], "default": [
+            { "log": { "level": "warning", "message": "Exceptional location address lines (${addressLines}): ${input.link}" } }
+          ] } },
+        { "push": { "into": "locations", "value": "{ address1: trim(address1), address2: trim(address2), cityStateZip: trim(cityStateZip) }" } }
+      ] } }
+    ] } }
+  ],
+  "result": "{ locations: locations }"
+}

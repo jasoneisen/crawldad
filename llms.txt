@@ -1,0 +1,33 @@
+# Crawldad
+
+> Crawldad runs one JSON "payload" — a small, JSON-Schema'd browser-automation DSL — against a headless
+> browser and returns a caller-shaped result. The whole product is unusually machine-describable: a typed
+> payload language plus a small HTTP surface, so an LLM can author a payload and drive a run from these
+> files alone.
+
+A payload is one JSON document (`crawldad`/`name`/`inputs`/`config`/`vars`/`steps`/`result`). Only leaf
+expressions are strings in a small, pure, non-Turing-complete expression language; all structure is JSON.
+Every payload is validated against the JSON Schema at save time, so a schema-valid payload has a bounded,
+inspectable effect surface. Authenticate every request with `Authorization: Bearer <api-key>` or
+`X-Api-Key: <api-key>`.
+
+## Docs
+
+- [API reference](docs/API.md): the single, self-contained consumer reference — auth, the run lifecycle in all three shapes (sync result / async 202 / queued 202 + promotion), `GET /runs/{id}`, SSE, cancel, replay, payload CRUD/revisions/diff, queue stats, and the complete wire-code table with the config knob behind every limit. Read this top-to-bottom to author a payload and drive a run.
+- [Payload JSON Schema](schema/crawldad-1.schema.json): the normative DSL reference — every node and field carries a `description`. Served live and anonymously at `GET /schema/crawldad-1.schema.json` (media type `application/schema+json`); usable directly as an editor `$schema` target.
+
+## Examples
+
+Curated, schema-valid payloads (each validated in CI against the schema). Commentary for each is in the API reference's Examples section.
+
+- [first-search.json](docs/examples/first-search.json): the gentle intro — navigate, conditional `fill`, `waitForRequest` postback, `locate` + a `for` loop, extract rows.
+- [extract-location.json](docs/examples/extract-location.json): the expression language at work — `guard`, `forEach`, and a `switch` over an address block's `<br>` count.
+- [download-attachment.json](docs/examples/download-attachment.json): the `download` node streaming to a `storageTarget`, with content-addressed `stored:true` dedup.
+- [login-and-search.json](docs/examples/login-and-search.json): the newer surface — `fill.secret` (a vault-resolved credential), a `screenshot` node, structured role/text/xpath selectors, and a checkpointed `while` loop that resumes after a restart.
+- [search-pagination.json](docs/examples/search-pagination.json): a full checkpointed pagination crawl (`while` do-loop, `checkpoint`/`resume`, nested `for` loops, `break`, result shaping).
+- [scrape-record.json](docs/examples/scrape-record.json): the comprehensive end-to-end scrape — `guard`, `frame`, `switch`, `download`, and deeply nested loops building one nested result object.
+
+## Optional
+
+- [Design & requirements](CRAWLDAD_DESIGN.md): the full normative design (§4-§14) behind the schema and the API — deeper than the consumer reference.
+- [Security model](SECURITY.md): credential scrubbing, credentials-by-reference (`secretRef`), tenant isolation, and PII handling.

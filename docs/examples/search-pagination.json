@@ -1,0 +1,100 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.search",
+  "inputs": {
+    "backend":            { "type": "backend",  "required": true },
+    "startDate":          { "type": "string",   "required": false },
+    "endDate":            { "type": "string",   "required": false },
+    "knownUrls":          { "type": "array",    "default": [] },
+    "priorCrawlComplete": { "type": "boolean",  "default": false }
+  },
+  "config": {
+    "backend": "input.backend",
+    "defaultTimeoutMs": 120000,
+    "launch":  { "args": ["--disable-web-security"] },
+    "context": { "bypassCsp": true },
+    "route": {
+      "blockHosts": ["www.datadoghq-browser-agent.com","cdn.walkme.com","cdn.gtranslate.net",
+                     "csp-report.browser-intake-datadoghq.com","ec.walkme.com",
+                     "rum.browser-intake-datadoghq.com","connect.facebook.net","fonts.googleapis.com"],
+      "blockResourceTypes": ["image","media","font"],
+      "cacheResourceTypes": ["stylesheet","script"],
+      "cacheUrlSuffixes":   [".html",".js"],
+      "throttle": { "minIntervalMs": 2000 }
+    },
+    "retry": { "maxAttempts": 15, "delayMs": 5000, "backoff": "constant",
+               "retryOn": ["timeout","pageCrashed"], "onPageCrashed": "reopenPage" }
+  },
+  "vars": { "pages": [], "newLinks": [], "crawledToEnd": "input.priorCrawlComplete", "hasMorePages": false },
+  "steps": [
+    { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement" } },
+    { "waitForLoadState": { "state": "networkidle" } },
+
+    { "if": { "cond": "!isNullOrWhitespace(input.startDate)", "then": [
+        { "click": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate" } },
+        { "clear": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate" } },
+        { "fill":  { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate", "value": "input.startDate" } }
+    ] } },
+    { "if": { "cond": "!isNullOrWhitespace(input.endDate)", "then": [
+        { "click": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate" } },
+        { "clear": { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate" } },
+        { "fill":  { "selector": "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate", "value": "input.endDate" } }
+    ] } },
+
+    { "waitForRequest": {
+        "urlPrefix": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST",
+        "trigger": [ { "click": { "selector": "#ctl00_PlaceHolderMain_btnNewSearch" } } ] } },
+    { "waitFor": { "selector": "#divGlobalLoading", "state": "hidden" } },
+
+    { "loop": { "maxIterations": 100000, "while": "hasMorePages", "do": [
+
+        { "comment": "CHECKPOINT (§11) — durably record the page cursor at the top of each page. On resume the fresh session re-navigates to resumeUrl (skipping the initial search + earlier pages), then the loop continues from here." },
+        { "checkpoint": { "name": "searchPage",
+            "cursor": "{ resumeUrl: pageUrl(), page: count(pages) + 1 }",
+            "resume": [
+              { "goto": { "url": "${checkpoint.resumeUrl}" } },
+              { "waitForLoadState": { "state": "networkidle" } }
+            ] } },
+
+        { "set": { "var": "pageResults", "value": "[]" } },
+        { "locate": { "var": "rows", "selector": "#ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList tr" } },
+
+        { "comment": "for (i=3; i < count-2; i++)  — skip 3 header rows and 2 footer rows (:127)" },
+        { "loop": { "maxIterations": 100000,
+            "for": { "var": "i", "from": "3", "to": "count(rows) - 2", "exclusiveTo": true },
+            "do": [
+              { "locate": { "var": "row", "from": "rows", "nth": "i" } },
+              { "push": { "into": "pageResults", "value":
+                "{ url: '' + urlScheme(pageUrl()) + '://' + urlHost(pageUrl()) + trim(coalesce(attr(row,'td:nth-child(3) a','href'),'')), data: { date: trim(coalesce(text(row,'td:nth-child(2)'),'')), recordNumber: trim(coalesce(text(row,'td:nth-child(3) a'),'')), recordType: trim(coalesce(text(row,'td:nth-child(4)'),'')), address: trim(coalesce(text(row,'td:nth-child(5)'),'')), status: trim(coalesce(text(row,'td:nth-child(6)'),'')), shortNotes: trim(coalesce(text(row,'td:nth-child(7)'),'')) } }" } }
+            ] } },
+
+        { "set": { "var": "hasMorePages", "value": "count('table.aca_pagination td:last-child a') > 0" } },
+        { "if": { "cond": "!hasMorePages", "then": [ { "set": { "var": "crawledToEnd", "value": "true" } } ] } },
+
+        { "comment": "goToNextPageCallback reproduced (HistoricalCrawler:85-104):" },
+        { "comment": "  empty page => stop" },
+        { "break": { "when": "count(pageResults) == 0" } },
+
+        { "comment": "  accumulate new links, stop scanning at the first already-known url" },
+        { "set": { "var": "hitKnown", "value": "false" } },
+        { "loop": { "maxIterations": 100000,
+            "for": { "var": "j", "from": "0", "to": "count(pageResults)", "exclusiveTo": true },
+            "do": [
+              { "if": { "cond": "any(input.knownUrls, u, u == pageResults[j].url)",
+                  "then": [ { "set": { "var": "hitKnown", "value": "true" } }, { "break": {} } ],
+                  "else": [ { "push": { "into": "newLinks", "value": "pageResults[j].url" } } ] } }
+            ] } },
+        { "push": { "into": "pages", "value": "pageResults" } },
+
+        { "comment": "  shouldContinue = hitKnown ? !crawledToEnd : hasMorePages ; break when false" },
+        { "break": { "when": "hitKnown ? crawledToEnd : !hasMorePages" } },
+
+        { "comment": "  else click next + wait postback + overlay hidden (:158-164)" },
+        { "waitForRequest": {
+            "urlPrefix": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST",
+            "trigger": [ { "click": { "selector": "table.aca_pagination td:last-child a" } } ] } },
+        { "waitFor": { "selector": "#divGlobalLoading", "state": "hidden" } }
+    ] } }
+  ],
+  "result": "{ newLinks: distinct(newLinks), crawledToEnd: crawledToEnd, pages: pages }"
+}
