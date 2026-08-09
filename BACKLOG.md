@@ -137,8 +137,12 @@ deadline-at-execution, and crash/restart with a non-empty queue (queued runs sur
 order); queue position visible via GET + SSE; p95 queue wait observable.
 
 ### [#20](https://github.com/jasoneisen/crawldad/issues/20) Docs MVP: API.md + published payload schema + curated examples + llms.txt
-**Status:** approved 2026-08-08. **Ref:** `schema/crawldad-1.schema.json`, acceptance fixtures
-under `tests/Crawldad.Tests/Fixtures/Payloads/`, SECURITY.md.
+**Status:** shipped 2026-08-09 (PR #39, reviewer-approved first round — 20+ API.md claims audited
+against the contracts, schema reformat proven semantics-preserving, drift gate mutation-tested).
+`docs/API.md`; schema served anonymously at `/schema/crawldad-1.schema.json` with descriptions on
+every node; six validated `docs/examples/`; `llms.txt` committed + served; `DocsDriftTests`
+validates every documented payload through the full save-time gate and reflection-checks the
+wire-code table. **Ref:** `schema/crawldad-1.schema.json`, acceptance fixtures, SECURITY.md.
 MVP documentation for users **and LLMs**, as plain self-contained artifacts rather than a docs
 site: (1) a single hand-written `docs/API.md` — auth, the run lifecycle in all three shapes (sync
 result / async 202 / queued 202 + promotion), SSE, cancel, replay, payload CRUD/revisions/diff,
