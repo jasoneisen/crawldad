@@ -69,6 +69,16 @@ internal static class InterpreterErrorCodes
     /// <summary>Run-time (CD-6): the vault held no secret for the run's (tenant-scoped) reference — a fail-fast at the <c>fill</c>,
     /// naming only the (safe) reference, never the secret.</summary>
     public const string SecretUnresolved = "secret_unresolved";
+
+    /// <summary>Save-time (§11): a <c>checkpoint</c> node is placed where the resume machinery cannot re-enter it — outside any
+    /// loop, inside a nested loop, inside a <c>for</c>/<c>forEach</c> (whose counter re-initialises on resume), below a
+    /// top-level step, or inside a <c>resume</c>/<c>trigger</c> sub-program. Resume re-enters only at a top-level step and
+    /// restores a single cursor, so only a checkpoint heading a top-level <c>while</c> loop is representable.</summary>
+    public const string CheckpointMisplaced = "checkpoint_misplaced";
+
+    /// <summary>Save-time (§11): more than one <c>checkpoint</c> appears under a single top-level loop. Resume restores one
+    /// stored checkpoint (cursor + var snapshot) and re-enters at the first checkpoint reached, so a second is unrepresentable.</summary>
+    public const string CheckpointNotUnique = "checkpoint_not_unique";
 }
 
 /// <summary>

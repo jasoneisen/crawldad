@@ -12,7 +12,9 @@ namespace Crawldad.Web.Features.Runs.Interpreter;
 /// targets and declared <c>vars</c>) accrue and persist (the flat run scope, §8.2); loop/binding variables are scoped
 /// to their body. <c>input</c> is always in scope; its sub-keys are not checked (an absent input key is null at run
 /// time, not a failure). Bare-string node selectors are var-first at run time, so they are treated as templates and
-/// their (non-interpolated) text is not resolved as a reference — matching run-time leniency.
+/// their (non-interpolated) text is not resolved as a reference — matching run-time leniency. It also (c) enforces the
+/// §11 checkpoint-placement rules the resume machinery can honour — a <c>checkpoint</c> must head a single, top-level
+/// <c>while</c> loop and be the only one there — rejecting anything the top-level-step cursor model cannot re-enter.
 /// </summary>
 internal sealed class SemanticWalker
 {
@@ -21,6 +23,25 @@ internal sealed class SemanticWalker
     private IReadOnlySet<string> _secretRefInputs = new HashSet<string>(StringComparer.Ordinal);
     private int _stepIndex = -1;
     private string _stepKind = "";
+
+    // ----- checkpoint-placement context (§11) --------------------------------
+    // The number of loops (loop/forEach) enclosing the current node, counted through normal control blocks only.
+    private int _loopDepth;
+
+    // Classification of the OUTERMOST enclosing loop (meaningful when _loopDepth >= 1): whether it is a `while`-form
+    // `loop`, and whether it is a direct top-level step. A checkpoint is resumable only under a top-level `while` loop.
+    private bool _outermostLoopIsWhile;
+    private bool _outermostLoopIsTopLevel;
+
+    // Whether the current node is inside a re-established sub-program (a checkpoint `resume` or an action `trigger`),
+    // where a checkpoint may never appear — those blocks re-run on resume and persist no checkpoint of their own.
+    private bool _inReestablishBlock;
+
+    // Whether the current node is a direct top-level step (a member of `steps`), not nested inside any block.
+    private bool _atTopLevel;
+
+    // Checkpoints already seen in the current top-level step — the resume unit permits at most one (reset per step).
+    private int _checkpointsInStep;
 
     public SemanticWalker(List<PayloadIssue> issues) => _issues = issues;
 
@@ -55,6 +76,8 @@ internal sealed class SemanticWalker
         foreach (var step in payload.GetProperty("steps").EnumerateArray())
         {
             _stepIndex = index;
+            _checkpointsInStep = 0; // §11: at most one checkpoint per top-level step (the resume unit)
+            _atTopLevel = true; // a direct member of `steps`; WalkBlock clears this as it descends
             WalkNode(step, $"/steps/{index}");
             index++;
         }
@@ -127,7 +150,7 @@ internal sealed class SemanticWalker
                 break; // only an enum state + optional timeout.
             case "waitForRequest":
                 CheckTmpl(body.GetProperty("urlPrefix").GetString()!, $"{p}/urlPrefix");
-                WalkBlock(body.GetProperty("trigger"), $"{p}/trigger");
+                WalkReestablishBlock(body.GetProperty("trigger"), $"{p}/trigger");
                 break;
             case "waitFor":
                 CheckSel(body.GetProperty("selector"), $"{p}/selector");
@@ -183,7 +206,7 @@ internal sealed class SemanticWalker
                 break;
             case "download":
                 CheckExpr(body.GetProperty("to").GetString()!, $"{p}/to");
-                WalkBlock(body.GetProperty("trigger"), $"{p}/trigger");
+                WalkReestablishBlock(body.GetProperty("trigger"), $"{p}/trigger");
                 Define(body);
                 break;
             case "set":
@@ -292,7 +315,9 @@ internal sealed class SemanticWalker
 
     private void WalkLoop(JsonElement body, string p)
     {
-        if (body.TryGetProperty("for", out var forSpec))
+        var isWhileForm = !body.TryGetProperty("for", out var forSpec);
+        var loop = EnterLoop(isWhileForm); // §11: classify this loop as a checkpoint host (top-level while) or not
+        if (!isWhileForm)
         {
             CheckBound(forSpec.GetProperty("from"), $"{p}/for/from");
             if (forSpec.TryGetProperty("step", out var step))
@@ -311,41 +336,121 @@ internal sealed class SemanticWalker
             WalkBlock(body.GetProperty("do"), $"{p}/do");
             CheckExpr(body.GetProperty("while").GetString()!, $"{p}/while");
         }
+
+        ExitLoop(loop);
     }
 
     // checkpoint (§11): the cursor Expr resolves against the current scope; the resume sub-program runs only on resume
     // with the restored cursor bound to the `checkpoint` var, so that name is in scope for the resume block alone.
     private void WalkCheckpoint(JsonElement body, string p)
     {
+        ValidateCheckpointPlacement(p);
         CheckExpr(body.GetProperty("cursor").GetString()!, $"{p}/cursor");
         if (body.TryGetProperty("resume", out var resume))
         {
             var added = EnterScope(RunInterpreter.CheckpointCursorVar);
-            WalkBlock(resume, $"{p}/resume");
+            WalkReestablishBlock(resume, $"{p}/resume"); // a nested checkpoint here would be re-run on resume — reject it
             ExitScope(added);
         }
     }
+
+    // The §11 placement rules the resume machinery can actually honour, derived from the interpreter: resume re-enters at
+    // the checkpoint's enclosing TOP-LEVEL step (RunInterpreter._currentStepIndex only tracks the top level), re-runs it
+    // against a fresh session, restores ONE stored cursor + var snapshot, and the FIRST checkpoint reached consumes the
+    // resume. So a checkpoint is resumable only when it heads a single, top-level `while` loop and is the only checkpoint
+    // in that step. A `for`/`forEach` re-initialises its counter from `from`/`in` at entry (RunScope.Shadow overwrites any
+    // restored value), so its iteration cannot be resumed; a nested/second loop or a loop below a top-level step cannot be
+    // re-entered directly; and a `resume`/`trigger` sub-program persists no checkpoint of its own.
+    private void ValidateCheckpointPlacement(string p)
+    {
+        _checkpointsInStep++;
+        if (_inReestablishBlock)
+        {
+            Misplaced(p, "a checkpoint may not appear inside a resume or trigger sub-program — those re-run on resume and record no checkpoint of their own");
+        }
+        else if (_loopDepth == 0)
+        {
+            Misplaced(p, "a checkpoint must sit inside a top-level while loop — it heads no loop here, so there is no iteration to resume");
+        }
+        else if (_loopDepth > 1)
+        {
+            Misplaced(p, "a checkpoint may not sit inside a nested loop — resume re-enters only at the top-level step, so an inner loop's position cannot be restored");
+        }
+        else if (!_outermostLoopIsWhile)
+        {
+            Misplaced(p, "a checkpoint's loop must be a while loop — a for/forEach re-initialises its counter on resume, so its iteration cannot be resumed");
+        }
+        else if (!_outermostLoopIsTopLevel)
+        {
+            Misplaced(p, "a checkpoint's while loop must be a top-level step — resume re-enters at the top level, so a loop nested below it cannot be re-entered directly");
+        }
+        else if (_checkpointsInStep > 1)
+        {
+            _issues.Add(new PayloadIssue(
+                p, InterpreterErrorCodes.CheckpointNotUnique,
+                "at most one checkpoint may appear per top-level loop — resume restores a single cursor and re-enters at the first checkpoint reached", _stepIndex, _stepKind));
+        }
+    }
+
+    private void Misplaced(string path, string message) =>
+        _issues.Add(new PayloadIssue(path, InterpreterErrorCodes.CheckpointMisplaced, message, _stepIndex, _stepKind));
 
     private void WalkForEach(JsonElement body, string p)
     {
         CheckExpr(body.GetProperty("in").GetString()!, $"{p}/in");
 
+        var loop = EnterLoop(isWhileForm: false); // §11: forEach re-iterates from index 0 on resume — never a checkpoint host
         var added = body.TryGetProperty("index", out var index)
             ? EnterScope(body.GetProperty("as").GetString()!, index.GetString()!)
             : EnterScope(body.GetProperty("as").GetString()!);
         WalkBlock(body.GetProperty("do"), $"{p}/do");
         ExitScope(added);
+        ExitLoop(loop);
     }
 
     private void WalkBlock(JsonElement block, string path)
     {
+        var savedTopLevel = _atTopLevel;
+        _atTopLevel = false; // any node inside a block is nested, not a direct top-level step
         var index = 0;
         foreach (var node in block.EnumerateArray())
         {
             WalkNode(node, $"{path}/{index}");
             index++;
         }
+
+        _atTopLevel = savedTopLevel;
     }
+
+    // A re-established sub-program (a checkpoint `resume` or an action `trigger`): walked like any block, but a checkpoint
+    // inside it is rejected (§11) — the block re-runs on resume and records no checkpoint of its own.
+    private void WalkReestablishBlock(JsonElement block, string path)
+    {
+        var saved = _inReestablishBlock;
+        _inReestablishBlock = true;
+        WalkBlock(block, path);
+        _inReestablishBlock = saved;
+    }
+
+    // ----- checkpoint-placement tracking (§11) -------------------------------
+
+    // Records entry into a loop for checkpoint-placement tracking: classifies the OUTERMOST enclosing loop as a checkpoint
+    // host (a top-level-step `while` loop) and deepens the nesting. Returns the prior context to restore on exit.
+    private (int Depth, bool While, bool TopLevel) EnterLoop(bool isWhileForm)
+    {
+        var saved = (_loopDepth, _outermostLoopIsWhile, _outermostLoopIsTopLevel);
+        if (_loopDepth == 0)
+        {
+            _outermostLoopIsWhile = isWhileForm;
+            _outermostLoopIsTopLevel = _atTopLevel;
+        }
+
+        _loopDepth++;
+        return saved;
+    }
+
+    private void ExitLoop((int Depth, bool While, bool TopLevel) saved) =>
+        (_loopDepth, _outermostLoopIsWhile, _outermostLoopIsTopLevel) = saved;
 
     // ----- leaf checks -------------------------------------------------------
 
