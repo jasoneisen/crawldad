@@ -21,16 +21,16 @@
     { "goto": { "url": "https://example.gov/portal/login" } },
     { "waitForLoadState": { "state": "networkidle" } },
 
-    { "comment": "Structured selectors (#9): address the login form by ARIA role + accessible name, not brittle ids." },
+    { "comment": "Structured selectors: address the login form by ARIA role + accessible name, not brittle ids." },
     { "fill": { "selector": { "role": "textbox", "name": "Username" }, "value": "input.username" } },
-    { "comment": "fill.secret (#6/CD-6): the password is resolved from the vault at fill time and never enters an expression." },
+    { "comment": "fill.secret: the password is resolved from the vault at fill time and never enters an expression." },
     { "fill": { "selector": { "role": "textbox", "name": "Password" }, "secret": "input.password" } },
     { "waitForRequest": {
         "urlPrefix": "https://example.gov/portal/", "method": "POST",
         "trigger": [ { "click": { "selector": { "role": "button", "name": "Sign in" } } } ] } },
     { "waitForLoadState": { "state": "networkidle" } },
 
-    { "comment": "Prove we reached the authenticated portal, then capture a full-page screenshot (#8) for the audit trail." },
+    { "comment": "Prove we reached the authenticated portal, then capture a full-page screenshot for the audit trail." },
     { "guard": { "cond": "exists({ text: 'Sign out' })",
         "elseFail": { "class": "terminal", "code": "login_failed",
                       "message": "Login did not reach the authenticated portal for ${input.username}" } } },
@@ -41,7 +41,7 @@
         "urlPrefix": "https://example.gov/portal/search", "method": "POST",
         "trigger": [ { "click": { "selector": { "role": "button", "name": "Search" } } } ] } },
 
-    { "comment": "Checkpointed pagination (#14): a TOP-LEVEL while loop whose FIRST node is the checkpoint, so a host restart resumes from the last completed page against a fresh session instead of from the top." },
+    { "comment": "Checkpointed pagination: a TOP-LEVEL while loop whose FIRST node is the checkpoint, so a host restart resumes from the last completed page against a fresh session instead of from the top." },
     { "loop": { "maxIterations": 1000, "while": "hasMorePages", "do": [
         { "checkpoint": { "name": "resultsPage",
             "cursor": "{ resumeUrl: pageUrl(), page: page + 1 }",

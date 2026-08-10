@@ -33,7 +33,7 @@
         "additionalProperties": false,
         "properties": {
           "type": {
-            "description": "The input's declared type. `backend` resolves to a `{ adapter, options }` backend binding; `storageTarget` to a download sink; `secretRef` is a vault REFERENCE only (never the secret) consumed solely by `fill.secret` (CD-6); the rest are ordinary JSON value types.",
+            "description": "The input's declared type. `backend` resolves to a `{ adapter, options }` backend binding; `storageTarget` to a download sink; `secretRef` is a vault REFERENCE only (never the secret) consumed solely by `fill.secret`; the rest are ordinary JSON value types.",
             "enum": [
               "string",
               "number",
@@ -336,7 +336,7 @@
               "type": "string"
             },
             "nth": {
-              "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (#37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
+              "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error; a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
               "type": "string"
             },
             "first": {
@@ -450,7 +450,7 @@
       ]
     },
     "numExpr": {
-      "description": "An integer loop bound: either an Expr string that evaluates to a whole number, or a typed JSON number literal (CD-10). A number N behaves exactly as the Expr \"N\" (an integral literal ⇒ long, else double), so the two forms are interchangeable. The loop counter is an integer, so a non-integral value — a fractional literal (2.5) or a computed non-integer (5.0/2) — is a terminal type_error (#33); a bare non-integral literal is rejected at save time with the same code, while an integral-valued double (2.0) is accepted and coerced.",
+      "description": "An integer loop bound: either an Expr string that evaluates to a whole number, or a typed JSON number literal. A number N behaves exactly as the Expr \"N\" (an integral literal ⇒ long, else double), so the two forms are interchangeable. The loop counter is an integer, so a non-integral value — a fractional literal (2.5) or a computed non-integer (5.0/2) — is a terminal type_error; a bare non-integral literal is rejected at save time with the same code, while an integral-valued double (2.0) is accepted and coerced.",
       "oneOf": [
         {
           "type": "string"
@@ -729,7 +729,7 @@
                 "selector"
               ],
               "additionalProperties": false,
-              "description": "Type into a field. Exactly one value source: `value` (an Expr, ordinary data) XOR `secret` (a `input.<name>` reference to a secretRef input, CD-6). A `secret` is resolved from the vault at fill time and never enters the expression value space; `value` and `secret` are mutually exclusive.",
+              "description": "Type into a field. Exactly one value source: `value` (an Expr, ordinary data) XOR `secret` (a `input.<name>` reference to a secretRef input). A `secret` is resolved from the vault at fill time and never enters the expression value space; `value` and `secret` are mutually exclusive.",
               "properties": {
                 "selector": {
                   "description": "The field to type into.",
@@ -843,7 +843,7 @@
                   "type": "string"
                 },
                 "nth": {
-                  "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (#37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
+                  "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error; a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
                   "type": "string"
                 },
                 "first": {
@@ -894,7 +894,7 @@
                 "var"
               ],
               "additionalProperties": false,
-              "description": "Run `trigger`, capture the browser download it provokes, and stream the bytes to the `to` storageTarget under their content-addressed identity. Storage is idempotent by content hash — an already-present blob short-circuits to `stored:true` with no re-upload — so a stable artifact is de-duplicated automatically, no author key required. (`idempotencyKey` was removed in CD-11: content addressing already delivers that `stored:true` dedup, and a pre-fetch key skip would need per-tenant key→blob state kept coherent with retention plus author warrants against upstream drift and skipped trigger side-effects.)",
+              "description": "Run `trigger`, capture the browser download it provokes, and stream the bytes to the `to` storageTarget under their content-addressed identity. Storage is idempotent by content hash — an already-present blob short-circuits to `stored:true` with no re-upload — so a stable artifact is de-duplicated automatically, no author key required. (`idempotencyKey` was removed: content addressing already delivers that `stored:true` dedup, and a pre-fetch key skip would need per-tenant key→blob state kept coherent with retention plus author warrants against upstream drift and skipped trigger side-effects.)",
               "properties": {
                 "trigger": {
                   "description": "The nodes that provoke the browser download (e.g. a `click` on a file link).",

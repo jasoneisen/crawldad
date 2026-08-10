@@ -37,7 +37,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      # The Azurite blob emulator (CD-2): the durable Azure adapter's tests point at this loopback service — a local
+      # The Azurite blob emulator: the durable Azure adapter's tests point at this loopback service — a local
       # emulator, NOT live Azure, so the fast loop still sends zero live third-party traffic. The image's default command
       # binds the blob host to 0.0.0.0, so the runner reaches it at 127.0.0.1:10000; the fixture retries to cover startup.
       azurite:
@@ -48,7 +48,7 @@ jobs:
     env:
       # ConnectionStrings__marten → ConnectionStrings:marten (read by GetConnectionString("marten")).
       ConnectionStrings__marten: "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=postgres"
-      # Point the CD-2 Azurite suite at the loopback emulator service above (the well-known public dev account key).
+      # Point the Azurite suite at the loopback emulator service above (the well-known public dev account key).
       CRAWLDAD_AZURITE_CONNECTION: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
       DOTNET_NOLOGO: "true"
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"

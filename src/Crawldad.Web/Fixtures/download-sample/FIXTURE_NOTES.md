@@ -2,7 +2,7 @@
 
 ## What this is
 A **synthesized** (not captured) single-page fixture for the `download` action, the
-tension-#1 (b) reshaping: downloads stream to a caller `Target`, engine-hashed and idempotent,
+tension (b) reshaping: downloads stream to a caller `Target`, engine-hashed and idempotent,
 reproducing `LJCMGClient.cs:559-594` (`WaitForDownloadAsync` → `AttachmentHashing` →
 `handleDownload`) **without** the iframe/pagination machinery (that is Phase 3). No Chromium, no
 live traffic.

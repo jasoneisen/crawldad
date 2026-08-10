@@ -431,5 +431,5 @@ FodyWeavers.xsd
 *.msm
 *.msp
 
-# Durable filesystem blob storage (CD-2): the local blob root a dev/prod host writes attachments + screenshots to.
+# Durable filesystem blob storage: the local blob root a dev/prod host writes attachments + screenshots to.
 App_Data/

@@ -38,7 +38,7 @@
     <!-- Real-Chromium integration tests: drive the local adapter, start a local Playwright run-server for the
          native-connect path, and launch a CDP endpoint for the connectOverCDP path. -->
     <PackageReference Include="Microsoft.Playwright" />
-    <!-- CD-2: the opt-in Azurite suite drives the Azure blob adapter against the emulator (no live traffic). -->
+    <!-- The opt-in Azurite suite drives the Azure blob adapter against the emulator (no live traffic). -->
     <PackageReference Include="Azure.Storage.Blobs" />
   </ItemGroup>
 
