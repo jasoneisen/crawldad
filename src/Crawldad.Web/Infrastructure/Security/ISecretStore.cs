@@ -6,16 +6,12 @@ namespace Crawldad.Web.Infrastructure.Security;
 
 /// <summary>The credential-by-reference seam: payloads/events carry a reference, never the raw secret, which is
 /// resolved to a live value only at connect time and must never be persisted, logged, or placed in an exception. A
-/// keyed adapter by vault kind; the form-fill surface is tenant-scoped so tenants can't reach each other's references.</summary>
+/// keyed adapter by vault kind; every surface is tenant-scoped so tenants can't reach each other's references.</summary>
 public interface ISecretStore
 {
-    /// <summary>Resolves <paramref name="credentialRef"/> to its secret value for a backend connect — process-global,
-    /// not tenant-scoped (an operator-configured account credential).</summary>
-    /// <exception cref="SecretNotFoundException">When no secret is stored for the reference.</exception>
-    Task<string> ResolveAsync(string credentialRef, CancellationToken ct);
-
-    /// <summary>Resolves a form-fill <c>secretRef</c> to its value, scoped to <paramref name="tenant"/>: the tenant comes
-    /// from the authenticated principal (never payload data), so a tenant can only resolve its own references.</summary>
+    /// <summary>Resolves a <c>secretRef</c> to its value, scoped to <paramref name="tenant"/>: the tenant comes from the
+    /// authenticated principal (never payload data), so a tenant can only resolve its own references. Backs both the
+    /// form-fill surface and the backend-connect resolver's config fallback.</summary>
     /// <exception cref="SecretNotFoundException">When no secret is stored for the tenant's reference.</exception>
     Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct);
 }
@@ -29,20 +25,12 @@ public static class SecretVaults
 }
 
 /// <summary>The configuration-backed <see cref="ISecretStore"/>: secrets live under the <c>Secrets</c> configuration
-/// section. Backend connect reads <c>Secrets:{credentialRef}</c>; form-fill reads <c>Secrets:{tenant}:{reference}</c>,
-/// namespaced per tenant so tenant A's key is unreachable when resolving under tenant B.</summary>
+/// section, always namespaced per tenant — <c>Secrets:{tenant}:{reference}</c> — so tenant A's key is unreachable when
+/// resolving under tenant B. There is no flat <c>Secrets:{ref}</c> read; a connect ref falls back here tenant-scoped.</summary>
 internal sealed class ConfigurationSecretStore(IConfiguration configuration) : ISecretStore
 {
-    /// <summary>The configuration section secrets are read from (<c>Secrets:{ref}</c> for connect, <c>Secrets:{tenant}:{ref}</c> for form-fill).</summary>
+    /// <summary>The configuration section secrets are read from (<c>Secrets:{tenant}:{ref}</c>, tenant-namespaced).</summary>
     internal const string Section = "Secrets";
-
-    public Task<string> ResolveAsync(string credentialRef, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(credentialRef);
-        var secret = configuration[$"{Section}:{credentialRef}"]
-            ?? throw new SecretNotFoundException(credentialRef);
-        return Task.FromResult(secret);
-    }
 
     public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct)
     {

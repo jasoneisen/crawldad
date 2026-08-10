@@ -12,7 +12,7 @@ namespace Crawldad.Web.Infrastructure.Browser.Real;
 /// embeds a per-session signingKey JWT — itself a live secret, never logged — so the connect is a scrubbing boundary.</summary>
 internal sealed class BrowserbaseBackend(
     IPlaywrightProvider provider,
-    ISecretStore secrets,
+    IConnectCredentialResolver resolver,
     IRunSecretScope secretScope,
     IHttpClientFactory httpClientFactory,
     IAssetCache cache,
@@ -71,7 +71,7 @@ internal sealed class BrowserbaseBackend(
     {
         var credentialRef = binding.CredentialRef
             ?? throw new BrowserConnectException("the 'browserbase' backend requires a credentialRef (an apiKey or a connectUrl)");
-        return await secrets.ResolveAsync(credentialRef, ct);
+        return await resolver.ResolveConnectAsync(credentialRef, binding.Tenant!, ct); // tenant-scoped: registered browsers then config
     }
 
     // apiKey mode: create the session ourselves (POST /v1/sessions), then connect to the returned connectUrl. The

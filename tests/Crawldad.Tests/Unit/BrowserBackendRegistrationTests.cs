@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Real;
@@ -20,6 +21,9 @@ public class BrowserBackendRegistrationTests
             .AddInMemoryCollection(config.Select(c => new KeyValuePair<string, string?>(c.Key, c.Value)))
             .Build());
         RunsModule.AddRunsServices(services);
+        // The credentialed adapters resolve through IConnectCredentialResolver (wired by BrowsersModule in the app); a
+        // fake stands in so this RunsModule-only container can build them without the Marten-backed store.
+        services.AddSingleton<IConnectCredentialResolver>(new FixedConnectResolver("x"));
         return services.BuildServiceProvider();
     }
 

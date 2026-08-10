@@ -327,7 +327,7 @@ internal sealed class RunInterpreter
             ?? throw new InterpreterException(InterpreterErrorCodes.InvalidBackendBinding, "config.backend.adapter is required");
         var options = map.GetValueOrDefault("options") as IReadOnlyDictionary<string, object?>;
         var credentialRef = map.GetValueOrDefault("credentialRef") as string;
-        return new BackendBinding(adapter, credentialRef, options);
+        return new BackendBinding(adapter, credentialRef, options, _tenant); // the run's tenant scopes credential resolution
     }
 
     private async ValueTask EvaluateVarsAsync(CancellationToken ct)

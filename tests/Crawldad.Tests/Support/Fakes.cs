@@ -8,3 +8,14 @@ public sealed class FakeClock : TimeProvider
 
     public override DateTimeOffset GetUtcNow() => Fixed;
 }
+
+/// <summary>A <see cref="TimeProvider"/> whose "now" is settable, so a test can advance time between two writes (e.g. to
+/// prove a registration's createdAt is preserved while updatedAt moves forward).</summary>
+/// <param name="start">The initial "now".</param>
+public sealed class MutableClock(DateTimeOffset start) : TimeProvider
+{
+    /// <summary>The current "now"; assign to advance time.</summary>
+    public DateTimeOffset Now { get; set; } = start;
+
+    public override DateTimeOffset GetUtcNow() => Now;
+}

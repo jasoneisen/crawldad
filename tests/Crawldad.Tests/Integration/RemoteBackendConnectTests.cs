@@ -35,7 +35,7 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
         using var runServer = await RealChromiumFixture.StartRunServerAsync();
         using var site = PageSite();
         var backend = new BrowserlessBackend(
-            fixture.Provider, new FixedSecretStore("token-value"), _scope, new InMemoryAssetCache(),
+            fixture.Provider, new FixedConnectResolver("token-value"), _scope, new InMemoryAssetCache(),
             new ThrottleGate(TimeProvider.System), runServer.WsBase);
         var binding = new BackendBinding("browserless", "cred-ref",
             new Dictionary<string, object?>(StringComparer.Ordinal) { ["region"] = "lon" });
@@ -52,7 +52,7 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
     public async Task Browserless_honours_a_cancelled_token()
     {
         var backend = new BrowserlessBackend(
-            fixture.Provider, new FixedSecretStore("t"), _scope, new InMemoryAssetCache(),
+            fixture.Provider, new FixedConnectResolver("t"), _scope, new InMemoryAssetCache(),
             new ThrottleGate(TimeProvider.System), BrowserlessBackend.DefaultEndpointTemplate);
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
@@ -65,7 +65,7 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
     public async Task Browserless_connect_failure_is_a_scrubbed_terminal()
     {
         var backend = new BrowserlessBackend(
-            fixture.Provider, new FixedSecretStore("SECRET_TOKEN_XYZ"), _scope, new InMemoryAssetCache(),
+            fixture.Provider, new FixedConnectResolver("SECRET_TOKEN_XYZ"), _scope, new InMemoryAssetCache(),
             new ThrottleGate(TimeProvider.System), "ws://127.0.0.1:1/chromium/playwright");
 
         var ex = await Should.ThrowAsync<BrowserConnectException>(
@@ -79,17 +79,34 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
     public async Task Browserless_requires_a_credential_ref()
     {
         var backend = new BrowserlessBackend(
-            fixture.Provider, new FixedSecretStore("t"), _scope, new InMemoryAssetCache(),
+            fixture.Provider, new FixedConnectResolver("t"), _scope, new InMemoryAssetCache(),
             new ThrottleGate(TimeProvider.System), BrowserlessBackend.DefaultEndpointTemplate);
 
         await Should.ThrowAsync<BrowserConnectException>(
             () => backend.ConnectAsync(new BackendBinding("browserless"), SessionPolicy.Default, _ct));
     }
 
+    [Fact]
+    public async Task Browserless_registers_the_resolved_secret_for_scrubbing()
+    {
+        // The resolved credential must be registered into the run's secret scope BEFORE connect, so every sink scrubs it
+        // exactly as a config-resolved one — the invariant the registration store inherits. A dead port fails connect after.
+        var scope = new AmbientRunSecretScope();
+        using var handle = scope.Begin();
+        var backend = new BrowserlessBackend(
+            fixture.Provider, new FixedConnectResolver("SENTINEL_scrub_token_0123456789"), scope, new InMemoryAssetCache(),
+            new ThrottleGate(TimeProvider.System), "ws://127.0.0.1:1/chromium/playwright");
+
+        await Should.ThrowAsync<BrowserConnectException>(
+            () => backend.ConnectAsync(new BackendBinding("browserless", "cred-ref"), SessionPolicy.Default, _ct));
+
+        scope.Current.ShouldContain("SENTINEL_scrub_token_0123456789");
+    }
+
     // ----- browserbase (CDP) -------------------------------------------------
 
     private BrowserbaseBackend Browserbase(string secret, string apiBaseUrl) => new(
-        fixture.Provider, new FixedSecretStore(secret), _scope, Http, new InMemoryAssetCache(),
+        fixture.Provider, new FixedConnectResolver(secret), _scope, Http, new InMemoryAssetCache(),
         new ThrottleGate(TimeProvider.System), apiBaseUrl);
 
     [Fact]

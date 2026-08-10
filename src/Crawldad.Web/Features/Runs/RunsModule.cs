@@ -106,8 +106,8 @@ public static class RunsModule
         services.AddHttpClient(); // IHttpClientFactory for the browserbase session-create call
 
         // The secret-vault seam: a keyed-adapter registry, the same pattern as backends and storage targets. Only the
-        // `config` adapter (secrets from IConfiguration) ships; the plain ISecretStore singleton and the keyed `config`
-        // vault share the ONE ConfigurationSecretStore instance, so both resolution surfaces read the same Secrets section.
+        // `config` adapter (secrets from IConfiguration) ships. The plain ISecretStore singleton backs the form-fill path
+        // and the connect resolver's tenant-namespaced config fallback (Secrets:{tenant}:{ref}); both share ONE instance.
         services.AddSingleton<ConfigurationSecretStore>();
         services.AddSingleton<ISecretStore>(static sp => sp.GetRequiredService<ConfigurationSecretStore>());
         services.AddKeyedSingleton<ISecretStore>(SecretVaults.Config, static (sp, _) => sp.GetRequiredService<ConfigurationSecretStore>());
@@ -131,7 +131,7 @@ public static class RunsModule
 
         services.AddKeyedSingleton<IBrowserBackend>("browserless", static (sp, _) => new BrowserlessBackend(
             sp.GetRequiredService<IPlaywrightProvider>(),
-            sp.GetRequiredService<ISecretStore>(),
+            sp.GetRequiredService<IConnectCredentialResolver>(),
             sp.GetRequiredService<IRunSecretScope>(),
             sp.GetRequiredService<IAssetCache>(),
             sp.GetRequiredService<IThrottleGate>(),
@@ -140,7 +140,7 @@ public static class RunsModule
 
         services.AddKeyedSingleton<IBrowserBackend>("browserbase", static (sp, _) => new BrowserbaseBackend(
             sp.GetRequiredService<IPlaywrightProvider>(),
-            sp.GetRequiredService<ISecretStore>(),
+            sp.GetRequiredService<IConnectCredentialResolver>(),
             sp.GetRequiredService<IRunSecretScope>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<IAssetCache>(),

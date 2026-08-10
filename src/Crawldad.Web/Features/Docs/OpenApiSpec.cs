@@ -6,6 +6,7 @@ using System.Text.Json.Schema;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Crawldad.Contracts;
+using Crawldad.Contracts.Browsers;
 using Crawldad.Contracts.Payloads;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Infrastructure.Security;
@@ -26,6 +27,7 @@ public static class OpenApiSpec
 
     private const string _runs = "Runs";
     private const string _payloads = "Payloads";
+    private const string _browsers = "Browsers";
     private const string _docs = "Docs";
 
     private const string _infoDescription =
@@ -76,6 +78,9 @@ public static class OpenApiSpec
         new(nameof(SavePayloadRequest), typeof(SavePayloadRequest), SwapPayload: true),
         new(nameof(RevisePayloadRequest), typeof(RevisePayloadRequest), SwapPayload: true),
         new(nameof(RenamePayloadRequest), typeof(RenamePayloadRequest)),
+        new(nameof(RegisterBrowserRequest), typeof(RegisterBrowserRequest)),
+        new(nameof(BrowserSummary), typeof(BrowserSummary)),
+        new(nameof(BrowserListResponse), typeof(BrowserListResponse)),
     ];
 
     // The single source of truth for the envelope. The drift test asserts this set of (method, path) equals the live route
@@ -157,13 +162,28 @@ public static class OpenApiSpec
             [new("200", "The historical revision's script and metadata.", Component: nameof(PayloadRevisionResponse)), NotFound("payload/revision")]),
         new("get", "/payloads/{id}/diff/{from}/{to}", "getPayloadDiff", "Diff two payload revisions.", _payloads, Anonymous: false, [Id, From, To], null,
             [new("200", "Both revisions' scripts and a minimal structural diff.", Component: nameof(PayloadDiffResponse)), NotFound("payload/either revision")]),
+
+        // Browser connect credentials (tenant self-service; the registered name becomes a payload's credentialRef).
+        new("put", "/browsers/{name}", "registerBrowser", "Register or replace a browser connect credential.", _browsers, Anonymous: false, [Name],
+            new(nameof(RegisterBrowserRequest), "The adapter, mode, the secret (a connect URL or api key), and optional provider options. The secret is encrypted at rest and never returned."),
+            [
+                new("200", "The registered browser's metadata — never the secret.", Component: nameof(BrowserSummary)),
+                new("400", "The name is not a valid slug, or the body failed validation (unknown adapter/mode, empty secret, or a non-wss/https connectUrl secret) — an RFC 7807 problem+json."),
+            ],
+            Description: "Registers (or replaces) a browser connect credential for the authenticated tenant under {name}, which becomes the credentialRef payloads reference. The secret is encrypted at rest via ASP.NET Data Protection and is never echoed in any response, event, or log; a replace preserves createdAt. Connect resolution is tenant-scoped: a registered browser wins over the tenant-namespaced config fallback, and no tenant can resolve another's."),
+        new("get", "/browsers", "listBrowsers", "List registered browsers.", _browsers, Anonymous: false, [], null,
+            [new("200", "Every browser the tenant has registered — name, adapter, mode, options, and timestamps; secrets omitted.", Component: nameof(BrowserListResponse))]),
+        new("delete", "/browsers/{name}", "unregisterBrowser", "Unregister a browser credential.", _browsers, Anonymous: false, [Name], null,
+            [new("204", "The registration was removed."), NotFound("browser")]),
     ];
 
     /// <summary>The generated OpenAPI 3.1 document, as indented JSON. Built once — deterministic, like the embedded schema.</summary>
     public static string DocumentJson { get; } = Build();
 
-    // Shared path parameters (a UUID id, the integer revision selectors, and the screenshot ref tail).
+    // Shared path parameters: a UUID id, string tails (a browser name slug and a screenshot ref), and the integer revision selectors.
     private static Param Id => new("id", Integer: false, "The resource id (UUID).");
+
+    private static Param Name => new("name", Integer: false, "The registered browser name (a lowercase slug).", Uuid: false);
 
     private static Param Reference => new("reference", Integer: false, "The screenshot ref's {sha256}.png tail (the timeline's screenshotRef without its screenshots/ prefix).", Uuid: false);
 
@@ -220,6 +240,7 @@ public static class OpenApiSpec
     [
         new JsonObject { ["name"] = _runs, ["description"] = "Start, poll, stream, cancel, replay, and inspect runs." },
         new JsonObject { ["name"] = _payloads, ["description"] = "Draft, revise, rename, archive, list, and diff managed payloads." },
+        new JsonObject { ["name"] = _browsers, ["description"] = "Register, list, and unregister tenant browser connect credentials." },
         new JsonObject { ["name"] = _docs, ["description"] = "Anonymous, tenant-independent product artifacts (health, schema, discovery, this document)." },
     ];
 
