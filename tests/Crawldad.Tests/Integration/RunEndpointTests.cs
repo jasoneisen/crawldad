@@ -215,6 +215,31 @@ public class RunEndpointTests(AppFixture fixture)
     }
 
     [Fact]
+    public async Task Non_bool_sel_first_is_a_terminal_failure_not_a_500()
+    {
+        // #41: a non-bool `first` in a structured Sel reached via the EXPRESSION path (a DOM builtin's object-literal
+        // target) used to hit the (bool)first! cast in SelResolver.ResolveMap and escape as an unhandled 500
+        // (InvalidCastException, outside the interpreter's catch filters). It is now a classified terminal type_error — a
+        // failed RUN is HTTP 200 with a failure body, never a failed request. The node path's `first` stays
+        // schema-checked (a boolean) at save time; only the uncoerced expression-path value needed the run-time guard.
+        const string Payload =
+            """
+            { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
+              "steps": [ { "set": { "var": "x", "value": "exists({ css: 'tr', first: 'x' })" } } ],
+              "result": "null" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput())); // expectedStatus defaults to 200
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        var failure = root.GetProperty("failure");
+        failure.GetProperty("class").GetString().ShouldBe("terminal");
+        failure.GetProperty("code").GetString().ShouldBe("type_error");
+        failure.GetProperty("atStep").GetProperty("index").GetInt32().ShouldBe(0);
+        failure.GetProperty("atStep").GetProperty("kind").GetString().ShouldBe("set");
+    }
+
+    [Fact]
     public async Task Missing_inputs_fails_with_invalid_backend_binding()
     {
         // No inputs at all: validator allows an absent inputs object; the run then fails because input.backend is null.

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Crawldad.Tests.Support;
+using Crawldad.Tests.Unit.Expressions;
 using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 using Crawldad.Web.Infrastructure.Browser;
@@ -104,6 +105,74 @@ public class SelResolverTests
 
         (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", 3.0))).CountAsync(CapHome.Ct)).ShouldBe(1);
         (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", 3L))).CountAsync(CapHome.Ct)).ShouldBe(1);
+    }
+
+    // #41: a structured Sel `first` is a lazy .First narrowing keyed on a bool. Via the expression path (a DOM builtin's
+    // object-literal target) its value is an already-evaluated, UNCOERCED Expr result — so a non-bool (a string typo, a
+    // number, null) is a terminal type_error through ExpressionValues.RequireFirstFlag, never the raw (bool)first! unbox
+    // that escaped ResolveMap as an unhandled 500 (InvalidCastException for a non-bool, NullReferenceException for null).
+    // The sibling of the nth cast (#37); the node path still feeds a schema-checked JSON bool, unaffected.
+    [Fact]
+    public async Task ResolveMap_first_non_bool_is_a_terminal_type_error()
+    {
+        var scope = await ScopeAsync();
+
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("first", "x"))))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // string ("first: 'true'"-style typo)
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("first", 1L))))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // number
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("first", null))))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // null (the raw-unbox NullReferenceException case)
+    }
+
+    // #41 widened sweep: EVERY string-typed Sel field the resolver reads from an (uncoerced) object-literal target — the
+    // css/xpath/text/role/title/base/in roots, a base-relative css, and a role's accessible `name` — classifies a
+    // non-string through ExpressionValues.RequireString (terminal type_error), never a raw (string) unbox that escaped as
+    // a 500. A `filter` that is not an object, or one missing its `hasTextRegex` string, is a type_error too. The node
+    // path coerces every one of these to a string (RenderAsync/GetString) and is schema-checked, so it is unaffected.
+    [Fact]
+    public async Task ResolveMap_non_string_field_or_malformed_filter_is_a_terminal_type_error()
+    {
+        var scope = await ScopeAsync();
+
+        void Rejects(params (string Key, object? Value)[] entries) =>
+            Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveMap(Map(entries)))
+                .Code.ShouldBe(ExpressionErrorCodes.TypeError);
+
+        Rejects(("css", 1L));                                        // css root
+        Rejects(("xpath", true));                                    // xpath root
+        Rejects(("text", 1L));                                       // text root
+        Rejects(("title", 2.5));                                     // title root
+        Rejects(("role", 1L));                                       // role root
+        Rejects(("role", "button"), ("name", 1L));                  // role's accessible name
+        Rejects(("base", 1L));                                       // base handle var name
+        Rejects(("base", "rows"), ("css", 1L));                     // base-relative css
+        Rejects(("in", 1L), ("css", "x"));                          // frame var name (read before the root)
+        Rejects(("css", CapHome.GridRows), ("filter", "x"));        // filter must be an object
+        Rejects(("css", CapHome.GridRows), ("filter", Map()));      // filter missing hasTextRegex
+        Rejects(("css", CapHome.GridRows), ("filter", Map(("hasTextRegex", 1L)))); // hasTextRegex must be a string
+    }
+
+    // #41: the same classification reached END TO END through each DOM-read consumer (exists/text/attr) that funnels an
+    // object-literal target into the resolver — the reproduction from the ticket, exists({ css:'tr', first:'x' }). Each
+    // terminates as a type_error, never a 500.
+    [Theory]
+    [InlineData("exists({ css: 'tr', first: 'x' })")]   // string
+    [InlineData("text({ css: 'tr', first: 1 })")]       // number
+    [InlineData("attr({ css: 'tr', first: null }, 'href')")] // null
+    public async Task Dom_read_with_a_non_bool_sel_first_is_a_terminal_type_error(string source)
+    {
+        var scope = await ScopeAsync();
+        (await Xp.EvalErrorAsync(source, scope)).Code.ShouldBe(ExpressionErrorCodes.TypeError);
+    }
+
+    // #41 happy path: an expression-COMPUTED bool `first` (not just a bool literal) still narrows — RequireFirstFlag
+    // passes any real bool through unchanged, however it was produced (the guard adds no restriction to valid input).
+    [Fact]
+    public async Task ResolveMap_first_accepts_an_expression_computed_bool()
+    {
+        var scope = await ScopeAsync();
+        (await Xp.EvalAsync("exists({ css: 'tr', first: 1 == 1 })", scope)).ShouldBeOfType<bool>();
     }
 
     [Fact]
