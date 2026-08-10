@@ -1,4 +1,5 @@
-// Key Vault (RBAC) holding the app's three secrets, plus the app identity's read grant.
+// Key Vault (RBAC) holding the app's three secrets + the Data Protection key-ring wrapping key (issue #65), plus the
+// app identity's read (Secrets User) and wrap/unwrap (Crypto User) grants.
 //
 // The two connection strings are COMPOSED here (not passed in) so the Postgres password and the storage account key
 // never become deployment outputs: the marten string is built from the secure password + the Postgres FQDN, and the
@@ -50,6 +51,9 @@ param softDeleteRetentionInDays int = 7
 
 // Built-in role: Key Vault Secrets User (data-plane read).
 var kvSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+
+// Built-in role: Key Vault Crypto User (data-plane wrap/unwrap) — the app wraps the Data Protection keys with the key below.
+var kvCryptoUserRoleId = '12338af0-0e69-4776-bea7-57ae8d297424'
 
 // Azure Postgres requires TLS; VerifyFull does real CA + hostname validation over the public FQDN (the aspnet base
 // image trusts Azure's DigiCert roots). Pool capped under the B1ms ~35-connection ceiling, leaving room for the
@@ -107,8 +111,32 @@ resource kvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+// The key wrapping the persisted Data Protection key ring (issue #65). RSA 2048; only wrap/unwrap are needed. The app
+// references it by its VERSIONLESS id so key rotation keeps decrypting existing keys (encrypt uses the latest version).
+resource dataProtectionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
+  parent: kv
+  name: 'dataprotection'
+  properties: {
+    kty: 'RSA'
+    keySize: 2048
+    keyOps: [ 'wrapKey', 'unwrapKey' ]
+  }
+}
+
+// Crypto User (wrap/unwrap), vault-scoped like the Secrets User grant above — the vault's only key is the one above.
+resource kvCryptoUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, appIdentityPrincipalId, kvCryptoUserRoleId)
+  scope: kv
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvCryptoUserRoleId)
+    principalId: appIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output name string = kv.name
 output vaultUri string = kv.properties.vaultUri
 output martenSecretName string = martenSecret.name
 output blobSecretName string = blobSecret.name
 output tenantKeySecretName string = tenantKeySecret.name
+output dataProtectionKeyId string = dataProtectionKey.properties.keyUri

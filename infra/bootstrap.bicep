@@ -9,7 +9,8 @@
 //    ├─ UAMI id-crawldad-stg-github  (in the RG)         + a GitHub OIDC federated credential
 //    │        ├─ Contributor  (subscription scope)       (create the RG + all resources; NOT role assignments)
 //    │        ├─ User Access Administrator  (RG scope)   (create the app identity's AcrPull + KV Secrets User)
-//    │        └─ Key Vault Secrets Officer  (RG scope)   (write secret VALUES to the RBAC vault at deploy time)
+//    │        ├─ Key Vault Secrets Officer  (RG scope)   (write secret VALUES to the RBAC vault at deploy time)
+//    │        └─ Key Vault Crypto Officer   (RG scope)   (create the Data Protection wrapping key at deploy time)
 //    └─ Consumption budget  bdgt-crawldad-stg            (the ~$25/mo cost-guard on the Sponsorship credits)
 //
 // The CI identity is NOT Owner. Owner grants Microsoft.Authorization/roleAssignments/write at subscription scope

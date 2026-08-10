@@ -31,6 +31,9 @@ param logAnalyticsName string
 @description('App identity resource id (already granted AcrPull + Key Vault Secrets User).')
 param appIdentityId string
 
+@description('App identity client id — set as AZURE_CLIENT_ID so DefaultAzureCredential picks THIS user-assigned identity.')
+param appIdentityClientId string
+
 @description('Container image for the app + job (pinned by digest by the deploy workflow).')
 param image string
 
@@ -54,6 +57,12 @@ param aspNetCoreEnvironment string
 
 @description('Blob container name (plain app config).')
 param storageContainer string
+
+@description('Absolute URI of the blob the Data Protection key ring is persisted to (issue #65).')
+param keyRingBlobUri string
+
+@description('Key Vault key id that wraps the Data Protection key ring (versionless).')
+param dataProtectionKeyId string
 
 @description('Placeholder-tenant id (partition/billing subject; must not contain ":").')
 param tenantId string
@@ -110,13 +119,17 @@ var registries = [
 // The minimal valid boot env (derived from HostConfiguration + the ValidateOnStart guards): Marten connection,
 // the azure storage provider (+ its connection string and container), and one placeholder tenant (id/actor plain,
 // api key by reference). Nothing here selects a browser backend — those are chosen per-run by payload data and do
-// not gate boot.
+// not gate boot. The DataProtection pair persists the key ring so registered credentials survive redeploys (issue #65);
+// AZURE_CLIENT_ID points DefaultAzureCredential at the app's user-assigned identity for the blob + Key Vault access.
 var appEnv = [
   { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
+  { name: 'AZURE_CLIENT_ID', value: appIdentityClientId }
   { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
   { name: 'Crawldad__Storage__Provider', value: 'azure' }
   { name: 'Crawldad__Storage__Azure__ConnectionString', secretRef: 'blob-connectionstring' }
   { name: 'Crawldad__Storage__Azure__Container', value: storageContainer }
+  { name: 'Crawldad__DataProtection__KeyRingBlobUri', value: keyRingBlobUri }
+  { name: 'Crawldad__DataProtection__KeyVaultKeyId', value: dataProtectionKeyId }
   { name: 'Crawldad__Tenants__0__Id', value: tenantId }
   { name: 'Crawldad__Tenants__0__Actor', value: tenantActor }
   { name: 'Crawldad__Tenants__0__ApiKey', secretRef: 'tenant-apikey' }

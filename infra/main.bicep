@@ -68,6 +68,11 @@ param tenantApiKey string
 @description('Blob container all tenants share (partitioned by a {tenant}/ prefix).')
 param storageContainer string = 'crawldad-blobs'
 
+// The persisted Data Protection key ring (issue #65): a dedicated container + one blob, wrapped by a Key Vault key.
+// Deterministic names (not params) so nothing changes in the prod/staging param files.
+var dataProtectionContainer = 'dataprotection'
+var dataProtectionBlob = 'keyring.xml'
+
 // ── Scale / sizing ────────────────────────────────────────────────────────────────────
 @description('Min replicas. Staging defaults to 0 (scale-to-zero) for cost; see the scale-to-zero trade-off in ARCHITECTURE.md B.3.')
 @minValue(0)
@@ -167,6 +172,8 @@ module storage 'modules/storage.bicep' = {
     location: location
     tags: tags
     containerName: storageContainer
+    dataProtectionContainer: dataProtectionContainer
+    appIdentityPrincipalId: identity.outputs.principalId
   }
 }
 
@@ -199,6 +206,7 @@ module app 'modules/app.bicep' = {
     jobName: names.dbApplyJob
     logAnalyticsName: monitoring.outputs.name
     appIdentityId: identity.outputs.id
+    appIdentityClientId: identity.outputs.clientId
     image: serveImage
     acrLoginServer: registry.outputs.loginServer
     keyVaultUri: keyvault.outputs.vaultUri
@@ -207,6 +215,8 @@ module app 'modules/app.bicep' = {
     tenantApiKeySecretName: keyvault.outputs.tenantKeySecretName
     aspNetCoreEnvironment: aspNetCoreEnvironment
     storageContainer: storageContainer
+    keyRingBlobUri: '${storage.outputs.blobEndpoint}${dataProtectionContainer}/${dataProtectionBlob}'
+    dataProtectionKeyId: keyvault.outputs.dataProtectionKeyId
     tenantId: tenantId
     tenantActor: tenantActor
     minReplicas: minReplicas
