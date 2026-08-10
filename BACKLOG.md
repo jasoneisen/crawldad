@@ -236,10 +236,14 @@ pre-existing since Phase 1). A non-bool `first` in a structured Sel via the expr
 remaining raw unbox casts on expression results.
 
 ### [#38](https://github.com/jasoneisen/crawldad/issues/38) `SlotQueueTests` intermittent timing flakes
-**Status:** filed 2026-08-09 after the second poll-timeout flake in ~24 h (enqueue-nudge on a slow
-CI runner; deadline-starts-at-execution locally under concurrent-agent load — different class from
-the #26 ObjectDisposedException flakes, which are fixed). Raise/adapt the 20–30 s poll windows
-after ruling out a real promotion slow path; done when 10 consecutive loaded runs are clean.
+**Status:** resolved 2026-08-09/10 (PR #42, reviewer-approved first round). Instrumented hop
+analysis ruled out a slow promotion path — the flakes were Wolverine's 5 s durability-backstop
+poll jitter stacking under starvation. Fix is test-host-only cadence (100 ms/250 ms in
+TestDefaults; production untouched) + one documented `DurableHost.PollTimeout` (60 s). Flake death
+proven implementer-side (12 consecutive green full suites) and reviewer-side (21 clean executions
+incl. 15 stress iterations under ~37 load; nudge-test discrimination shown structural). Reviewer
+awareness note: the faster cadence also delivers `RunDeadline` more promptly on test hosts —
+latent tightening of the one completion-with-deadline test's real-time race, not observed to flake.
 
 ### [#11](https://github.com/jasoneisen/crawldad/issues/11) Honor `download.idempotencyKey`
 **Status:** resolved 2026-08-08 — REMOVED (PR #31, reviewer-approved first round). The field's own
