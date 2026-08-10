@@ -3,21 +3,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Web.Infrastructure.Browser.Real;
 
-/// <summary>
-/// A thin wrapper over a Playwright <see cref="ILocator"/> (§ Deliverable 1). Playwright locators are natively lazy —
-/// a query, re-evaluated on every terminal — so the refinements (<see cref="Locator"/>/<see cref="Nth"/>/
-/// <see cref="First"/>/<see cref="Filter"/>) just wrap the narrowed locator and touch no DOM, preserving the seam's
-/// re-query-on-use contract. Every terminal is guarded by <see cref="PlaywrightFaults"/> so a Playwright timeout/crash
-/// maps onto the §8.3 taxonomy.
-/// <para>
-/// The read terminals honour the seam's <b>null/empty-if-absent</b> contract (<see cref="ILocatorHandle"/>): rather
-/// than let Playwright's auto-wait block for the full timeout on a locator that matches nothing, they short-circuit on
-/// a zero <see cref="CountAsync"/> and otherwise read the <see cref="First"/> match — matching the record/replay fake
-/// so <c>fake ≡ real</c> holds for the acceptance payloads. The <b>actions</b> (click/fill/clear/waitFor) are pure
-/// passthroughs that keep Playwright's auto-wait — which the reference relies on across postbacks.
-/// </para>
-/// </summary>
-/// <param name="locator">The wrapped Playwright locator (already lazy).</param>
+/// <summary>A thin wrapper over a Playwright <see cref="ILocator"/>: refinements stay lazy and touch no DOM. Read
+/// terminals short-circuit to null/empty on a zero <see cref="CountAsync"/> instead of blocking through Playwright's
+/// auto-wait timeout; actions (click/fill/clear/waitFor) are pure passthroughs that keep the auto-wait.</summary>
 internal sealed class PlaywrightLocatorHandle(ILocator locator) : ILocatorHandle
 {
     public ILocatorHandle Locator(string childSelector) => new PlaywrightLocatorHandle(locator.Locator(childSelector));
@@ -26,9 +14,8 @@ internal sealed class PlaywrightLocatorHandle(ILocator locator) : ILocatorHandle
 
     public ILocatorHandle First => new PlaywrightLocatorHandle(locator.First);
 
-    // Size-guarded through the same GuardedRegex factory the expression builtins use (§7.2). Playwright matches the
-    // regex in the browser and rejects .NET-specific options (e.g. CultureInvariant), so we use the option-free
-    // browser-safe variant — the size cap remains the language-boundary guarantee.
+    // Playwright evaluates this regex in the browser and rejects .NET-specific options like CultureInvariant, so
+    // this uses GuardedRegex's browser-safe compile variant — the size cap still bounds the pattern.
     public ILocatorHandle Filter(string hasTextRegex) =>
         new PlaywrightLocatorHandle(locator.Filter(new LocatorFilterOptions { HasTextRegex = GuardedRegex.CompileForBrowser(hasTextRegex) }));
 

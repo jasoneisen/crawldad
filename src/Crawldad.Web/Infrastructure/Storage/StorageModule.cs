@@ -6,19 +6,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Infrastructure.Storage;
 
-/// <summary>
-/// The storage seam wiring (CD-2, §9.3/§12/§13): the download-sink registry, the provider-selected blob backend (the keyed
-/// <see cref="IDownloadSink"/> + the <see cref="IScreenshotStore"/> + the durable <see cref="IRetentionStore"/>), the storage
-/// options + boot validation, and the retention janitor. Selecting the backend is data (a config value), exactly like the
-/// browser-backend and download-target registries — a new provider is another switch arm, no call-site change.
-/// <list type="bullet">
-///   <item><see cref="StorageOptions.FakeProvider"/> — the in-memory fake sink + <see cref="InMemoryScreenshotStore"/>; no
-///   durable retention store, so the janitor no-ops. The determinism default the test host selects.</item>
-///   <item><see cref="StorageOptions.FileSystemProvider"/> — the durable, hermetic <see cref="FileSystemBlobStore"/> backing
-///   all three seams (the production default).</item>
-///   <item><see cref="StorageOptions.AzureProvider"/> — the durable <see cref="AzureBlobStore"/> (the Azure deployment target).</item>
-/// </list>
-/// </summary>
+/// <summary>The storage seam wiring: the download-sink registry, the provider-selected blob backend (<see cref="IDownloadSink"/>
+/// + <see cref="IScreenshotStore"/> + <see cref="IRetentionStore"/>), the storage options + boot validation, and the
+/// retention janitor. The provider (<see cref="StorageOptions.Provider"/>) is a config value, so a new one is a switch arm.</summary>
 public static class StorageModule
 {
     /// <summary>Registers the storage seams for the configured provider, plus the options, validation, and retention janitor.</summary>

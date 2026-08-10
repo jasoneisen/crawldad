@@ -1,13 +1,8 @@
 namespace Crawldad.Web.Infrastructure.Storage;
 
-/// <summary>
-/// The durable-storage knobs (CD-2, §9.3/§12/§13), bound from <c>Crawldad:Storage</c>. <see cref="Provider"/> selects the
-/// blob backend for both seams (the <see cref="IDownloadSink"/> kind and the <see cref="IScreenshotStore"/>); the durable
-/// default is <see cref="FileSystemProvider"/>, so an unconfigured production host stores blobs on disk rather than losing
-/// them in memory. Tests set <see cref="FakeProvider"/> (the in-memory fake sink + <see cref="InMemoryScreenshotStore"/>) so
-/// the hermetic suite runs with no filesystem or emulator dependency. <see cref="Retention"/> carries the §12/§13 lifecycle
-/// policy the <see cref="RetentionJanitor"/> enforces.
-/// </summary>
+/// <summary>The durable-storage knobs, bound from <c>Crawldad:Storage</c>. <see cref="Provider"/> selects the blob
+/// backend for both seams; the durable default is <see cref="FileSystemProvider"/>, so an unconfigured production
+/// host stores blobs on disk rather than losing them in memory. Tests set <see cref="FakeProvider"/> for a hermetic suite.</summary>
 public sealed class StorageOptions
 {
     /// <summary>The configuration section these bind from.</summary>
@@ -32,7 +27,7 @@ public sealed class StorageOptions
     /// <summary>The Azure Blob provider's settings.</summary>
     public AzureStorageOptions Azure { get; init; } = new();
 
-    /// <summary>The retention/lifecycle policy (§12/§13) the janitor enforces over whichever durable provider is selected.</summary>
+    /// <summary>The retention/lifecycle policy the janitor enforces over whichever durable provider is selected.</summary>
     public RetentionOptions Retention { get; init; } = new();
 }
 
@@ -51,26 +46,24 @@ public sealed class AzureStorageOptions
     /// sets a real account connection string (or a managed-identity-backed one) via configuration/secrets.</summary>
     public string ConnectionString { get; init; } = "UseDevelopmentStorage=true";
 
-    /// <summary>The container all tenants' blobs share (partitioned by a <c>{tenant}/…</c> blob-name prefix, CD-1). Must be a
+    /// <summary>The container all tenants' blobs share (partitioned by a <c>{tenant}/…</c> blob-name prefix). Must be a
     /// valid Azure container name (lowercase alphanumerics + hyphens).</summary>
     public string Container { get; init; } = "crawldad-blobs";
 }
 
-/// <summary>
-/// The retention/lifecycle policy (§12/§13): how long each blob category is kept before the scheduled janitor deletes it, and
-/// how often it sweeps. A TTL of <see cref="System.TimeSpan.Zero"/> (or negative) disables sweeping for that category (retain
-/// indefinitely). Screenshots default to a shorter window than downloads because they can show PII (§12).
-/// </summary>
+/// <summary>The retention/lifecycle policy: how long each blob category is kept before the scheduled janitor deletes
+/// it, and how often it sweeps. A TTL of <see cref="System.TimeSpan.Zero"/> (or negative) disables sweeping for that
+/// category (retain indefinitely). Screenshots default to a shorter window than downloads because they can show PII.</summary>
 public sealed class RetentionOptions
 {
     /// <summary>Whether the retention janitor runs at all. Disable to retain everything indefinitely (e.g. under an external
     /// storage-lifecycle rule).</summary>
     public bool Enabled { get; init; } = true;
 
-    /// <summary>How long a downloaded attachment (§9.3) is kept. <see cref="System.TimeSpan.Zero"/> or less disables its sweep.</summary>
+    /// <summary>How long a downloaded attachment is kept. <see cref="System.TimeSpan.Zero"/> or less disables its sweep.</summary>
     public TimeSpan DownloadTtl { get; init; } = TimeSpan.FromDays(30);
 
-    /// <summary>How long a failure screenshot (§13) is kept — shorter, because it can show PII (§12). Zero or less disables its sweep.</summary>
+    /// <summary>How long a failure screenshot is kept — shorter, because it can show PII. Zero or less disables its sweep.</summary>
     public TimeSpan ScreenshotTtl { get; init; } = TimeSpan.FromDays(7);
 
     /// <summary>How often the janitor sweeps for expired blobs. Must be positive.</summary>

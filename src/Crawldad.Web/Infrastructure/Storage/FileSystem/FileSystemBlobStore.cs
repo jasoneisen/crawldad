@@ -3,25 +3,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Infrastructure.Storage.FileSystem;
 
-/// <summary>
-/// The durable local-filesystem blob store (CD-2, §9.3/§12/§13): the hermetic, dependency-free implementation of all three
-/// storage seams — the <see cref="IDownloadSink"/> (content-addressed, idempotent), the <see cref="IScreenshotStore"/>
-/// (content-addressed failure screenshots), and the <see cref="IRetentionStore"/> the janitor sweeps. One instance backs all
-/// three so the tenant-partitioning and pathing live in one place.
-/// <para>
-/// <b>Layout (tenant-partitioned, CD-1/§12):</b> <c>{Root}/{tenant}/downloads/{contentId}</c> and
-/// <c>{Root}/{tenant}/screenshots/{sha256}.png</c>. The tenant is the first path segment, so one tenant can neither read,
-/// overwrite, nor probe another's blob — the idempotency probe (<see cref="ExistsAsync"/>) resolves a tenant-qualified path.
-/// The engine-facing content id / screenshot ref stay tenant-independent (the wire result and immutable trace are
-/// byte-identical); the tenant only qualifies where the bytes physically live.
-/// </para>
-/// <para>
-/// <b>Durability:</b> writes go to a temp file and are atomically moved into place, so <see cref="ExistsAsync"/> never sees a
-/// half-written blob (content addressing would otherwise be broken by a torn write). <b>Traversal-safe:</b> the only
-/// attacker-influenced input is the tenant string (from the authenticated principal, config-validated) — it is still guarded
-/// against path traversal; the content id is a GUID and the screenshot key is a hex digest, both intrinsically safe.
-/// </para>
-/// </summary>
+/// <summary>The durable local-filesystem blob store: the hermetic, dependency-free implementation of all three
+/// storage seams, tenant-partitioned as <c>{Root}/{tenant}/downloads/{contentId}</c> and
+/// <c>.../screenshots/{sha256}.png</c>. Writes land in a temp file and move atomically, so a reader never sees a torn blob.</summary>
 internal sealed class FileSystemBlobStore : IDownloadSink, IScreenshotStore, IRetentionStore
 {
     // In-flight writes land under this marker then move into place; the marker also excludes a leftover (crashed) temp from

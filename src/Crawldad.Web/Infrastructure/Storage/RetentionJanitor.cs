@@ -5,19 +5,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Infrastructure.Storage;
 
-/// <summary>
-/// The retention/lifecycle janitor (CD-2, §12/§13): a host-enforced scheduled sweep that deletes durable blobs past their
-/// category's TTL. It is the same "scheduled background enforcer" pattern the run wall-clock deadline uses (a Wolverine saga
-/// timeout, <c>RunDeadline</c>), applied to storage lifecycle: the policy lives in <see cref="RetentionOptions"/> (config
-/// knobs the host tunes), not in provider-specific lifecycle rules, so it enforces the same policy over the filesystem or the
-/// Azure adapter uniformly. Screenshots (which can show PII, §12) get a shorter default TTL than downloads.
-/// <para>
-/// It sweeps every registered <see cref="IRetentionStore"/> — the durable adapters. When the store provider is the in-memory
-/// fake (tests), none is registered and the janitor is a harmless no-op. <see cref="SweepOnceAsync"/> carries the whole policy
-/// and is directly unit-tested; <see cref="ExecuteAsync"/> is the thin periodic driver over the injected
-/// <see cref="TimeProvider"/> (real in production, controllable in tests).
-/// </para>
-/// </summary>
+/// <summary>The retention/lifecycle janitor: a host-enforced scheduled sweep that deletes durable blobs past their
+/// category's TTL, per <see cref="RetentionOptions"/>. Sweeps every registered <see cref="IRetentionStore"/>; under
+/// the in-memory fake provider none is registered, so the janitor is a harmless no-op.</summary>
 public sealed class RetentionJanitor : BackgroundService
 {
     private readonly IRetentionStore[] _stores;
@@ -26,10 +16,6 @@ public sealed class RetentionJanitor : BackgroundService
     private readonly ILogger<RetentionJanitor> _logger;
 
     /// <summary>Wires the janitor to the durable stores it sweeps and the retention policy it enforces.</summary>
-    /// <param name="stores">The registered durable stores (empty under the in-memory fake provider — then the janitor no-ops).</param>
-    /// <param name="options">The storage options carrying the <see cref="RetentionOptions"/> policy.</param>
-    /// <param name="clock">The time seam (real in production; a short interval + system clock drives it deterministically in tests).</param>
-    /// <param name="logger">The (credential-scrubbing) logger for the swept-count line.</param>
     public RetentionJanitor(IEnumerable<IRetentionStore> stores, IOptions<StorageOptions> options, TimeProvider clock, ILogger<RetentionJanitor> logger)
     {
         ArgumentNullException.ThrowIfNull(stores);
@@ -40,13 +26,9 @@ public sealed class RetentionJanitor : BackgroundService
         _logger = logger;
     }
 
-    /// <summary>
-    /// Sweeps every durable store once, deleting each blob older than its category's TTL (a TTL of ≤ 0 retains that category
-    /// indefinitely). Pure with respect to <paramref name="now"/> so a test drives expiry deterministically.
-    /// </summary>
-    /// <param name="now">The instant expiry is measured against (a blob is expired when <c>now − lastModified ≥ ttl</c>).</param>
-    /// <param name="ct">Cancels the sweep.</param>
-    /// <returns>How many blobs were deleted.</returns>
+    /// <summary>Sweeps every durable store once, deleting each blob older than its category's TTL (a TTL of ≤ 0
+    /// retains that category indefinitely). Pure with respect to <paramref name="now"/> so a test drives expiry
+    /// deterministically.</summary>
     public async Task<int> SweepOnceAsync(DateTimeOffset now, CancellationToken ct)
     {
         var deleted = 0;
@@ -112,10 +94,9 @@ public sealed class RetentionJanitor : BackgroundService
         }
     }
 
-    // Runs one sweep, absorbing any failure so it never stops the host. The default BackgroundService behaviour is StopHost —
-    // a single transient storage error (e.g. a store's ListAsync throwing) would otherwise take the whole API down; instead we
-    // log and retry next interval. Cancellation (shutdown) is re-thrown by the filter so the host tears down promptly. Internal
-    // so both filter branches are directly testable.
+    // Runs one sweep, absorbing any failure so it never stops the host (the default BackgroundService behaviour is
+    // StopHost). Cancellation (shutdown) is re-thrown by the filter so the host tears down promptly; internal so
+    // both filter branches are directly testable.
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "A background janitor must survive any transient sweep failure rather than stop the host; cancellation is re-thrown by the exception filter.")]
     internal async Task SweepSafelyAsync(CancellationToken ct)
     {

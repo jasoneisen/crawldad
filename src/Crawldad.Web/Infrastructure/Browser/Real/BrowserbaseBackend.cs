@@ -7,27 +7,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Web.Infrastructure.Browser.Real;
 
-/// <summary>
-/// The <c>"browserbase"</c> adapter (§9.1): connects over <b>CDP</b> (Browserbase is CDP-only for Playwright) via
-/// <c>chromium.connectOverCDP</c>. Two credential modes:
-/// <list type="bullet">
-///   <item><b>connectUrl</b> — the resolved secret <em>is</em> the whole CDP URL; connect to it directly.</item>
-///   <item><b>apiKey</b> (default) — the resolved secret is the account API key; we <c>POST /v1/sessions</c> with an
-///   <c>X-BB-API-Key</c> header and connect to the returned <c>connectUrl</c>, recording the response <c>region</c>.</item>
-/// </list>
-/// <b>Ship-blocker fact (§3.5/§9, live-primary re-verified 2026-08-08):</b> the returned <c>connectUrl</c> has the form
-/// <c>wss://connect.&lt;region&gt;.browserbase.com/?signingKey=&lt;JWT&gt;</c> (e.g. <c>connect.usw2.browserbase.com</c>) —
-/// a per-session JWT, <b>not</b> the account apiKey (which travels only in the <c>X-BB-API-Key</c> header). The whole URL
-/// is still a live-session secret: never logged, never placed in an exception message — the connect is a scrubbing
-/// boundary that converts any fault into a secret-free terminal <see cref="BrowserConnectException"/>.
-/// </summary>
-/// <param name="provider">The shared Playwright driver.</param>
-/// <param name="secrets">Resolves the apiKey or connectUrl by reference at connect time.</param>
-/// <param name="secretScope">The per-run secret registry the resolved secret and the apiKey-embedding connectUrl are registered into for exact-match scrubbing (§12).</param>
-/// <param name="httpClientFactory">Creates the client for the apiKey-mode session-create call.</param>
-/// <param name="cache">The cross-run asset cache backing the route cache.</param>
-/// <param name="throttle">The global request throttle.</param>
-/// <param name="apiBaseUrl">The Browserbase API base URL (overridable for tests).</param>
+/// <summary>The <c>"browserbase"</c> adapter: connects over CDP. Credential modes: <b>connectUrl</b> (the secret is
+/// the whole CDP URL) or <b>apiKey</b> (default; POSTs <c>/v1/sessions</c> for a connectUrl). The returned connectUrl
+/// embeds a per-session signingKey JWT — itself a live secret, never logged — so the connect is a scrubbing boundary.</summary>
 internal sealed class BrowserbaseBackend(
     IPlaywrightProvider provider,
     ISecretStore secrets,
@@ -57,7 +39,7 @@ internal sealed class BrowserbaseBackend(
         {
             ct.ThrowIfCancellationRequested();
             var secret = await ResolveSecretAsync(binding, ct);
-            secretScope.Register(secret); // register before connect so a failure's logs/events scrub the apiKey/connectUrl too (§12)
+            secretScope.Register(secret); // register before connect so a failure's logs/events scrub the apiKey/connectUrl too
             var options = binding.Options;
             string connectUrl;
             if (options is not null && string.Equals(options.GetValueOrDefault("mode") as string, ConnectUrlMode, StringComparison.Ordinal))
@@ -70,7 +52,7 @@ internal sealed class BrowserbaseBackend(
                 (connectUrl, region) = await CreateSessionAsync(secret, options, ct);
             }
 
-            secretScope.Register(connectUrl); // the connectUrl carries a per-session signingKey JWT (§3.5, live-verified 2026-08-08) — a secret in its own right
+            secretScope.Register(connectUrl); // the connectUrl carries a per-session signingKey JWT — a secret in its own right
 
             var playwright = await provider.GetAsync(ct);
             browser = await playwright.Chromium.ConnectOverCDPAsync(connectUrl);
@@ -93,7 +75,7 @@ internal sealed class BrowserbaseBackend(
     }
 
     // apiKey mode: create the session ourselves (POST /v1/sessions), then connect to the returned connectUrl. The
-    // response also carries the region we record for cache locality (§9.1).
+    // response also carries the region we record for cache locality.
     private async Task<(string ConnectUrl, string Region)> CreateSessionAsync(
         string apiKey, IReadOnlyDictionary<string, object?>? options, CancellationToken ct)
     {

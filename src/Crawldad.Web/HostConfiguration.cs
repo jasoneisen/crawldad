@@ -20,10 +20,8 @@ using Wolverine.Marten;
 
 namespace Crawldad.Web;
 
-/// <summary>
-/// All host wiring lives here (not in Program.cs) so that booting the app through Alba exercises — and
-/// therefore covers — every line of configuration. Crawldad is API-only: a JSON service, no Blazor.
-/// </summary>
+/// <summary>All host wiring lives here (not in Program.cs) so that booting the app through Alba exercises — and
+/// therefore covers — every line of configuration. Crawldad is API-only: a JSON service, no Blazor.</summary>
 public static class HostConfiguration
 {
     // Single config key selecting the projection lifecycle for BOTH aggregate snapshots and read models across
@@ -43,16 +41,15 @@ public static class HostConfiguration
                 // Schema isolation so Crawldad coexists with other apps on the shared devcontainer Postgres.
                 options.DatabaseSchemaName = "crawldad";
 
-                // Per-tenant data isolation (CD-1, §12) via Marten's native conjoined multi-tenancy: one shared schema with
-                // every event stream and document row qualified by a tenant_id, every session opened for a tenant. Event
-                // tenancy isolates the Payload/Run aggregates + projections + SSE + drift/replay; AllDocuments extends it
-                // to the RunProgress/RunExecutorSaga/PayloadSummary docs. Tenancy model + upgrade path: SECURITY.md.
+                // Per-tenant data isolation via Marten's native conjoined multi-tenancy: one shared schema with every
+                // event stream and document row qualified by a tenant_id, every session opened for a tenant. Event
+                // tenancy covers the Payload/Run aggregates; AllDocuments extends it to the read-model docs.
                 options.Policies.AllDocumentsAreMultiTenanted();
                 options.Events.TenancyStyle = TenancyStyle.Conjoined;
 
                 // Each vertical slice self-registers its events/projections on the shared lifecycle: the Payloads
-                // aggregate + summary read model (§14.1) and the Run aggregate + step-trace/timeline read models
-                // (§14.2), each filling its module in place exactly as IncidentModule does in the foundation.
+                // aggregate + summary read model, and the Run aggregate + step-trace/timeline read models — each
+                // filling its module in place exactly as IncidentModule does in the foundation.
                 PayloadsModule.ConfigureMarten(options, projectionLifecycle);
                 RunsModule.ConfigureMarten(options, projectionLifecycle);
             })
@@ -84,19 +81,18 @@ public static class HostConfiguration
 
         // Per-slice service registration (validators + infrastructure seams). Each slice owns its DI, mirroring the
         // foundation; the Runs slice registers the POST /runs validator and the browser-backend seam (including the
-        // credential scrubber + per-run secret scope, §12), and the Payloads slice registers the POST /payloads validator.
+        // credential scrubber + per-run secret scope), and the Payloads slice registers the POST /payloads validator.
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
-        StorageModule.AddStorage(builder.Services, builder.Configuration); // CD-2: durable download sink + screenshot store + retention janitor
+        StorageModule.AddStorage(builder.Services, builder.Configuration); // durable download sink + screenshot store + retention janitor
         AddTenantSecurity(builder);
         ScrubAllLogOutput(builder.Services);
         return builder;
     }
 
-    // The tenant boundary (CD-1, §12): the config-bound tenant directory + the machine-to-machine API-key scheme, plus the
-    // authorization services RequireAuthorizeOnAll (MapCrawldadPlatform) leans on. Authentication resolves the tenant/actor
-    // claims; authorization then rejects every unauthenticated request. The tenant API keys are also folded into the single
-    // credential scrubber as always-on secrets, so a key can never surface in an event, projection, log, or response.
+    // The tenant boundary: the config-bound tenant directory + the machine-to-machine API-key scheme, plus the
+    // authorization services RequireAuthorizeOnAll leans on. Authentication resolves the tenant/actor claims; the tenant
+    // API keys are also folded into the credential scrubber as always-on secrets, so a key never surfaces in output.
     private static void AddTenantSecurity(WebApplicationBuilder builder)
     {
         builder.Services.AddOptions<TenantOptions>().Bind(builder.Configuration.GetSection(TenantOptions.Section));
@@ -116,8 +112,8 @@ public static class HostConfiguration
             [.. sp.GetRequiredService<IOptions<TenantOptions>>().Value.Tenants.Select(tenant => tenant.ApiKey)])));
     }
 
-    // The Wolverine message pipeline (§14): transactional outbox, durable local queues (so the executor saga's messages
-    // survive restarts, §11), bus-side validation, and the resume-not-dead-letter policy for an interrupted run.
+    // The Wolverine message pipeline: transactional outbox, durable local queues (so the executor saga's messages
+    // survive restarts), bus-side validation, and the resume-not-dead-letter policy for an interrupted run.
     private static void ConfigureWolverine(WolverineOptions options)
     {
         options.Policies.AutoApplyTransactions();
@@ -129,11 +125,9 @@ public static class HostConfiguration
         options.UseFluentValidation(RegistrationBehavior.ExplicitRegistration);
     }
 
-    // Route ALL log output through the credential scrubber (§12): decorate the host's ILoggerFactory so every category's
-    // logger — application, Wolverine, Marten, ASP.NET — scrubs its rendered message before any sink writes it. Wrapping
-    // the factory (the single point every ILogger/ILogger<T> is created from) is the central chokepoint, not per-call-site
-    // discipline; the inner factory is built from the resolved provider set at first use, so providers registered after
-    // this point are wrapped too. CredentialScrubber is registered by RunsModule.AddRunsServices above.
+    // Route ALL log output through the credential scrubber: decorate the host's ILoggerFactory so every category's
+    // logger — application, Wolverine, Marten, ASP.NET — scrubs its rendered message before any sink writes it. The
+    // inner factory is built from the resolved provider set at first use, so providers registered after this point are wrapped too.
     private static void ScrubAllLogOutput(IServiceCollection services) =>
         services.Replace(ServiceDescriptor.Singleton<ILoggerFactory>(sp => new ScrubbingLoggerFactory(
             new LoggerFactory(
@@ -152,7 +146,7 @@ public static class HostConfiguration
             app.UseHsts();
         }
 
-        // The tenant boundary (CD-1): authenticate the API key into a tenant/actor principal, then authorize. Ordered
+        // The tenant boundary: authenticate the API key into a tenant/actor principal, then authorize. Ordered
         // before the endpoints so an unauthenticated request never reaches a handler.
         app.UseAuthentication();
         app.UseAuthorization();
@@ -162,7 +156,7 @@ public static class HostConfiguration
         {
             options.UseFluentValidationProblemDetailMiddleware();
 
-            // Every Wolverine endpoint requires an authenticated tenant (CD-1) — no anonymous mutating or reading route
+            // Every Wolverine endpoint requires an authenticated tenant — no anonymous mutating or reading route
             // survives. /health opts out with [AllowAnonymous] (a liveness probe must answer an unauthenticated load
             // balancer); the endpoint-enumeration test asserts every other route rejects an unauthenticated request.
             options.RequireAuthorizeOnAll();
