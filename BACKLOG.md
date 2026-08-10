@@ -229,11 +229,19 @@ route through shared `RequireNthIndex`: non-integers → `type_error`, out-of-`[
 rejected on empirically-confirmed backend divergence; save-time `CheckNth` on both surfaces.
 
 ### [#41](https://github.com/jasoneisen/crawldad/issues/41) Classify `SelResolver` `(bool)first!` failure
-**Status:** filed 2026-08-09 (third sibling of #33/#37; found and reproduced by the #40 reviewer;
-pre-existing since Phase 1). A non-bool `first` in a structured Sel via the expression path throws
-`InvalidCastException` out of `RunAsync` → unhandled 500. Fix: `RequireBool`-style classified
-`type_error` + save-time literal check where cheap; widen the sweep beyond `(int)`/`(long)` to
-remaining raw unbox casts on expression results.
+**Status:** shipped 2026-08-10 (PR #43, reviewer-approved after one round). `first` now routes
+through `ExpressionValues.RequireFirstFlag` → terminal `type_error`; widened sweep classified every
+remaining expression-path escapee in `SelResolver` (all string fields via a shared `RequireString`,
+malformed `filter` — closing a latent `KeyNotFoundException` 500). Review round found one more
+same-family escapee the sweep had wrongly cleared as safe: `(ILocatorHandle)target` in
+`ResolveBase`, reachable via a frame-handle var in a DOM-target position (`exists(fr)` → 500) —
+fixed with a classified switch (frame handle gets an actionable "root a selector inside it with
+'in'" `type_error`). Reviewer independently confirmed this was the last raw handle cast in src;
+family closed. Save-time check deliberately skipped for the expression path (node-path `first` is
+schema-typed; matches the #40 precedent); systemic backstop declined (unreachable under the 100%
+gate, would misclassify user errors). Noted for the future: the 100% line+branch gate is
+structurally blind to raw-cast escapees (no branch to force), and node-path `JsonElement`
+accessors on unvalidated inline runs are a separate potential family, not yet filed.
 
 ### [#38](https://github.com/jasoneisen/crawldad/issues/38) `SlotQueueTests` intermittent timing flakes
 **Status:** resolved 2026-08-09/10 (PR #42, reviewer-approved first round). Instrumented hop
