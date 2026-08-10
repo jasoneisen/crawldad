@@ -28,17 +28,18 @@ contracts and endpoints, not from older design notes.
 9. [Drift, timeline & screenshots — `GET /runs/{id}/drift`, `/timeline`, `/screenshots/{ref}`](#9-drift-timeline--screenshots)
 10. [Queue stats — `GET /runs/queue-stats`](#10-queue-stats--get-runsqueue-stats)
 11. [Managed payloads — `/payloads`](#11-managed-payloads--payloads)
-12. [Wire codes](#12-wire-codes)
-13. [Reading validation errors](#13-reading-validation-errors)
-14. [Served docs & health](#14-served-docs--health)
-15. [Examples](#15-examples)
-16. [Endpoint quick reference](#16-endpoint-quick-reference)
+12. [Browsers — `/browsers`](#12-browsers--browsers)
+13. [Wire codes](#13-wire-codes)
+14. [Reading validation errors](#14-reading-validation-errors)
+15. [Served docs & health](#15-served-docs--health)
+16. [Examples](#16-examples)
+17. [Endpoint quick reference](#17-endpoint-quick-reference)
 
 ---
 
 ## 1. Authentication
 
-Every route except the anonymous ones ([§14](#14-served-docs--health)) requires a per-tenant API key,
+Every route except the anonymous ones ([§15](#15-served-docs--health)) requires a per-tenant API key,
 presented **either** way:
 
 ```http
@@ -106,8 +107,9 @@ input's value:
 // the record/replay fake backend (used by the examples/tests)
 { "adapter": "fake", "options": { "fixture": "caphome-search" } }
 
-// a real adapter (local | browserless | browserbase); the credential is a vault reference, never the secret
-{ "adapter": "browserless", "options": { /* provider passthrough */ }, "credentialRef": "vault:my-token" }
+// a real adapter (local | browserless | browserbase); credentialRef names a browser you registered
+// via PUT /browsers/{name} (§12), resolved tenant-scoped at connect — never the secret itself
+{ "adapter": "browserless", "options": { /* provider passthrough */ }, "credentialRef": "my-browser" }
 ```
 
 A self-hosted CDP tunnel — local Chromium exposed through `ngrok`/`cloudflared` — is a `browserbase` binding in
@@ -207,7 +209,7 @@ Failed run — still `200` (the request succeeded; the run faulted):
   "status": "failed",
   "failure": {
     "class": "terminal",                     // terminal | retryable-exhausted
-    "code": "record_not_accessible",         // a stable slug — see §12
+    "code": "record_not_accessible",         // a stable slug — see §13
     "message": "Record not accessible (redirected to /Login.aspx)",
     "atStep": { "index": 2, "kind": "guard" }
   },
@@ -418,7 +420,7 @@ Body `{ "payload": { /* crawldad document */ } }`. Drafts revision 1. Response (
 { "payloadId": "…", "name": "example.title", "revision": 1, "scriptHash": "…", "status": "active" }
 ```
 
-A schema/semantic failure is `400` with the full structured error list ([§13](#13-reading-validation-errors)):
+A schema/semantic failure is `400` with the full structured error list ([§14](#14-reading-validation-errors)):
 
 ```jsonc
 { "errors": [ { "path": "/steps/6/loop", "code": "missing_max_iterations", "message": "…" } ] }
@@ -463,13 +465,47 @@ payload or either revision is unknown.
 
 ---
 
-## 12. Wire codes
+## 12. Browsers — `/browsers`
+
+A tenant registers its browser **connect credentials** through the API rather than an operator editing host config, so onboarding is self-service and every credential is isolated to the tenant that owns it. A registered **name** becomes the `credentialRef` a payload's `config.backend` references ([§2.1](#21-inputs)); at connect time the credential is resolved **tenant-scoped** — a registered browser first, then a tenant-namespaced config fallback (`Secrets:{tenant}:{ref}`) — so no tenant can resolve, list, or delete another's. The **secret is encrypted at rest** (ASP.NET Data Protection) and is **never** returned by any endpoint, nor written to any event or log.
+
+### `PUT /browsers/{name}` — register or replace
+
+`{name}` is a slug (lowercase letters, digits, hyphens; 1–64 chars; no leading/trailing hyphen) and becomes the `credentialRef`.
+
+```jsonc
+{
+  "adapter": "browserbase",             // browserbase | browserless
+  "mode": "connectUrl",                 // connectUrl (the secret is the whole wss/https URL) | apiKey (a provider key)
+  "secret": "wss://…",                  // write-only — never echoed back
+  "options": { "region": "us-east-1" }  // optional provider metadata (surfaced in listings, never the secret)
+}
+```
+
+`200` returns the stored metadata (never the secret); a replace preserves `createdAt`:
+
+```json
+{ "name": "prod-bb", "adapter": "browserbase", "mode": "connectUrl",
+  "options": { "region": "us-east-1" }, "createdAt": "2026-08-10T12:00:00Z", "updatedAt": "2026-08-10T12:00:00Z" }
+```
+
+`400` (RFC 7807 problem+json) when the name is not a valid slug, the adapter or mode is unknown, the secret is empty, or a `connectUrl` secret is not `wss://`/`https://`.
+
+### `GET /browsers` — list
+
+`200 { "browsers": [ { name, adapter, mode, options, createdAt, updatedAt }, … ] }` — every browser this tenant has registered, ordered by name. **Secrets are never included.**
+
+### `DELETE /browsers/{name}` — unregister
+
+`204` on success; `404` when this tenant has no such name — a name owned by another tenant is simply absent here, so a cross-tenant delete is a plain not-found with no existence oracle.
+
+## 13. Wire codes
 
 Three surfaces carry stable slugs: **request rejections** (no run starts — `4xx`/`429`), **save-time
 validation** (`400` on `/payloads`), and **run failures** (`failure.code`, `HTTP 200` sync or terminal after a
 `202`). Enum values below are exact.
 
-### 12.1 Request rejections — no run starts
+### 13.1 Request rejections — no run starts
 
 | Code | HTTP | Where | Meaning |
 |---|---|---|---|
@@ -484,7 +520,7 @@ rejected. `queue_depth_exceeded` is the only `429`. (A malformed request body �
 non-object `inputs`, a non-object payload — is a `400 ProblemDetails` from the boundary validator, not one of
 these slugs.)
 
-### 12.2 Save-time payload validation — `400 PayloadValidationProblem`
+### 13.2 Save-time payload validation — `400 PayloadValidationProblem`
 
 Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two kinds of `code`:
 
@@ -497,7 +533,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 - `payload_archived` is also returned here (as a `PayloadValidationProblem`) by revise/rename/archive on an
   archived payload.
 
-### 12.3 Run failures — `failure.code`
+### 13.3 Run failures — `failure.code`
 
 `failure.class` is `terminal` (never retried) or `retryable-exhausted` (a retryable condition that exhausted
 `config.retry`). Engine and expression failures:
@@ -540,7 +576,7 @@ own vocabulary, not a fixed enum.
 > `unknown_identifier` or a `malformed_node`/selector failure. Save your payload (`POST /payloads`) to get the
 > full static check.
 
-### 12.4 Server limits and their config knobs
+### 13.4 Server limits and their config knobs
 
 Every mid-run cap is a deployment config value under `Crawldad:Limits` (a payload can never raise them). Keys
 equal the C# property names; defaults are generous so legitimate runs never trip them.
@@ -560,7 +596,7 @@ equal the C# property names; defaults are generous so legitimate runs never trip
 
 ---
 
-## 13. Reading validation errors
+## 14. Reading validation errors
 
 Save-time errors are reported **per (JSON-Pointer location, keyword)**. The one wart to know: a bad node fails
 the schema's `oneOf` over the node vocabulary, and the JSON Schema library reports **every** non-matching
@@ -580,7 +616,7 @@ the reliable anchor.
 
 ---
 
-## 14. Served docs & health
+## 15. Served docs & health
 
 Four routes are deliberately **anonymous** (no key), because each is a public, tenant-independent artifact:
 
@@ -596,7 +632,7 @@ only anonymous ones.
 
 ---
 
-## 15. Examples
+## 16. Examples
 
 Six curated, schema-valid payloads live in [`docs/examples/`](examples/) (every one is validated against the
 schema in CI, so they never drift). Five are lifted verbatim from the tested acceptance fixtures; one
@@ -635,7 +671,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 
 ---
 
-## 16. Endpoint quick reference
+## 17. Endpoint quick reference
 
 | Method + route | Auth | Body | Success | Errors |
 |---|---|---|---|---|
@@ -656,6 +692,9 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `POST /payloads/{id}/archive` | ✔ | — | `200 PayloadResponse` | `404`, `400` |
 | `GET /payloads/{id}/revisions/{revision}` | ✔ | — | `200 PayloadRevisionResponse` | `404` |
 | `GET /payloads/{id}/diff/{from}/{to}` | ✔ | — | `200 PayloadDiffResponse` | `404` |
+| `PUT /browsers/{name}` | ✔ | `RegisterBrowserRequest` | `200 BrowserSummary` | `400` |
+| `GET /browsers` | ✔ | — | `200 BrowserListResponse` | — |
+| `DELETE /browsers/{name}` | ✔ | — | `204` | `404` |
 | `GET /health` | — | — | `200` | — |
 | `GET /schema/crawldad-1.schema.json` | — | — | `200 application/schema+json` | — |
 | `GET /llms.txt` | — | — | `200 text/plain` | — |
