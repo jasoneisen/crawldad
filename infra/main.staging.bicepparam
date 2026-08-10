@@ -26,6 +26,10 @@ param tenantId = 'staging'
 param tenantActor = 'staging-operator'
 param tenantApiKey = readEnvironmentVariable('STAGING_TENANT_API_KEY', 'PLACEHOLDER-local-build-only-not-a-secret')
 
+// Beta tenant: wired only when the BETA_TENANT_API_KEY environment secret is set (empty ⇒ fully absent).
+param betaTenantId = empty(readEnvironmentVariable('BETA_TENANT_API_KEY', '')) ? '' : 'beta'
+param betaTenantApiKey = readEnvironmentVariable('BETA_TENANT_API_KEY', '')
+
 param storageContainer = 'crawldad-blobs'
 
 // Scale-to-zero for cost (ARCHITECTURE.md B.3 trade-off documented in the PR). 0.5 vCPU / 1 GiB is a valid

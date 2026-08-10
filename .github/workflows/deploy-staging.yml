@@ -54,6 +54,8 @@ jobs:
       # logs; they are never echoed. (Empty on a prod dispatch — the cfg step exits before any az call runs.)
       PG_ADMIN_PASSWORD: ${{ secrets.PG_ADMIN_PASSWORD }}
       STAGING_TENANT_API_KEY: ${{ secrets.STAGING_TENANT_API_KEY }}
+      # Optional: absent ⇒ empty ⇒ the .bicepparam wires no beta tenant.
+      BETA_TENANT_API_KEY: ${{ secrets.BETA_TENANT_API_KEY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

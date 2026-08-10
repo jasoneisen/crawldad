@@ -43,6 +43,10 @@ param storageAccountName string
 @description('Generated placeholder-tenant API key (>=16 chars; never committed).')
 param tenantApiKey string
 
+@secure()
+@description('Generated beta-tenant API key; empty ⇒ the beta-tenant secret is not created.')
+param betaTenantApiKey string = ''
+
 @description('Purge protection. Off in staging so a torn-down vault name can be purged + reused; irreversible once on.')
 param enablePurgeProtection bool = false
 
@@ -99,6 +103,12 @@ resource tenantKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: kv
   name: 'primary-tenant-apikey'
   properties: { value: tenantApiKey }
+}
+
+resource betaTenantKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(betaTenantApiKey)) {
+  parent: kv
+  name: 'beta-tenant-apikey'
+  properties: { value: betaTenantApiKey }
 }
 
 resource kvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {

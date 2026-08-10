@@ -52,6 +52,15 @@ param blobSecretName string
 @description('Placeholder-tenant API-key secret name.')
 param tenantApiKeySecretName string
 
+@description('Beta-tenant id; empty ⇒ no beta tenant is wired.')
+param betaTenantId string = ''
+
+@description('Beta-tenant actor identity.')
+param betaTenantActor string = ''
+
+@description('Beta-tenant API-key secret name; empty ⇒ no beta tenant is wired.')
+param betaTenantApiKeySecretName string = ''
+
 @description('ASPNETCORE_ENVIRONMENT value (anything but Development ⇒ the prod exception/HSTS branch + no boot-time schema apply).')
 param aspNetCoreEnvironment string
 
@@ -106,11 +115,17 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
 }
 
 // KV-backed secret refs, resolved passwordless via the app identity (Key Vault Secrets User).
-var appSecrets = [
-  { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: appIdentityId }
-  { name: 'blob-connectionstring', keyVaultUrl: '${keyVaultUri}secrets/${blobSecretName}', identity: appIdentityId }
-  { name: 'tenant-apikey', keyVaultUrl: '${keyVaultUri}secrets/${tenantApiKeySecretName}', identity: appIdentityId }
-]
+var hasBetaTenant = !empty(betaTenantApiKeySecretName)
+var appSecrets = concat(
+  [
+    { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: appIdentityId }
+    { name: 'blob-connectionstring', keyVaultUrl: '${keyVaultUri}secrets/${blobSecretName}', identity: appIdentityId }
+    { name: 'tenant-apikey', keyVaultUrl: '${keyVaultUri}secrets/${tenantApiKeySecretName}', identity: appIdentityId }
+  ],
+  hasBetaTenant
+    ? [{ name: 'beta-tenant-apikey', keyVaultUrl: '${keyVaultUri}secrets/${betaTenantApiKeySecretName}', identity: appIdentityId }]
+    : []
+)
 
 var registries = [
   { server: acrLoginServer, identity: appIdentityId }
@@ -121,19 +136,28 @@ var registries = [
 // api key by reference). Nothing here selects a browser backend — those are chosen per-run by payload data and do
 // not gate boot. The DataProtection pair persists the key ring so registered credentials survive redeploys (issue #65);
 // AZURE_CLIENT_ID points DefaultAzureCredential at the app's user-assigned identity for the blob + Key Vault access.
-var appEnv = [
-  { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
-  { name: 'AZURE_CLIENT_ID', value: appIdentityClientId }
-  { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
-  { name: 'Crawldad__Storage__Provider', value: 'azure' }
-  { name: 'Crawldad__Storage__Azure__ConnectionString', secretRef: 'blob-connectionstring' }
-  { name: 'Crawldad__Storage__Azure__Container', value: storageContainer }
-  { name: 'Crawldad__DataProtection__KeyRingBlobUri', value: keyRingBlobUri }
-  { name: 'Crawldad__DataProtection__KeyVaultKeyId', value: dataProtectionKeyId }
-  { name: 'Crawldad__Tenants__0__Id', value: tenantId }
-  { name: 'Crawldad__Tenants__0__Actor', value: tenantActor }
-  { name: 'Crawldad__Tenants__0__ApiKey', secretRef: 'tenant-apikey' }
-]
+var appEnv = concat(
+  [
+    { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
+    { name: 'AZURE_CLIENT_ID', value: appIdentityClientId }
+    { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
+    { name: 'Crawldad__Storage__Provider', value: 'azure' }
+    { name: 'Crawldad__Storage__Azure__ConnectionString', secretRef: 'blob-connectionstring' }
+    { name: 'Crawldad__Storage__Azure__Container', value: storageContainer }
+    { name: 'Crawldad__DataProtection__KeyRingBlobUri', value: keyRingBlobUri }
+    { name: 'Crawldad__DataProtection__KeyVaultKeyId', value: dataProtectionKeyId }
+    { name: 'Crawldad__Tenants__0__Id', value: tenantId }
+    { name: 'Crawldad__Tenants__0__Actor', value: tenantActor }
+    { name: 'Crawldad__Tenants__0__ApiKey', secretRef: 'tenant-apikey' }
+  ],
+  hasBetaTenant
+    ? [
+        { name: 'Crawldad__Tenants__1__Id', value: betaTenantId }
+        { name: 'Crawldad__Tenants__1__Actor', value: betaTenantActor }
+        { name: 'Crawldad__Tenants__1__ApiKey', secretRef: 'beta-tenant-apikey' }
+      ]
+    : []
+)
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName

@@ -93,6 +93,7 @@ ensure_env_secret() {
 echo "==> Ensuring deploy secrets on env '$GH_ENV'"
 ensure_env_secret "PG_ADMIN_PASSWORD"      "$(openssl rand -hex 24)Aa9"
 ensure_env_secret "STAGING_TENANT_API_KEY" "$(openssl rand -hex 24)"
+ensure_env_secret "BETA_TENANT_API_KEY"    "$(openssl rand -hex 24)"
 
 # ── 5. First deploy ────────────────────────────────────────────────────────────────────────
 echo "==> Triggering the first staging deploy"

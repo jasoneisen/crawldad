@@ -64,6 +64,16 @@ param tenantActor string = 'staging-operator'
 @description('Placeholder staging tenant API key (generated at bootstrap >=16 chars, supplied from a GitHub secret — never committed).')
 param tenantApiKey string
 
+@description('Beta tenant id; empty ⇒ no beta tenant is provisioned.')
+param betaTenantId string = ''
+
+@description('Beta tenant actor identity (stamped on mutation events).')
+param betaTenantActor string = 'beta-operator'
+
+@secure()
+@description('Beta tenant API key (generated at bootstrap >=16 chars); empty ⇒ no beta tenant is provisioned.')
+param betaTenantApiKey string = ''
+
 // ── Storage ─────────────────────────────────────────────────────────────────────────
 @description('Blob container all tenants share (partitioned by a {tenant}/ prefix).')
 param storageContainer string = 'crawldad-blobs'
@@ -192,6 +202,7 @@ module keyvault 'modules/keyvault.bicep' = {
     pgMaxPoolSize: pgMaxPoolSize
     storageAccountName: storage.outputs.name
     tenantApiKey: tenantApiKey
+    betaTenantApiKey: empty(betaTenantId) ? '' : betaTenantApiKey
   }
 }
 
@@ -219,6 +230,9 @@ module app 'modules/app.bicep' = {
     dataProtectionKeyId: keyvault.outputs.dataProtectionKeyId
     tenantId: tenantId
     tenantActor: tenantActor
+    betaTenantId: betaTenantId
+    betaTenantActor: betaTenantActor
+    betaTenantApiKeySecretName: empty(betaTenantId) ? '' : 'beta-tenant-apikey'
     minReplicas: minReplicas
     maxReplicas: maxReplicas
     cpu: appCpu
