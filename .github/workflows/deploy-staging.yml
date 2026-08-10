@@ -1,0 +1,236 @@
+# Deploy Crawldad to Azure Container Apps (ca-crawldad-stg) via Bicep.
+#
+# Trigger is workflow_dispatch ONLY — merging to main never deploys (a deploy is a deliberate act the owner pulls the
+# trigger for). The `environment` input defaults to staging; the prod path is present but INERT (no prod subscription
+# or federated credential is bootstrapped yet, so a prod dispatch fails fast with the reason).
+#
+# Auth is GitHub OIDC via the CI-deploy UAMI id-crawldad-stg-github (infra/bootstrap.bicep created it + its federated
+# credential for repo:jasoneisen/crawldad:environment:staging, and granted it subscription Contributor + RG-scoped
+# User Access Administrator + Key Vault Secrets Officer). Config is supplied once by infra/bootstrap.sh:
+#   repo variables  AZURE_CLIENT_ID · AZURE_TENANT_ID · AZURE_STAGING_SUBSCRIPTION_ID
+#   env secrets      PG_ADMIN_PASSWORD · STAGING_TENANT_API_KEY   (generated, never committed)
+#
+# Flow: pre-flight secrets → OIDC login → ensure ACR (first-run infra bootstrap with a placeholder image if none) →
+# build the image to ACR → what-if (validated; output WITHHELD — it contains KV secret values) → deploy pinned by
+# digest → run the db-apply job and wait for Succeeded → smoke-test GET /health (fails the run if not 200).
+#
+# The db-apply-BEFORE-health ordering is load-bearing: with scale-to-zero the app first boots when the health gate
+# hits it, so the Marten + Wolverine schema is already applied by then (a normal server start never applies schema in
+# non-Development). The health smoke test targets the raw *.azurecontainerapps.io ingress FQDN (publicly reachable;
+# there is no Front Door / custom domain in staging).
+
+name: Deploy Crawldad (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (prod is inert — staging is the only bootstrapped target today)."
+        type: choice
+        options:
+          - staging
+          - prod
+        default: staging
+
+permissions:
+  id-token: write # OIDC JWT for azure/login
+  contents: read # actions/checkout
+
+# Serialize deploys per environment so two dispatches queue rather than colliding on a half-applied Bicep deploy.
+concurrency:
+  group: crawldad-deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # The environment carries the OIDC federated-credential subject (repo:…:environment:<name>) and the deploy secrets.
+    # workflow_dispatch is the effective human gate.
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    env:
+      REGION: eastus2
+      REGION_CODE: eus2
+      # Deploy secrets, read by the .bicepparam via readEnvironmentVariable at az compile time. GitHub masks them in
+      # logs; they are never echoed. (Empty on a prod dispatch — the cfg step exits before any az call runs.)
+      PG_ADMIN_PASSWORD: ${{ secrets.PG_ADMIN_PASSWORD }}
+      STAGING_TENANT_API_KEY: ${{ secrets.STAGING_TENANT_API_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve environment config
+        id: cfg
+        run: |
+          set -euo pipefail
+          ENV="${{ github.event.inputs.environment || 'staging' }}"
+          case "$ENV" in
+            staging)
+              TOKEN=stg
+              echo "param_file=infra/main.staging.bicepparam" >> "$GITHUB_OUTPUT"
+              echo "subscription_id=${{ vars.AZURE_STAGING_SUBSCRIPTION_ID }}" >> "$GITHUB_OUTPUT"
+              ;;
+            prod)
+              # Present but inert: no prod subscription / federated credential is bootstrapped yet.
+              echo "::error::prod is not bootstrapped — this pipeline is staging-only today (issue #50). Bootstrap prod (subscription, federated credential, secrets) before dispatching prod."
+              exit 1
+              ;;
+            *)
+              echo "::error::unknown environment '$ENV'"; exit 1 ;;
+          esac
+          echo "env_token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "rg=rg-crawldad-${TOKEN}-${REGION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "deploy_name=crawldad-${TOKEN}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Fail EARLY and LOUDLY before touching Azure: an empty PG password would provision a broken server, and a
+      # tenant key shorter than 16 chars fails the app's boot-time TenantRegistry guard (a confusing late failure).
+      - name: Pre-flight — required deploy secrets present
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${PG_ADMIN_PASSWORD:-}" ] || missing="$missing PG_ADMIN_PASSWORD"
+          [ -n "${STAGING_TENANT_API_KEY:-}" ] || missing="$missing STAGING_TENANT_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::missing required environment secrets —$missing. Set them on the '${{ github.event.inputs.environment || 'staging' }}' environment (infra/bootstrap.sh does this)."
+            exit 1
+          fi
+          if [ "${#STAGING_TENANT_API_KEY}" -lt 16 ]; then
+            echo "::error::STAGING_TENANT_API_KEY is shorter than 16 chars — the app's TenantRegistry rejects it at boot. Regenerate it (>=16 chars)."
+            exit 1
+          fi
+          echo "required deploy secrets present"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ steps.cfg.outputs.subscription_id }}
+
+      # `az containerapp job ...` (the schema step) lives in an extension that is not always preinstalled on the
+      # runner; add/upgrade it explicitly so the non-interactive job start + poll below never prompt or fail.
+      - name: Ensure containerapp CLI extension
+        run: az extension add --name containerapp --upgrade --only-show-errors
+
+      # First-run bootstrap of the ACR: if the resource group has no registry yet, provision the whole stack once with
+      # the placeholder image (SERVE_IMAGE unset ⇒ the .bicepparam default) so the ACR exists before the real image can
+      # be built. With min-replicas 0 the placeholder app scales to zero and never runs, so the ARM deploy is clean;
+      # tolerate a non-zero and verify the ACR exists regardless.
+      - name: Ensure ACR (first-run infra bootstrap)
+        id: acr
+        env:
+          RG: ${{ steps.cfg.outputs.rg }}
+          PARAM_FILE: ${{ steps.cfg.outputs.param_file }}
+          DEPLOY_NAME: ${{ steps.cfg.outputs.deploy_name }}
+        run: |
+          set -euo pipefail
+          ACR=$(az acr list -g "$RG" --query "[0].name" -o tsv 2>/dev/null || true)
+          if [ -z "$ACR" ]; then
+            echo "No ACR in $RG — provisioning infra with the placeholder image to create it."
+            az deployment sub create -l "$REGION" -n "${DEPLOY_NAME}-bootstrap" -f infra/main.bicep -p "$PARAM_FILE" -o none || true
+            ACR=$(az acr list -g "$RG" --query "[0].name" -o tsv)
+            [ -n "$ACR" ] || { echo "::error::first-run infra deploy did not create the ACR in $RG"; exit 1; }
+          fi
+          echo "name=$ACR" >> "$GITHUB_OUTPUT"
+          echo "resolved ACR: $ACR"
+
+      # Build the app image server-side in ACR (no local docker), stamping this run's SHA for traceability, then
+      # resolve the immutable digest to pin the deployment. Publish the digest to $GITHUB_ENV so the .bicepparam
+      # (readEnvironmentVariable SERVE_IMAGE) picks it up in the what-if + deploy steps below.
+      - name: Build image to ACR and resolve digest
+        env:
+          ACR: ${{ steps.acr.outputs.name }}
+        run: |
+          set -euo pipefail
+          SERVER=$(az acr show -n "$ACR" --query loginServer -o tsv)
+          TAG="${GITHUB_SHA::7}"
+          az acr build -r "$ACR" -t "crawldad:$TAG" --build-arg SOURCE_REVISION_ID="$GITHUB_SHA" -f Dockerfile .
+          DIGEST=$(az acr repository show -n "$ACR" --image "crawldad:$TAG" --query digest -o tsv)
+          echo "SERVE_IMAGE=$SERVER/crawldad@$DIGEST" >> "$GITHUB_ENV"
+          echo "built $SERVER/crawldad@$DIGEST"
+
+      # what-if validates the template + the digest-pinned deploy. Its output is a full resource diff that INCLUDES
+      # the KV secret VALUES being written (PG password inside the marten string, storage key inside the blob string,
+      # tenant key), so it is redirected to a file and NEVER echoed (THREAT_MODEL: keys are never logged). A template
+      # error fails the run; a clean run prints only a non-secret confirmation.
+      - name: What-if (validated; output withheld — contains secret values)
+        env:
+          PARAM_FILE: ${{ steps.cfg.outputs.param_file }}
+        run: |
+          set -euo pipefail
+          echo "── what-if preview (validated; output withheld — contains KV secret values) ──"
+          if ! az deployment sub what-if -l "$REGION" -f infra/main.bicep -p "$PARAM_FILE" > /tmp/whatif.txt 2>&1; then
+            echo "::error::what-if failed (template error). Output withheld — it contains secret values; rerun 'az deployment sub what-if' locally to inspect."
+            exit 1
+          fi
+          echo "what-if validated OK (no template errors)"
+
+      # Deploy pinned by digest (this both ensures infra AND rolls the app + db-apply job to the new image — the
+      # declarative apply IS the image update, so it never resets to the placeholder). -o none: the create output can
+      # echo parameters; suppress it and read the non-secret outputs from an explicit deployment name.
+      - name: Deploy main.bicep (pinned by digest)
+        id: deploy
+        env:
+          RG: ${{ steps.cfg.outputs.rg }}
+          PARAM_FILE: ${{ steps.cfg.outputs.param_file }}
+          DEPLOY_NAME: ${{ steps.cfg.outputs.deploy_name }}
+        run: |
+          set -euo pipefail
+          az deployment sub create -l "$REGION" -n "$DEPLOY_NAME" -f infra/main.bicep -p "$PARAM_FILE" -o none
+          FQDN=$(az deployment sub show -n "$DEPLOY_NAME" --query "properties.outputs.appFqdn.value" -o tsv)
+          JOB=$(az deployment sub show -n "$DEPLOY_NAME" --query "properties.outputs.dbApplyJobName.value" -o tsv)
+          echo "app_fqdn=$FQDN" >> "$GITHUB_OUTPUT"
+          echo "dbapply_job=$JOB" >> "$GITHUB_OUTPUT"
+          echo "deploy complete — appFqdn=$FQDN, dbApplyJob=$JOB"
+
+      # Apply the Marten + Wolverine schema out-of-band by running the db-apply job (it reaches Postgres over the
+      # "allow Azure services" firewall rule — the runner itself cannot). Runs BEFORE the health gate so the schema is
+      # present before the app's first scale-from-zero boot. A non-Succeeded execution fails the run.
+      - name: Apply schema (db-apply job) and wait
+        env:
+          RG: ${{ steps.cfg.outputs.rg }}
+          JOB: ${{ steps.deploy.outputs.dbapply_job }}
+        run: |
+          set -euo pipefail
+          EXEC=$(az containerapp job start -n "$JOB" -g "$RG" --query name -o tsv)
+          echo "Started db-apply execution: $EXEC"
+          for i in $(seq 1 40); do
+            STATUS=$(az containerapp job execution show -n "$JOB" -g "$RG" --job-execution-name "$EXEC" --query "properties.status" -o tsv 2>/dev/null || echo "Unknown")
+            case "$STATUS" in
+              Succeeded)
+                echo "db-apply Succeeded after $i poll(s)."; exit 0 ;;
+              Failed|Degraded|Cancelled)
+                echo "::error::db-apply $STATUS — schema was not applied. Inspect: az containerapp job execution show -n $JOB -g $RG --job-execution-name $EXEC"; exit 1 ;;
+              *)
+                echo "db-apply status=$STATUS ($i/40)"; sleep 15 ;;
+            esac
+          done
+          echo "::error::db-apply did not reach Succeeded within ~10 minutes."
+          exit 1
+
+      # LOAD-BEARING smoke test: GET the anonymous /health on the deployed ingress FQDN and fail the run if it is not
+      # 200. A 200 proves the whole host (Marten, Wolverine, the Wolverine.Http pipeline) composed and started. The
+      # retry window absorbs the scale-from-zero cold start (min-replicas 0).
+      - name: Smoke-test /health (must return 200)
+        env:
+          APP_FQDN: ${{ steps.deploy.outputs.app_fqdn }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_FQDN:-}" ]; then
+            echo "::error::deploy produced no appFqdn — cannot smoke-test."; exit 1
+          fi
+          echo "Health-gating https://$APP_FQDN/health"
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 10 "https://$APP_FQDN/health" || echo "000")
+            if [ "$code" = "200" ]; then
+              body=$(cat /tmp/health.json)
+              echo "Healthy: HTTP 200 after $i attempt(s) — $body"
+              case "$body" in
+                *'"ok"'*) exit 0 ;;
+                *) echo "::warning::/health returned 200 but body was unexpected: $body"; exit 0 ;;
+              esac
+            fi
+            echo "Attempt $i/30: HTTP $code (scale-from-zero cold start can take ~20–40s)"
+            sleep 10
+          done
+          echo "::error::Health gate failed after ~5 minutes: https://$APP_FQDN/health never returned HTTP 200."
+          exit 1
