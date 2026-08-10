@@ -24,8 +24,8 @@ set -euo pipefail
 SUBSCRIPTION_ID="f930a541-0b8b-4634-9c0e-f083820eb31d"   # sub-crawldad-staging
 REPO="jasoneisen/crawldad"
 GH_ENV="staging"
-LOCATION="eastus2"
-REGION_CODE="eus2"
+LOCATION="centralus"
+REGION_CODE="cus"
 ENV_TOKEN="stg"
 BUDGET_EMAIL="jason@eisenmenger.io"
 

@@ -5,8 +5,8 @@ using './main.bicep'
 // used ONLY for local `az bicep build-params` validation — a real deploy always sets the env vars, and they are never
 // committed values.
 
-param location = 'eastus2'
-param regionCode = 'eus2'
+param location = 'centralus'
+param regionCode = 'cus'
 param envToken = 'stg'
 param aspNetCoreEnvironment = 'Staging'
 

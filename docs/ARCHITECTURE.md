@@ -169,13 +169,13 @@ The Enterprise deployment boundary is decided (issue #49): Enterprise runs as an
 
 ### B.5 Staging environment (deployed)
 
-The POC floor of B.3 is realized as code in [`infra/`](../infra) (subscription-scoped `main.bicep` composing modules under `infra/modules/`) and deployed by [`.github/workflows/deploy-staging.yml`](../.github/workflows/deploy-staging.yml) — a `workflow_dispatch`-only pipeline that authenticates with GitHub OIDC (no client secrets), builds the image to ACR, deploys pinned by digest, applies schema via a `db-apply` Container Apps job, and smoke-tests `GET /health`. The one-time landing-zone bootstrap (CI identity + federation + roles + budget) is `infra/bootstrap.bicep`, run via `infra/bootstrap.sh`. Target: `sub-crawldad-staging`, region `eastus2`. Tracked in **issue #50**.
+The POC floor of B.3 is realized as code in [`infra/`](../infra) (subscription-scoped `main.bicep` composing modules under `infra/modules/`) and deployed by [`.github/workflows/deploy-staging.yml`](../.github/workflows/deploy-staging.yml) — a `workflow_dispatch`-only pipeline that authenticates with GitHub OIDC (no client secrets), builds the image to ACR, deploys pinned by digest, applies schema via a `db-apply` Container Apps job, and smoke-tests `GET /health`. The one-time landing-zone bootstrap (CI identity + federation + roles + budget) is `infra/bootstrap.bicep`, run via `infra/bootstrap.sh`. Target: `sub-crawldad-staging`, region `centralus`. Tracked in **issue #50**.
 
 **What exists once deployed** (CAF-named):
 
 | Resource | Name | Notes |
 |---|---|---|
-| Resource group | `rg-crawldad-stg-eus2` | holds everything below |
+| Resource group | `rg-crawldad-stg-cus` | holds everything below |
 | Container Apps env | `cae-crawldad-stg` | Consumption-only; no VNet, no workload profile |
 | Container app | `ca-crawldad-stg` | HTTP ingress 8080, **scale-to-zero** (min 0 / max 1), 0.5 vCPU / 1 GiB |
 | db-apply job | `caj-crawldad-stg-dbapply` | runs `dotnet Crawldad.Web.dll db-apply` on demand |

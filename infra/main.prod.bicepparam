@@ -10,8 +10,8 @@ using './main.bicep'
 // this file changes today vs staging: the env token/name, the Production ASP.NET environment, and a min-1 replica so
 // prod runs the production durability shape (no scale-to-zero trap — see B.3) rather than the cost floor.
 
-param location = 'eastus2'
-param regionCode = 'eus2'
+param location = 'centralus'
+param regionCode = 'cus'
 param envToken = 'prod'
 param aspNetCoreEnvironment = 'Production'
 

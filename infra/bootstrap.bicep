@@ -20,10 +20,10 @@
 targetScope = 'subscription'
 
 @description('Resource location for the RG and its resources.')
-param location string = 'eastus2'
+param location string = 'centralus'
 
-@description('Short region code used in the resource-group name (must match main.bicep). eastus2 → eus2.')
-param regionCode string = 'eus2'
+@description('Short region code used in the resource-group name (must match main.bicep). centralus → cus.')
+param regionCode string = 'cus'
 
 @description('Environment token (staging is the live target; prod is bootstrapped separately when it lands).')
 @allowed([ 'stg', 'prod' ])

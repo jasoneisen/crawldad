@@ -23,11 +23,11 @@
 
 targetScope = 'subscription'
 
-@description('Azure region for all resources. B1ms Postgres + Consumption Container Apps are available in eastus2.')
-param location string = 'eastus2'
+@description('Azure region for all resources. B1ms Postgres + Consumption Container Apps are available in centralus.')
+param location string = 'centralus'
 
-@description('Short region code used in the resource-group name (CAF). eastus2 → eus2.')
-param regionCode string = 'eus2'
+@description('Short region code used in the resource-group name (CAF). centralus → cus.')
+param regionCode string = 'cus'
 
 @description('Environment token in resource names + tags. Staging is the only live target today; prod is parameterized but inert.')
 @allowed([ 'stg', 'prod' ])

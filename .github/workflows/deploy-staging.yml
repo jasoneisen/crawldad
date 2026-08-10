@@ -48,8 +48,8 @@ jobs:
     # workflow_dispatch is the effective human gate.
     environment: ${{ github.event.inputs.environment || 'staging' }}
     env:
-      REGION: eastus2
-      REGION_CODE: eus2
+      REGION: centralus
+      REGION_CODE: cus
       # Deploy secrets, read by the .bicepparam via readEnvironmentVariable at az compile time. GitHub masks them in
       # logs; they are never echoed. (Empty on a prod dispatch — the cfg step exits before any az call runs.)
       PG_ADMIN_PASSWORD: ${{ secrets.PG_ADMIN_PASSWORD }}
