@@ -60,6 +60,19 @@ internal static class ExpressionValues
         value is bool b ? b : throw TypeError($"expected bool, got {TypeName(value)}");
 
     /// <summary>
+    /// Requires <paramref name="value"/> to be a <see cref="string"/> (§7.1); anything else (incl. null) is a terminal
+    /// <c>type_error</c> naming the field by <paramref name="role"/> and the offender by type. Backs the DOM builtins'
+    /// relative-css/attribute-name arguments and the structured-<c>Sel</c> string roots/refinements the resolver reads
+    /// from an (uncoerced) object-literal target — never a raw <c>(string)</c> unbox, which escaped as an unhandled 500.
+    /// </summary>
+    /// <param name="value">The value that must be a string.</param>
+    /// <param name="role">The field/argument description, for the error message.</param>
+    /// <returns>The unwrapped string.</returns>
+    /// <exception cref="ExpressionEvaluationException">When <paramref name="value"/> is not a string.</exception>
+    public static string RequireString(object? value, string role) =>
+        value is string s ? s : throw TypeError($"{role} must be a string, got {TypeName(value)}");
+
+    /// <summary>
     /// The <c>+</c> operator (§7.1): if either operand is a string it concatenates (converting the other with
     /// <see cref="ToStringValue"/> rules); otherwise it is numeric addition; otherwise a terminal <c>type_error</c>.
     /// </summary>
@@ -249,6 +262,23 @@ internal static class ExpressionValues
                 ExpressionErrorCodes.IndexOutOfRange,
                 $"nth index {index} is out of range: a 0-based locator index must be between 0 and {int.MaxValue}");
     }
+
+    /// <summary>
+    /// Coerces <paramref name="value"/> to the bool a lazy DOM <c>locator.First</c> refinement takes (§5.2 <c>first</c>) —
+    /// the sibling of <see cref="RequireNthIndex"/> for the boolean refinement. A structured <c>Sel</c> <c>first</c>
+    /// reaching the resolver through the expression path (a DOM builtin's object-literal target, e.g.
+    /// <c>exists({ css:'tr', first:'x' })</c>) is an already-evaluated, UNCOERCED value-model value — not the
+    /// schema-checked JSON boolean the node path feeds — so a non-bool (a <c>string</c> typo, a <c>number</c>,
+    /// <c>null</c>, or a computed non-bool Expr) is a terminal <c>type_error</c>, never the raw <c>(bool)</c> unbox the
+    /// call site used to do, which escaped the interpreter's retry/catch layer as an unhandled 500
+    /// (<see cref="InvalidCastException"/> for a non-bool, <see cref="NullReferenceException"/> for null, #41). A real
+    /// bool (the node path's <c>GetBoolean</c>, or an expression-computed bool) passes through unchanged.
+    /// </summary>
+    /// <param name="value">The evaluated <c>first</c> value.</param>
+    /// <returns>The unwrapped bool.</returns>
+    /// <exception cref="ExpressionEvaluationException">When <paramref name="value"/> is not a bool.</exception>
+    public static bool RequireFirstFlag(object? value) =>
+        value is bool b ? b : throw TypeError($"first must be a bool, got {TypeName(value)}");
 
     /// <summary>
     /// Value-model scalar equality for <c>distinct</c> dedup: the same notion as <c>==</c> (null-safe, numeric across

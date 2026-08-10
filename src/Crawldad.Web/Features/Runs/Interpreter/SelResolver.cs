@@ -41,7 +41,19 @@ internal sealed class SelResolver(RunScope scope)
             return ResolveMap(map);
         }
 
-        return (ILocatorHandle)target; // opaque locator handle (the only other value-model shape reads accept)
+        // An opaque handle — but only a LOCATOR handle is a valid DOM-read target. RequireDomTarget's catch-all admits
+        // ANY opaque object (`_ => value`), and the value model has a SECOND handle type: an IFrameHandle bound by the
+        // `frame` node. A var reference carries no type gate, so a frame var in a target position (e.g. exists(fr)) flows
+        // a frame handle straight here — so this is classified as a terminal type_error, never the raw (ILocatorHandle)
+        // unbox that escaped the interpreter's catch filters as an unhandled 500 (#41, same family as first/nth).
+        return target switch
+        {
+            ILocatorHandle handle => handle,
+            IFrameHandle => throw ExpressionValues.TypeError(
+                "a frame handle is not a DOM read target — root a selector inside it with 'in', don't pass the frame itself"),
+            _ => throw ExpressionValues.TypeError(
+                $"DOM target must be a css string, a locator handle, or a Sel map, got {ExpressionValues.TypeName(target)}"),
+        };
     }
 
     /// <summary>Resolves a structured <c>Sel</c> map (values already evaluated) by chaining seam refinements.</summary>
@@ -51,13 +63,19 @@ internal sealed class SelResolver(RunScope scope)
     public ILocatorHandle ResolveMap(Dictionary<string, object?> map, IFrameHandle? ambientFrame = null)
     {
         // The map's own `in` (a frame var name) wins over the ambient node-level frame; absent both, resolution roots at
-        // the page.
-        var frame = map.TryGetValue("in", out var inVar) ? RequireFrame((string)inVar!) : ambientFrame;
+        // the page. Every field below is read UNCOERCED on the expression path (an object-literal target), so each is
+        // classified through an ExpressionValues.Require* check (terminal type_error) rather than a raw unbox that would
+        // escape as an unhandled 500 (#41); the node path pre-coerces every field, so it flows through unchanged.
+        var frame = map.TryGetValue("in", out var inVar) ? RequireFrame(ExpressionValues.RequireString(inVar, "selector 'in'")) : ambientFrame;
         var handle = ResolveRoot(map, frame);
 
         if (map.TryGetValue("filter", out var filter))
         {
-            handle = handle.Filter((string)((Dictionary<string, object?>)filter!)["hasTextRegex"]!);
+            var filterMap = filter as Dictionary<string, object?>
+                ?? throw ExpressionValues.TypeError($"selector 'filter' must be an object, got {ExpressionValues.TypeName(filter)}");
+            handle = handle.Filter(filterMap.TryGetValue("hasTextRegex", out var hasTextRegex)
+                ? ExpressionValues.RequireString(hasTextRegex, "filter 'hasTextRegex'")
+                : throw ExpressionValues.TypeError("selector 'filter' requires a 'hasTextRegex' string"));
         }
 
         if (map.TryGetValue("nth", out var nth))
@@ -67,9 +85,10 @@ internal sealed class SelResolver(RunScope scope)
             handle = handle.Nth(ExpressionValues.RequireNthIndex(nth));
         }
 
-        // `first` is always a bool when present (from an object literal or GetBoolean); the direct unbox avoids a
-        // dead is-bool branch on well-formed input.
-        if (map.TryGetValue("first", out var first) && (bool)first!)
+        // #41: `first` classifies through RequireFirstFlag (terminal type_error), the sibling of the nth cast above. The
+        // node path feeds a schema-checked JSON bool, but the expression path feeds an UNCOERCED Expr value, so a
+        // non-bool first (e.g. exists({ css:'tr', first:'x' })) is a classified failure, not the raw (bool) unbox 500.
+        if (map.TryGetValue("first", out var first) && ExpressionValues.RequireFirstFlag(first))
         {
             handle = handle.First;
         }
@@ -82,36 +101,36 @@ internal sealed class SelResolver(RunScope scope)
         if (map.TryGetValue("base", out var baseVar))
         {
             // A `base` handle already carries its own frame (or page) context; the relative CSS narrows it as-is.
-            var baseHandle = RequireHandle((string)baseVar!);
-            return map.TryGetValue("css", out var relCss) ? baseHandle.Locator((string)relCss!) : baseHandle;
+            var baseHandle = RequireHandle(ExpressionValues.RequireString(baseVar, "selector 'base'"));
+            return map.TryGetValue("css", out var relCss) ? baseHandle.Locator(ExpressionValues.RequireString(relCss, "selector 'css'")) : baseHandle;
         }
 
         if (map.TryGetValue("css", out var css))
         {
-            return RootCss(frame, (string)css!);
+            return RootCss(frame, ExpressionValues.RequireString(css, "selector 'css'"));
         }
 
         if (map.TryGetValue("xpath", out var xpath))
         {
             // xpath is a Locator-string engine (Playwright's "xpath=" prefix), so it roots inside a frame exactly as css
             // does — one code path (RootCss → page/frame Locator) serves both the string and structured xpath forms.
-            return RootCss(frame, "xpath=" + (string)xpath!);
+            return RootCss(frame, "xpath=" + ExpressionValues.RequireString(xpath, "selector 'xpath'"));
         }
 
         if (map.TryGetValue("text", out var text))
         {
-            return scope.PageHandle.GetByText((string)text!); // a page-level root (frames expose a Locator-string engine only)
+            return scope.PageHandle.GetByText(ExpressionValues.RequireString(text, "selector 'text'")); // a page-level root (frames expose a Locator-string engine only)
         }
 
         if (map.TryGetValue("role", out var role))
         {
-            var name = map.TryGetValue("name", out var nameValue) ? (string?)nameValue : null;
-            return scope.PageHandle.GetByRole((string)role!, name); // page-level, like title/text
+            var name = map.TryGetValue("name", out var nameValue) ? ExpressionValues.RequireString(nameValue, "selector 'name'") : null;
+            return scope.PageHandle.GetByRole(ExpressionValues.RequireString(role, "selector 'role'"), name); // page-level, like title/text
         }
 
         if (map.TryGetValue("title", out var title))
         {
-            return scope.PageHandle.GetByTitle((string)title!); // title is a page-level root (frames expose css/xpath only)
+            return scope.PageHandle.GetByTitle(ExpressionValues.RequireString(title, "selector 'title'")); // title is a page-level root (frames expose css/xpath only)
         }
 
         throw new InterpreterException(

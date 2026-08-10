@@ -136,7 +136,7 @@ internal static partial class BuiltinRegistry
         async (args, ctx) =>
         {
             var target = RequireDomTarget(await args[0].EvaluateAsync(ctx));
-            var css = args.Count > 1 ? RequireString(await args[1].EvaluateAsync(ctx), "relative css") : null;
+            var css = args.Count > 1 ? ExpressionValues.RequireString(await args[1].EvaluateAsync(ctx), "relative css") : null;
             return await read(ctx.Scope.Dom, target, css, ctx.Ct);
         };
 
@@ -179,7 +179,7 @@ internal static partial class BuiltinRegistry
     private static async ValueTask<object?> ExistsAsync(IReadOnlyList<ExpressionNode> args, EvalContext ctx)
     {
         var target = RequireDomTarget(await args[0].EvaluateAsync(ctx));
-        var css = args.Count > 1 ? RequireString(await args[1].EvaluateAsync(ctx), "relative css") : null;
+        var css = args.Count > 1 ? ExpressionValues.RequireString(await args[1].EvaluateAsync(ctx), "relative css") : null;
         return await ctx.Scope.Dom.ExistsAsync(target, css, ctx.Ct);
     }
 
@@ -190,13 +190,13 @@ internal static partial class BuiltinRegistry
         string name;
         if (args.Count == 3)
         {
-            css = RequireString(await args[1].EvaluateAsync(ctx), "relative css");
-            name = RequireString(await args[2].EvaluateAsync(ctx), "attribute name");
+            css = ExpressionValues.RequireString(await args[1].EvaluateAsync(ctx), "relative css");
+            name = ExpressionValues.RequireString(await args[2].EvaluateAsync(ctx), "attribute name");
         }
         else
         {
             css = null;
-            name = RequireString(await args[1].EvaluateAsync(ctx), "attribute name");
+            name = ExpressionValues.RequireString(await args[1].EvaluateAsync(ctx), "attribute name");
         }
 
         return await ctx.Scope.Dom.AttrAsync(target, css, name, ctx.Ct);
@@ -337,7 +337,4 @@ internal static partial class BuiltinRegistry
             throw ExpressionValues.TypeError($"DOM target must be a selector, handle, or Sel map, got {ExpressionValues.TypeName(value)}"),
         _ => value, // opaque locator handle
     };
-
-    private static string RequireString(object? value, string role) =>
-        value is string s ? s : throw ExpressionValues.TypeError($"{role} must be a string, got {ExpressionValues.TypeName(value)}");
 }

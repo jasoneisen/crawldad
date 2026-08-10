@@ -215,6 +215,57 @@ public class RunEndpointTests(AppFixture fixture)
     }
 
     [Fact]
+    public async Task Non_bool_sel_first_is_a_terminal_failure_not_a_500()
+    {
+        // #41: a non-bool `first` in a structured Sel reached via the EXPRESSION path (a DOM builtin's object-literal
+        // target) used to hit the (bool)first! cast in SelResolver.ResolveMap and escape as an unhandled 500
+        // (InvalidCastException, outside the interpreter's catch filters). It is now a classified terminal type_error — a
+        // failed RUN is HTTP 200 with a failure body, never a failed request. The node path's `first` stays
+        // schema-checked (a boolean) at save time; only the uncoerced expression-path value needed the run-time guard.
+        const string Payload =
+            """
+            { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
+              "steps": [ { "set": { "var": "x", "value": "exists({ css: 'tr', first: 'x' })" } } ],
+              "result": "null" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput())); // expectedStatus defaults to 200
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        var failure = root.GetProperty("failure");
+        failure.GetProperty("class").GetString().ShouldBe("terminal");
+        failure.GetProperty("code").GetString().ShouldBe("type_error");
+        failure.GetProperty("atStep").GetProperty("index").GetInt32().ShouldBe(0);
+        failure.GetProperty("atStep").GetProperty("kind").GetString().ShouldBe("set");
+    }
+
+    [Fact]
+    public async Task Frame_handle_as_a_dom_target_is_a_terminal_failure_not_a_500()
+    {
+        // #41 (reviewer follow-up): a frame handle bound by `frame` then used as a DOM-read TARGET — exists(fr) instead
+        // of a selector's `in` — used to reach the raw (ILocatorHandle)target cast in SelResolver.ResolveBase and escape
+        // as an unhandled 500 (InvalidCastException: a frame handle is not an ILocatorHandle, outside the catch filters).
+        // Both nodes are schema-valid and the expression is dynamically typed, so it is caught only at run time — now a
+        // classified terminal type_error, never a failed request. Same family as the headline first cast.
+        const string Payload =
+            """
+            { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
+              "steps": [ { "frame": { "var": "fr", "selector": "#some-iframe" } },
+                         { "set": { "var": "x", "value": "exists(fr)" } } ],
+              "result": "null" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput())); // expectedStatus defaults to 200
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        var failure = root.GetProperty("failure");
+        failure.GetProperty("class").GetString().ShouldBe("terminal");
+        failure.GetProperty("code").GetString().ShouldBe("type_error");
+        failure.GetProperty("atStep").GetProperty("index").GetInt32().ShouldBe(1);
+        failure.GetProperty("atStep").GetProperty("kind").GetString().ShouldBe("set");
+    }
+
+    [Fact]
     public async Task Missing_inputs_fails_with_invalid_backend_binding()
     {
         // No inputs at all: validator allows an absent inputs object; the run then fails because input.backend is null.
