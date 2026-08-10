@@ -555,15 +555,16 @@ the reliable anchor.
 
 ## 14. Served docs & health
 
-Three routes are deliberately **anonymous** (no key), because each is a public, tenant-independent artifact:
+Four routes are deliberately **anonymous** (no key), because each is a public, tenant-independent artifact:
 
 | Route | Returns |
 |---|---|
 | `GET /health` | `{ "status": "ok" }` — a liveness probe (touches no storage). |
 | `GET /schema/crawldad-1.schema.json` | the payload JSON Schema (`application/schema+json`) — usable as an editor `$schema` target. |
 | `GET /llms.txt` | the `llms.txt` discovery index (`text/plain`) pointing at this reference, the schema, and the examples. |
+| `GET /openapi.json` | the generated OpenAPI 3.1 description of this HTTP envelope (`application/json`) — every endpoint, its auth, request/response contracts, and status codes. Payload request bodies `$ref` the schema above rather than restating the DSL. |
 
-Every other route requires authentication; an endpoint-enumeration test asserts exactly these three are the
+Every other route requires authentication; an endpoint-enumeration test asserts exactly these four are the
 only anonymous ones.
 
 ---
@@ -630,6 +631,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `GET /health` | — | — | `200` | — |
 | `GET /schema/crawldad-1.schema.json` | — | — | `200 application/schema+json` | — |
 | `GET /llms.txt` | — | — | `200 text/plain` | — |
+| `GET /openapi.json` | — | — | `200 application/json` | — |
 
 `✔` = requires authentication ([§1](#1-authentication)). All `2xx` bodies are JSON except SSE (`text/event-stream`),
 the schema (`application/schema+json`), and `llms.txt` (`text/plain`).
