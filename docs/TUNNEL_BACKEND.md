@@ -15,6 +15,16 @@ Every claim below is verified against the code in
 Chrome's or the tunnel tool's rather than Crawldad's, that is called out — those flags evolve, so check the
 tool's current docs.
 
+> **Zero-setup path — the connector container.** If you'd rather not wire this up
+> by hand, [`connector/`](../connector/) is a single `docker compose up` that does
+> everything below for you: it launches headless Chromium, fronts it with a
+> Host-rewriting proxy, opens a free ephemeral cloudflared quick tunnel, and
+> **self-registers** it with Crawldad under a name you choose — you supply only
+> your API key. It also re-registers automatically when the ephemeral tunnel URL
+> churns. See [`connector/README.md`](../connector/README.md). The rest of this
+> guide is the manual flow it automates and the reference for how the binding and
+> failure modes behave.
+
 ## 1. How the connection is shaped
 
 Crawldad reaches a tunnel through the **`browserbase`** adapter in **`connectUrl`** mode. The adapter is named
