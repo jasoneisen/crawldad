@@ -41,11 +41,19 @@ internal sealed class SelResolver(RunScope scope)
             return ResolveMap(map);
         }
 
-        // An opaque locator handle — the only value-model shape left. This cast is construction-guaranteed, not an
-        // escapee (#41 sweep): every caller reaches here via a DOM builtin's RequireDomTarget, which admits only a
-        // string, a Sel map, or a handle (null/bool/number/array are a type_error there), and string/map are handled
-        // above — so a non-handle can never arrive.
-        return (ILocatorHandle)target;
+        // An opaque handle — but only a LOCATOR handle is a valid DOM-read target. RequireDomTarget's catch-all admits
+        // ANY opaque object (`_ => value`), and the value model has a SECOND handle type: an IFrameHandle bound by the
+        // `frame` node. A var reference carries no type gate, so a frame var in a target position (e.g. exists(fr)) flows
+        // a frame handle straight here — so this is classified as a terminal type_error, never the raw (ILocatorHandle)
+        // unbox that escaped the interpreter's catch filters as an unhandled 500 (#41, same family as first/nth).
+        return target switch
+        {
+            ILocatorHandle handle => handle,
+            IFrameHandle => throw ExpressionValues.TypeError(
+                "a frame handle is not a DOM read target — root a selector inside it with 'in', don't pass the frame itself"),
+            _ => throw ExpressionValues.TypeError(
+                $"DOM target must be a css string, a locator handle, or a Sel map, got {ExpressionValues.TypeName(target)}"),
+        };
     }
 
     /// <summary>Resolves a structured <c>Sel</c> map (values already evaluated) by chaining seam refinements.</summary>

@@ -28,6 +28,7 @@ public class SelResolverTests
         scope.Bind(page);
         scope.Set("rows", page.Locator(CapHome.GridRows));
         scope.Set("notAHandle", "oops");
+        scope.Set("boundFrame", page.FrameLocator("#f")); // an IFrameHandle (bound by `frame`) — NOT an ILocatorHandle
         return scope;
     }
 
@@ -173,6 +174,31 @@ public class SelResolverTests
     {
         var scope = await ScopeAsync();
         (await Xp.EvalAsync("exists({ css: 'tr', first: 1 == 1 })", scope)).ShouldBeOfType<bool>();
+    }
+
+    // #41 (reviewer follow-up): the DOM-read TARGET itself. RequireDomTarget's catch-all admits ANY opaque handle, and
+    // the value model's second handle type — an IFrameHandle bound by `frame` — reaches ResolveBase's cast via a bare
+    // var in a target position (exists(fr)/text(fr)/…) with no type gate. A frame handle (or, defensively, any other
+    // non-locator opaque handle) is now a terminal type_error, never the raw (ILocatorHandle)target unbox that escaped
+    // as a 500; a real locator handle target still resolves (happy path unchanged).
+    [Fact]
+    public async Task ResolveTarget_non_locator_handle_is_a_terminal_type_error()
+    {
+        var scope = await ScopeAsync();
+
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveTarget(scope.Sel.RequireFrame("boundFrame"), null))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);      // a frame handle (bound by `frame`) as a target
+        Should.Throw<ExpressionEvaluationException>(() => scope.Sel.ResolveTarget(new FakeHandle(), null))
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError);      // any other non-locator opaque handle
+        (await scope.Sel.ResolveTarget(scope.Sel.RequireHandle("rows"), null).CountAsync(CapHome.Ct)).ShouldBe(15); // a locator handle still resolves
+    }
+
+    // #41 (reviewer follow-up): the same classification reached END TO END — a frame handle flowed into a DOM builtin.
+    [Fact]
+    public async Task Dom_read_with_a_frame_handle_target_is_a_terminal_type_error()
+    {
+        var scope = await ScopeAsync();
+        (await Xp.EvalErrorAsync("exists(boundFrame)", scope)).Code.ShouldBe(ExpressionErrorCodes.TypeError);
     }
 
     [Fact]
