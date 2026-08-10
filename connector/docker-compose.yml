@@ -1,0 +1,23 @@
+name: crawldad-connector
+
+services:
+  connector:
+    build:
+      context: .
+    image: crawldad-connector:local
+    restart: unless-stopped
+    environment:
+      # Required: your Crawldad tenant API key. `:?` makes `up` fail fast if unset.
+      CRAWLDAD_API_KEY: ${CRAWLDAD_API_KEY:?set CRAWLDAD_API_KEY in your shell or a .env file}
+      # Crawldad base URL; defaults to staging.
+      CRAWLDAD_URL: ${CRAWLDAD_URL:-https://ca-crawldad-stg.politeflower-5d65f34e.centralus.azurecontainerapps.io}
+      # The credentialRef this browser registers under; use it in your payload.
+      BROWSER_NAME: ${BROWSER_NAME:-my-laptop}
+    # Liveness = Chromium's local CDP endpoint answering. The port is loopback
+    # only and deliberately not published; the tunnel is the sole ingress.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9222/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
