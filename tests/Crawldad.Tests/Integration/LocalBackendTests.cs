@@ -5,12 +5,9 @@ using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The shared Playwright wrapper and the <c>"local"</c> adapter, driven against a real headless Chromium over a
-/// loopback origin (real HTTP, so routing/interception is exercised honestly). Covers goto/waits/locators/frames/
-/// reads/actions/download through the seam, the §8.1 route policy (block / cache / pass-through), the region tag, and
-/// context-only teardown. This is the WP2 parity harness in miniature.
-/// </summary>
+/// <summary>The shared Playwright wrapper and the <c>"local"</c> adapter, driven against a real headless Chromium
+/// over a loopback origin. Covers goto/waits/locators/frames/reads/actions/download through the seam, the route
+/// policy (block/cache/pass-through), the region tag, and context-only teardown.</summary>
 [Collection(RealChromiumCollection.Name)]
 public sealed class LocalBackendTests(RealChromiumFixture fixture)
 {
@@ -71,7 +68,7 @@ public sealed class LocalBackendTests(RealChromiumFixture fixture)
         (await page.FrameLocator("#fr").Locator("#fp").TextContentAsync(_ct)).ShouldBe("frame-content");
 
         // actions: addStyleTag, fill/clear, waitFor visible + hidden (fill/clear set the value PROPERTY, not the
-        // attribute — a fake-vs-real divergence noted for WP2; here we only assert the actions run cleanly)
+        // attribute — a fake-vs-real divergence; here we only assert the actions run cleanly)
         await page.AddStyleTagAsync("body{background:#fff}", _ct);
         await page.Locator("#name").FillAsync("typed", _ct);
         await page.Locator("#name").ClearAsync(_ct);
@@ -224,7 +221,7 @@ public sealed class LocalBackendTests(RealChromiumFixture fixture)
     [Fact]
     public async Task Closing_a_page_is_a_clean_teardown()
     {
-        // The §3.6 reopen path closes a page before opening a fresh one; here we exercise the wrapper's CloseAsync directly.
+        // The reopen path closes a page before opening a fresh one; here we exercise the wrapper's CloseAsync directly.
         using var site = BasicSite();
         await using var session = await fixture.LocalBackend.ConnectAsync(Binding(), SessionPolicy.Default, _ct);
         var page = await session.NewPageAsync(_ct);

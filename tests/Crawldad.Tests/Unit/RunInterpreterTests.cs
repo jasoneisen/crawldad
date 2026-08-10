@@ -6,11 +6,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// Interpreter v0 node dispatch and control flow beyond the acceptance fragment: if/else, loop bounds + break +
-/// caps, forEach over arrays and locators, shadowing, the not-supported-in-v0 guards, stats, and the failure
-/// classification (§8.3). Each case runs a small payload against the fake backend.
-/// </summary>
+/// <summary>Interpreter v0 node dispatch and control flow beyond the acceptance fragment: if/else, loop bounds + break +
+/// caps, forEach over arrays and locators, shadowing, the not-supported-in-v0 guards, stats, and failure classification.
+/// Each case runs a small payload against the fake backend.</summary>
 public class RunInterpreterTests
 {
     private static string Payload(string steps, string result = "null", string vars = "{}", string backendExpr = "input.backend") =>
@@ -57,7 +55,6 @@ public class RunInterpreterTests
     {
         Ok(await Run("[]", result: "y", vars: """{ "y": "1 + 1" }""")).GetInt64().ShouldBe(2);
 
-        // A payload with no vars block at all.
         const string NoVars = """{ "name": "t", "config": { "backend": "input.backend" }, "steps": [], "result": "'ok'" }""";
         Ok(await Runner.RunAsync(NoVars)).GetString().ShouldBe("ok");
     }
@@ -90,7 +87,7 @@ public class RunInterpreterTests
             .Code.ShouldBe(InterpreterErrorCodes.MaxIterationsExceeded);
     }
 
-    // CD-10: a typed JSON number bound behaves exactly as the Expr string "N". The same loop with typed from/to/step and
+    // A typed JSON number bound behaves exactly as the Expr string "N": the same loop with typed from/to/step and
     // with the equivalent Expr-string bounds yields an identical [0, 2, 4].
     [Fact]
     public async Task Loop_for_typed_number_bounds_match_the_expr_string_form()
@@ -125,11 +122,9 @@ public class RunInterpreterTests
             .Code.ShouldBe(InterpreterErrorCodes.MaxIterationsExceeded);
     }
 
-    // #33: a non-integral loop.for bound is a terminal type_error at run time — never the raw (long) cast that escaped
-    // ForLoopAsync as an unhandled 500 (InvalidCastException, outside the retry layer's catch filters). A typed 2.5 and
-    // its Expr "2.5" spelling classify identically (CD-10), a COMPUTED non-integer (the issue's "Expr producing a
-    // non-integral double", 5.0/2 == 2.5) classifies the same, and from/to/step each reach the check. On this direct
-    // interpreter path the save-time walker never runs, so even a literal bound is caught here at run time.
+    // A non-integral loop.for bound is a terminal type_error at run time (never an unhandled InvalidCastException); a
+    // literal 2.5, an Expr "2.5" spelling, and a COMPUTED non-integral double (5.0/2 == 2.5) all classify the same, and
+    // from/to/step each reach the check. This direct interpreter path skips the save-time walker, so even a literal bound is caught here.
     [Fact]
     public async Task Loop_for_non_integral_bound_is_a_terminal_type_error()
     {
@@ -155,21 +150,21 @@ public class RunInterpreterTests
             .Code.ShouldBe(ExpressionErrorCodes.TypeError);
     }
 
-    // #33 (the "non-numeric bound" consideration): a bound computing to a string, bool, or null also escaped today —
-    // InvalidCastException for a string/bool, NullReferenceException for null — all outside the catch filters. They are
-    // now the SAME terminal type_error as a fractional number, in the one RequireIntegralBound helper.
+    // A bound computing to a string, bool, or null also escaped as an unhandled exception — InvalidCastException for a
+    // string/bool, NullReferenceException for null — all outside the catch filters. They are now the SAME terminal
+    // type_error as a fractional number, in the one RequireIntegralBound helper.
     [Fact]
     public async Task Loop_for_non_numeric_bound_is_a_terminal_type_error()
     {
         Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "'nope'" }, "do": [] } } ]"""))
             .Code.ShouldBe(ExpressionErrorCodes.TypeError); // string
         Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": "null", "to": 5 }, "do": [] } } ]"""))
-            .Code.ShouldBe(ExpressionErrorCodes.TypeError); // null (previously a NullReferenceException)
+            .Code.ShouldBe(ExpressionErrorCodes.TypeError); // null
         Fail(await Run("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "true" }, "do": [] } } ]"""))
             .Code.ShouldBe(ExpressionErrorCodes.TypeError); // bool
     }
 
-    // #33: an integral-VALUED double bound (2.0, or a computed 4.0/2 == 2.0) is accepted and coerced to the long the
+    // An integral-VALUED double bound (2.0, or a computed 4.0/2 == 2.0) is accepted and coerced to the long the
     // counter uses — exactly as an array index coerces — so `from 0 to 4.0` yields [0,1,2,3] just like `to: 4`, and an
     // inclusive `to: 4.0/2` gives [0,1,2]. Only a FRACTIONAL bound rejects; the fix does not over-reject whole doubles.
     [Fact]
@@ -188,12 +183,9 @@ public class RunInterpreterTests
     private static async Task<RunFailureDetail> NthFromHandle(string nthExpr) =>
         Fail(await Run($$"""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "{{nthExpr}}" } } ]"""));
 
-    // #37: a locate.nth that evaluates to a non-integer is a terminal type_error at run time — never the raw (int)(long)
-    // unbox that escaped LocateFromHandleAsync as an unhandled 500 (InvalidCastException for a double/string/bool,
-    // NullReferenceException for null — outside the retry layer's catch filters). Covers a literal 2.5, a COMPUTED
-    // non-integral double (5.0/2), a computed +Infinity (1.0/0.0), and the non-numbers string/null/bool; and the
-    // structured-Sel nth (SelResolver, via a node selector) routes through the same RequireNthIndex, so it classifies
-    // identically (a click never happens — the refinement throws first).
+    // A locate.nth that evaluates to a non-integer is a terminal type_error at run time, covering a literal 2.5, a
+    // COMPUTED non-integral double, a computed +Infinity, and the non-numbers string/null/bool. The structured-Sel nth
+    // (SelResolver, via a node selector) routes through the same RequireNthIndex, so it classifies identically.
     [Fact]
     public async Task Locate_nth_non_integral_or_non_numeric_is_a_terminal_type_error()
     {
@@ -201,17 +193,16 @@ public class RunInterpreterTests
         (await NthFromHandle("5.0 / 2")).Code.ShouldBe(ExpressionErrorCodes.TypeError);   // computed non-integral
         (await NthFromHandle("1.0 / 0.0")).Code.ShouldBe(ExpressionErrorCodes.TypeError); // +Infinity, never an integer
         (await NthFromHandle("'nope'")).Code.ShouldBe(ExpressionErrorCodes.TypeError);    // string
-        (await NthFromHandle("null")).Code.ShouldBe(ExpressionErrorCodes.TypeError);      // null (was a NullReferenceException)
+        (await NthFromHandle("null")).Code.ShouldBe(ExpressionErrorCodes.TypeError);      // null
         (await NthFromHandle("true")).Code.ShouldBe(ExpressionErrorCodes.TypeError);      // bool
 
         Fail(await Run("""[ { "click": { "selector": { "css": "tr", "nth": "2.5" } } } ]"""))
             .Code.ShouldBe(ExpressionErrorCodes.TypeError); // structured Sel nth, same helper
     }
 
-    // #37: a type-correct integer OUTSIDE the valid 0-based 32-bit range is a terminal index_out_of_range — a negative
-    // index (the backends diverge: the fake yields no match, Playwright's Nth(-1) is the last, so it is rejected before
-    // reaching either) or one past int.MaxValue (the (int) narrowing would otherwise silently truncate to a garbage
-    // index). This mirrors how an out-of-range collection nth(x,i) index classifies. Both nth surfaces reach it.
+    // A type-correct integer OUTSIDE the valid 0-based 32-bit range is a terminal index_out_of_range: a negative index
+    // is rejected before either backend runs (fake yields no match, Playwright's Nth(-1) is the last), and one past
+    // int.MaxValue is rejected too (the (int) narrowing would otherwise truncate to a garbage index). Both nth surfaces reach it.
     [Fact]
     public async Task Locate_nth_negative_or_out_of_int_range_is_a_terminal_index_out_of_range()
     {
@@ -222,7 +213,7 @@ public class RunInterpreterTests
             .Code.ShouldBe(ExpressionErrorCodes.IndexOutOfRange); // structured Sel nth, same helper
     }
 
-    // #37: an integral-VALUED double nth (6.0/2 == 3.0, or a bare 3) coerces to the int the .Nth refinement takes,
+    // An integral-VALUED double nth (6.0/2 == 3.0, or a bare 3) coerces to the int the .Nth refinement takes,
     // exactly as a long would — so the locate SUCCEEDS just as `nth: "3"` does. Only a fractional/negative/out-of-range
     // value rejects; the fix does not over-reject a whole-valued double.
     [Fact]

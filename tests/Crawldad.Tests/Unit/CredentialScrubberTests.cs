@@ -4,11 +4,9 @@ using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// Negative-space tests for the <see cref="CredentialScrubber"/> primitive (§12, WP3): the known-param rule across
+/// <summary>Negative-space tests for the <see cref="CredentialScrubber"/> primitive: the known-param rule across
 /// name/case/encoding variants and wss URLs, the exact live-secret rule, the no-false-positive guarantee on ordinary
-/// text (so the acceptance goldens are untouched), and idempotence.
-/// </summary>
+/// text (so the acceptance goldens are untouched), and idempotence.</summary>
 public class CredentialScrubberTests
 {
     private const string _redacted = CredentialScrubber.Redaction;
@@ -31,8 +29,8 @@ public class CredentialScrubberTests
     [Fact]
     public void Redacts_a_token_in_a_wss_connect_url_but_keeps_the_rest()
     {
-        // The live-confirmed Browserless connect shape (CD-4, re-verified 2026-08-08): the account token is a `token=`
-        // query param on wss://production-<region>.browserless.io/chromium/playwright.
+        // The Browserless connect shape: the account token is a `token=` query param on
+        // wss://production-<region>.browserless.io/chromium/playwright.
         var scrubbed = Scrubber().Scrub(
             "connecting wss://production-lon.browserless.io/chromium/playwright?token=tok_SECRET_123&blockAds=true");
 
@@ -45,9 +43,9 @@ public class CredentialScrubberTests
     [Fact]
     public void Redacts_the_live_signingKey_in_a_browserbase_connect_url_and_keeps_the_host()
     {
-        // The live-verified Browserbase shape (CD-4, 2026-08-08): a region-encoded host with a SINGLE per-session
-        // `signingKey` JWT (base64url, '.'-separated) — the returned URL no longer embeds the account apiKey. The JWT is
-        // synthetic (same eyJhbGci prefix + header.payload.signature structure), NOT a real key.
+        // The Browserbase connect shape: a region-encoded host with a SINGLE per-session `signingKey` JWT (base64url,
+        // '.'-separated) — the URL no longer embeds the account apiKey. The JWT is synthetic (same eyJhbGci prefix +
+        // header.payload.signature structure), NOT a real key.
         const string Jwt =
             "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uSWQiOiJmYWtlIiwiZXhwIjo5OTk5OTk5OTk5fQ.s1gn4tur3_FAKE_forTESTINGonly_notARealKey";
         var scrubbed = Scrubber().Scrub($"wss://connect.usw2.browserbase.com/?signingKey={Jwt}");
@@ -61,8 +59,8 @@ public class CredentialScrubberTests
     [Fact]
     public void Redacts_an_apiKey_bearing_browserbase_connect_url_and_keeps_the_session_id()
     {
-        // An apiKey-bearing connectUrl (connectUrl mode, or a user-constructed / pre-2026-08 shape) is still redacted;
-        // sessionId is ephemeral, not a secret. The live default shape now uses signingKey (see the test above).
+        // An apiKey-bearing connectUrl (connectUrl mode, or a user-constructed shape) is still redacted; sessionId is
+        // ephemeral, not a secret. The live default shape now uses signingKey (see the test above).
         var scrubbed = Scrubber().Scrub("wss://connect.browserbase.com?apiKey=bb_live_ACCOUNTKEY&sessionId=ses_abc123");
 
         scrubbed.ShouldBe($"wss://connect.browserbase.com?apiKey={_redacted}&sessionId=ses_abc123");
@@ -131,9 +129,9 @@ public class CredentialScrubberTests
     [Fact]
     public void Redacts_a_short_form_fill_secret_down_to_its_lower_floor()
     {
-        // CD-6: a form-fill secret (a user-chosen PIN/short password) is redacted at the lower form floor — even at 4 chars,
-        // well below the connect floor a short PIN would otherwise slip under and leak. Below the form floor (1-3 chars) it
-        // stays inert (the documented over-redaction guard).
+        // A form-fill secret (a user-chosen PIN/short password) is redacted at the lower form floor — even at 4 chars,
+        // well below the connect floor a short PIN would otherwise slip under and leak. Below the form floor (1-3 chars)
+        // it stays inert (the over-redaction guard).
         var atFloor = new string('7', CredentialScrubber.MinFormSecretScrubLength);        // 4 chars → redacted
         var belowFloor = new string('3', CredentialScrubber.MinFormSecretScrubLength - 1); // 3 chars → inert
         var scrubber = new CredentialScrubber(new StubSecretScope() { FormSecrets = [atFloor, belowFloor] });
@@ -153,7 +151,7 @@ public class CredentialScrubberTests
         scrubbed.ShouldBe($"token={_redacted}");
     }
 
-    // ----- always-on secrets (the configured tenant API keys, CD-1) ----------
+    // ----- always-on secrets (the configured tenant API keys) ----------------
 
     [Fact]
     public void Redacts_a_configured_always_on_secret_wherever_it_appears()
@@ -161,8 +159,8 @@ public class CredentialScrubberTests
         const string ApiKey = "tenant-api-key-0123456789abcdef";
         var scrubber = new CredentialScrubber(new StubSecretScope(), [ApiKey, "short"]);
 
-        // The always-on set redacts the key even in free-form text no param rule would catch (a stray Authorization log);
-        // a below-floor entry ("short") is inert, so the two branches of the always-on rule are both exercised.
+        // The always-on set redacts the key even in free-form text no param rule would catch (a stray Authorization
+        // log); a below-floor entry ("short") stays inert.
         var scrubbed = scrubber.Scrub($"Authorization: Bearer {ApiKey} then short");
 
         scrubbed.ShouldBe($"Authorization: Bearer {_redacted} then short");

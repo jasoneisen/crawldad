@@ -4,12 +4,9 @@ using Crawldad.Web.Features.Runs;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The interpreter's §13 semantic step-trace emission: on the durable path (an observer is present) it emits one event per
-/// meaningful action — session-opened (region), per-top-level-step markers, navigations, clicks, waits, extracted-value
-/// refs, downloads — and captures a screenshot on failure; on the synchronous path (no observer) it emits none, so the
-/// stream and every golden are unchanged. Driven through the white-box <see cref="Runner"/> against the record/replay fake.
-/// </summary>
+/// <summary>The interpreter's semantic step-trace emission: on the durable path (an observer is present) it emits one event
+/// per meaningful action — session-opened, step markers, navigations, clicks, waits, extracted-value refs, downloads — and
+/// captures a screenshot on failure; the synchronous path (no observer) emits none. Driven via <see cref="Runner"/> against the fake.</summary>
 public class RunTraceEmissionTests
 {
     private static IEnumerable<T> OfType<T>(RecordingObserver observer) => observer.Events.OfType<T>();
@@ -20,7 +17,7 @@ public class RunTraceEmissionTests
         var (outcome, observer, _) = await Runner.RunWithObserverAsync(Runner.FragmentPayload());
         outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
 
-        // Session-opened carries the backend region (the fake reports "fake") — the RunTimeline's region source (§13).
+        // Session-opened carries the backend region (the fake reports "fake") — the RunTimeline's region source.
         OfType<RunSessionOpened>(observer).Single().Region.ShouldBe("fake");
 
         // One StepStarted per top-level step, the first being the goto at index 0.
@@ -76,7 +73,7 @@ public class RunTraceEmissionTests
     [Fact]
     public async Task Set_with_a_path_emits_an_extracted_event()
     {
-        // The set-with-path form mutates inside a map var; it still records an Extracted for the target var (§13).
+        // The set-with-path form mutates inside a map var; it still records an Extracted for the target var.
         const string Payload =
             """{ "name": "t", "config": { "backend": "input.backend" }, "vars": { "m": {} }, "steps": [ { "set": { "var": "m", "path": "k", "value": "'v'" } } ], "result": "m.k" }""";
         var (outcome, observer, _) = await Runner.RunWithObserverAsync(Payload);

@@ -10,12 +10,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The Phase 2 WP4 <c>download</c> gate (§9.3/§9.4): the action runs its trigger, hashes the bytes to the engine-native
-/// <c>contentId</c> (= <c>AttachmentHashing</c>), streams to the target sink, and is idempotent by content identity —
-/// an already-present blob short-circuits to <c>stored:true</c> with no re-upload. Drives the fixture's file link
-/// through the white-box runner so the <see cref="FakeDownloadSink"/>'s exists/store calls are assertable.
-/// </summary>
+/// <summary>The <c>download</c> gate: runs its trigger, hashes bytes to the engine-native <c>contentId</c>
+/// (= <c>AttachmentHashing</c>), streams to the target sink, and is idempotent by content identity — an
+/// already-present blob short-circuits to <c>stored:true</c> with no re-upload, assertable via <see cref="FakeDownloadSink"/>.</summary>
 public class DownloadNodeTests
 {
     private const string _contentId = "18dc2ee2-6e62-f5c6-8ec1-648aa28b2f48";
@@ -42,7 +39,7 @@ public class DownloadNodeTests
         first.GetProperty("stored").GetBoolean().ShouldBeTrue();
 
         // internalFilename is composed by the payload from the SCRAPED "Site Photo.jpg" (.jpg); storedAs is the engine's
-        // own name from the download's suggested "report.pdf" (.pdf) — the §9.3 split, same contentId, two extensions.
+        // own name from the download's suggested "report.pdf" (.pdf) — same contentId, two different extensions.
         first.GetProperty("internalFilename").GetString().ShouldBe($"{_contentId}.jpg");
         first.GetProperty("storedAs").GetString().ShouldBe($"{_contentId}.pdf");
 
@@ -68,8 +65,8 @@ public class DownloadNodeTests
         var sink = new FakeDownloadSink(failStore: true);
         var outcome = await Runner.RunWithSinkAsync(DownloadPayload(), _downloadInputs, sink);
 
-        outcome.Status.ShouldBe(RunStatus.Succeeded);          // a rejected download is a warning, not a failure (§8.3)
-        outcome.Result!.Value.GetProperty("attachments").GetArrayLength().ShouldBe(0); // nothing kept
+        outcome.Status.ShouldBe(RunStatus.Succeeded);          // a rejected download is a warning, not a failure
+        outcome.Result!.Value.GetProperty("attachments").GetArrayLength().ShouldBe(0);
         sink.StoreCalls.ShouldBe(2);                           // both attempts tried (neither ever present)
         sink.Stored.Count.ShouldBe(0);
 

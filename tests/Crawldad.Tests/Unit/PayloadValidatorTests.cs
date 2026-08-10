@@ -6,12 +6,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// White-box tests for the shared save-time validator (Deliverable 3): the JSON Schema pass + the semantic pass over
-/// the two canonical payloads (B.1/B.2 must validate clean), the rarer valid shapes, and the semantic reject cases.
-/// The run-time pre-pass reuses the same <see cref="PayloadValidator.ValidateStructure"/>, exercised by
-/// <see cref="PayloadValidationTests"/>.
-/// </summary>
+/// <summary>White-box tests for the shared save-time validator: the JSON Schema pass + the semantic pass over the
+/// two canonical payloads (B.1/B.2 must validate clean), the rarer valid shapes, and the semantic reject cases. The
+/// run-time pre-pass reuses the same <see cref="PayloadValidator.ValidateStructure"/>, exercised by <see cref="PayloadValidationTests"/>.</summary>
 public class PayloadValidatorTests
 {
     private static JsonElement Load(string fixture)
@@ -74,7 +71,7 @@ public class PayloadValidatorTests
     }
 
     // A loop variable that shadows an outer loop variable of the same name is valid — it is bound for the inner body
-    // and the outer binding is restored on exit (§8.2). Exercises the walker's shadow (add-nothing / remove-nothing) path.
+    // and the outer binding is restored on exit. Exercises the walker's shadow (add-nothing / remove-nothing) path.
     [Fact]
     public void A_shadowing_loop_variable_validates_clean()
     {
@@ -93,13 +90,13 @@ public class PayloadValidatorTests
         ValidateAll(Parse(Payload)).ShouldBeEmpty();
     }
 
-    // #8: a screenshot node with no body (the name-absent walker branch) and one whose name Tmpl interpolates an input
-    // (the name-present branch) both validate clean — input sub-keys are not resolved as references (§12 walker leniency).
+    // A screenshot node with no body (the name-absent walker branch) and one whose name Tmpl interpolates an input
+    // (the name-present branch) both validate clean — input sub-keys are not resolved as references (walker leniency).
     [Fact]
     public void Screenshot_nodes_with_and_without_a_name_validate_clean() =>
         ValidateAll(Parse(Steps("""[ { "screenshot": {} }, { "screenshot": { "name": "shot-${input.tag}" } } ]"""))).ShouldBeEmpty();
 
-    // CD-10: loop.for from/to/step accept a typed JSON number as well as an Expr string. A numeric literal is checked
+    // loop.for from/to/step accept a typed JSON number as well as an Expr string. A numeric literal is checked
     // through the same parser as its Expr spelling but has no free identifiers, so a loop mixing typed bounds with a
     // computed Expr `to` (its `rows` reference in scope) validates clean.
     [Fact]
@@ -111,9 +108,9 @@ public class PayloadValidatorTests
               "result": "null" }
             """)).ShouldBeEmpty();
 
-    // #9: the structured-Sel role/text/xpath variants (§5.2) validate clean through schema + semantic — each as a lone
-    // root, role carrying an accessible-name `name`, and the base+css pair (the sole two-root combination). The `name`
-    // and `text` templates interpolate an input without being resolved as references (§12 walker leniency).
+    // The structured-Sel role/text/xpath variants validate clean through schema + semantic — each as a lone root,
+    // role carrying an accessible-name `name`, and the base+css pair (the sole two-root combination). The `name`
+    // and `text` templates interpolate an input without being resolved as references (walker leniency).
     [Fact]
     public void Structured_selector_variants_validate_clean() =>
         ValidateAll(Parse(Steps(
@@ -125,7 +122,7 @@ public class PayloadValidatorTests
               { "waitFor": { "selector": { "base": "row", "css": "td", "nth": "0" } } } ]
             """))).ShouldBeEmpty();
 
-    // #9: an ambiguous selector combining two page/frame roots is rejected by the semantic walker with a clear message,
+    // An ambiguous selector combining two page/frame roots is rejected by the semantic walker with a clear message,
     // rather than silently resolved by the resolver's root precedence. (The schema rejects it too; Semantic() exercises
     // the walker branch directly.)
     [Fact]
@@ -183,7 +180,7 @@ public class PayloadValidatorTests
         issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/push/into");
     }
 
-    // CD-10: a typed numeric `from` (which parses to a bare literal with nothing to resolve) must not suppress checking
+    // A typed numeric `from` (which parses to a bare literal with nothing to resolve) must not suppress checking
     // of a sibling Expr-string `to` — its undefined reference is still caught by the walker's string branch.
     [Fact]
     public void A_typed_numeric_from_still_checks_a_computed_expr_to()
@@ -196,9 +193,9 @@ public class PayloadValidatorTests
     private static IReadOnlyList<PayloadIssue> LoopForBound(string forSpec) =>
         Semantic(Steps($$"""[ { "loop": { "maxIterations": 10, "for": {{forSpec}}, "do": [] } } ]"""));
 
-    // #33: a bare non-integral literal loop.for bound is rejected at SAVE time with type_error — the same code the
+    // A bare non-integral literal loop.for bound is rejected at SAVE time with type_error — the same code the
     // run-time integral check raises — because the long loop counter can never take a fractional value. Covered for
-    // from, to, and step, and identically whether the bound is a typed JSON 2.5 or its Expr-string "2.5" (CD-10: N ≡ "N").
+    // from, to, and step, whether the bound is a typed JSON 2.5 or its Expr-string "2.5" (N and "N" are equivalent).
     [Fact]
     public void A_non_integral_literal_loop_bound_is_rejected_at_save_for_each_bound_and_both_forms()
     {
@@ -221,8 +218,8 @@ public class PayloadValidatorTests
             .ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/loop/for/step");
     }
 
-    // #33: the typed and Expr-string spellings of the same non-integral bound produce the SAME single issue — code
-    // type_error, and a message naming the bound and its value — so the two forms reject identically (the CD-10 contract).
+    // The typed and Expr-string spellings of the same non-integral bound produce the SAME single issue — code
+    // type_error, and a message naming the bound and its value — so the two forms reject identically.
     [Fact]
     public void A_typed_and_expr_non_integral_bound_reject_identically()
     {
@@ -236,14 +233,14 @@ public class PayloadValidatorTests
         typed.Message.ShouldContain("2.5");
     }
 
-    // #33: the full save pipeline (schema THEN semantic) surfaces a typed 2.5 bound as the walker's type_error, not a
+    // The full save pipeline (schema THEN semantic) surfaces a typed 2.5 bound as the walker's type_error, not a
     // schema rejection — numExpr admits any JSON number, so enforcing integrality is the semantic pass's job.
     [Fact]
     public void A_typed_non_integral_bound_flows_through_schema_to_the_semantic_type_error() =>
         ValidateAll(Parse(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 2.5 }, "do": [] } } ]""")))
             .ShouldContain(s => s.Contains("/steps/0/loop/for/to", StringComparison.Ordinal) && s.Contains(ExpressionErrorCodes.TypeError, StringComparison.Ordinal));
 
-    // #33: an integral-VALUED double bound (2.0 / "2.0") validates clean — the loop counter coerces it exactly as an
+    // An integral-VALUED double bound (2.0 / "2.0") validates clean — the loop counter coerces it exactly as an
     // array index coerces an integral double, so only a FRACTIONAL literal rejects. The save-time check does not
     // over-reject whole-valued doubles, staying consistent with the run-time acceptance.
     [Fact]
@@ -253,7 +250,7 @@ public class PayloadValidatorTests
         ValidateAll(Parse(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": "0.0", "to": "4.0", "step": "2.0" }, "do": [] } } ]"""))).ShouldBeEmpty();
     }
 
-    // #33: sign is handled at save time too — the parser folds a negative literal into unary-minus over a number, so a
+    // Sign is handled at save time too — the parser folds a negative literal into unary-minus over a number, so a
     // negative FRACTIONAL bound (-2.5) is rejected exactly as its positive twin, while a negative INTEGER bound (-2, a
     // valid descending step) validates clean. Keeps typed and Expr spellings symmetric for signed literals.
     [Fact]
@@ -276,7 +273,7 @@ public class PayloadValidatorTests
         LoopForBound("""{ "var": "i", "from": 0, "to": "bogusFn(1)" }""")
             .ShouldContain(i => i.Code == ExpressionErrorCodes.UnknownFunction && i.Path == "/steps/0/loop/for/to");
 
-    // #37: save-time semantic walk of the two nth surfaces — the from-handle form (`rows` bound first so `from`
+    // Save-time semantic walk of the two nth surfaces — the from-handle form (`rows` bound first so `from`
     // resolves) at /steps/1/locate/nth, and the structured Sel map on a click at /steps/0/click/selector/nth.
     private static IReadOnlyList<PayloadIssue> FromHandleNth(string nth) =>
         Semantic(Steps($$"""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "{{nth}}" } } ]"""));
@@ -284,9 +281,9 @@ public class PayloadValidatorTests
     private static IReadOnlyList<PayloadIssue> SelNth(string nth) =>
         Semantic(Steps($$"""[ { "click": { "selector": { "css": "tr", "nth": "{{nth}}" } } } ]"""));
 
-    // #37: a bare non-integral literal nth is rejected at SAVE time with type_error — the same code the run-time
+    // A bare non-integral literal nth is rejected at SAVE time with type_error — the same code the run-time
     // RequireNthIndex raises — because .Nth takes an integer index. Covered for BOTH nth surfaces and for the negated
-    // literal (-2.5 folds through the parser's unary-minus, like #33's bounds).
+    // literal (-2.5 folds through the parser's unary-minus, like the loop bounds above).
     [Fact]
     public void A_non_integral_literal_nth_is_rejected_at_save_for_both_surfaces()
     {
@@ -296,7 +293,7 @@ public class PayloadValidatorTests
         SelNth("-2.5").ShouldContain(i => i.Code == ExpressionErrorCodes.TypeError && i.Path == "/steps/0/click/selector/nth");
     }
 
-    // #37: a bare integral literal nth OUTSIDE the valid 0-based 32-bit range is rejected at save with index_out_of_range
+    // A bare integral literal nth OUTSIDE the valid 0-based 32-bit range is rejected at save with index_out_of_range
     // — a NEGATIVE index (either sign folds via TryGetConstantNumber) or one past int.MaxValue — again for both surfaces.
     [Fact]
     public void A_negative_or_out_of_range_literal_nth_is_rejected_at_save()
@@ -306,7 +303,7 @@ public class PayloadValidatorTests
         SelNth("-1").ShouldContain(i => i.Code == ExpressionErrorCodes.IndexOutOfRange && i.Path == "/steps/0/click/selector/nth");
     }
 
-    // #37: a valid 0-based literal nth — a non-negative integer or an integral-valued double (2.0) — validates clean, and
+    // A valid 0-based literal nth — a non-negative integer or an integral-valued double (2.0) — validates clean, and
     // a COMPUTED non-integral expression (5.0/2) is NOT a constant literal, so it is deferred to the run-time check.
     // Neither over-rejects.
     [Fact]
@@ -320,7 +317,7 @@ public class PayloadValidatorTests
         SelNth("5.0 / 2").ShouldBeEmpty();
     }
 
-    // #37: the two nth surfaces (from-handle and structured Sel) produce the SAME single issue for the same literal —
+    // The two nth surfaces (from-handle and structured Sel) produce the SAME single issue for the same literal —
     // code type_error and a message naming the value — so they reject identically.
     [Fact]
     public void The_two_nth_surfaces_reject_a_non_integral_literal_identically()
@@ -334,14 +331,14 @@ public class PayloadValidatorTests
         fromHandle.Message.ShouldContain("2.5");
     }
 
-    // #37: the full save pipeline (schema THEN semantic) surfaces a literal nth "2.5" as the walker's type_error — the
+    // The full save pipeline (schema THEN semantic) surfaces a literal nth "2.5" as the walker's type_error — the
     // schema admits any Expr string for nth, so enforcing integrality is the semantic pass's job (not a schema reject).
     [Fact]
     public void A_literal_non_integral_nth_flows_through_schema_to_the_semantic_type_error() =>
         ValidateAll(Parse(Steps("""[ { "locate": { "var": "rows", "selector": "tr" } }, { "locate": { "var": "x", "from": "rows", "nth": "2.5" } } ]""")))
             .ShouldContain(s => s.Contains("/steps/1/locate/nth", StringComparison.Ordinal) && s.Contains(ExpressionErrorCodes.TypeError, StringComparison.Ordinal));
 
-    // #37: a malformed nth Expr surfaces its parse error at save — CheckNth parses through the same grammar as any leaf,
+    // A malformed nth Expr surfaces its parse error at save — CheckNth parses through the same grammar as any leaf,
     // so an unknown builtin in an nth is rejected here, before the integral check.
     [Fact]
     public void A_malformed_nth_surfaces_its_parse_error() =>
@@ -377,7 +374,7 @@ public class PayloadValidatorTests
     }
 
     [Fact]
-    public void A_screenshot_name_referencing_an_undefined_var_is_rejected() // #8: the name Tmpl is checked like any sibling template field
+    public void A_screenshot_name_referencing_an_undefined_var_is_rejected() // the name Tmpl is checked like any sibling template field
     {
         var issues = Semantic(Steps("""[ { "screenshot": { "name": "shot-${nope}" } } ]"""));
         issues.ShouldHaveSingleItem().Code.ShouldBe(InterpreterErrorCodes.UndefinedReference);
@@ -398,7 +395,7 @@ public class PayloadValidatorTests
             .ShouldHaveSingleItem().Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
     }
 
-    // ----- checkpoint placement (§11): only a top-level `while` loop can host a resumable checkpoint --------------
+    // ----- checkpoint placement: only a top-level `while` loop can host a resumable checkpoint --------------------
 
     // The canonical shape: a checkpoint heading a top-level `while` loop, with a resume sub-program. (The B.1/B.2
     // fixtures above already prove this end-to-end; this is the minimal spelling.)

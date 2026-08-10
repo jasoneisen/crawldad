@@ -8,12 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The Phase 4 DI wiring (<see cref="RunsModule"/>): the three real adapters register as keyed
-/// <see cref="IBrowserBackend"/> services beside the fake, and the shared policy-layer singletons resolve. Endpoint/API
-/// bases default to production when unconfigured and take a configured override otherwise. Disposing the provider
-/// exercises the unused-resource teardown paths of the adapters and singletons.
-/// </summary>
+/// <summary>The DI wiring (<see cref="RunsModule"/>): the three real adapters register as keyed
+/// <see cref="IBrowserBackend"/> services beside the fake, and the shared policy-layer singletons resolve;
+/// endpoint/API bases default to production unless overridden. Disposing exercises adapter/singleton teardown.</summary>
 public class BrowserBackendRegistrationTests
 {
     private static ServiceProvider Build(params (string Key, string Value)[] config)
@@ -52,8 +49,8 @@ public class BrowserBackendRegistrationTests
     {
         await using var sp = Build();
 
-        // CD-6: the secret-vault registry resolves the `config` adapter by kind (the BYO-vault seam), and an unregistered
-        // kind (a not-yet-built azure-keyvault/etc.) is a clean miss — the interpreter turns that into unknown_secret_vault.
+        // The secret-vault registry resolves the `config` adapter by kind (the BYO-vault seam); an unregistered kind
+        // (a not-yet-built azure-keyvault/etc.) is a clean miss — the interpreter turns that into unknown_secret_vault.
         var registry = sp.GetRequiredService<ISecretStoreRegistry>();
         registry.ShouldBeOfType<KeyedSecretStoreRegistry>();
         registry.TryResolve(SecretVaults.Config, out var vault).ShouldBeTrue();
@@ -71,7 +68,6 @@ public class BrowserBackendRegistrationTests
             ("Crawldad:Browserless:EndpointTemplate", "ws://127.0.0.1:9/x"),
             ("Crawldad:Browserbase:ApiBaseUrl", "http://127.0.0.1:9"));
 
-        // Resolution succeeds with the override applied (the '?? Default' false branch).
         sp.GetRequiredKeyedService<IBrowserBackend>("browserless").ShouldBeOfType<BrowserlessBackend>();
         sp.GetRequiredKeyedService<IBrowserBackend>("browserbase").ShouldBeOfType<BrowserbaseBackend>();
     }

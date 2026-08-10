@@ -8,10 +8,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 1 acceptance gate: drives the real <c>POST /runs</c> HTTP endpoint against the fake backend and asserts
-/// the shaped output equals the golden, plus the failure paths and the persisted trace events.
-/// </summary>
+/// <summary>Drives the real <c>POST /runs</c> HTTP endpoint against the fake backend and asserts the shaped output
+/// equals the golden, plus the failure paths and the persisted trace events.</summary>
 [Collection(IntegrationCollection.Name)]
 public class RunEndpointTests(AppFixture fixture)
 {
@@ -91,8 +89,8 @@ public class RunEndpointTests(AppFixture fixture)
     [Fact]
     public async Task A_sync_run_under_the_window_writes_no_progress_row_so_get_is_404()
     {
-        // CD-15: a run finishing within the sync-upgrade window (the default 120 s — trivially, for this run) stays fully
-        // synchronous. It writes no async RunProgress read model, so GET /runs/{id} is 404 exactly as before the sync cap.
+        // A run finishing within the sync-upgrade window (the default 120s — trivially, for this run) stays fully
+        // synchronous: it writes no async RunProgress read model, so GET /runs/{id} is 404 exactly as before the sync cap.
         var root = await PostAsync(Body(Runner.FragmentPayload(), FakeBackendInput("01/01/2024", "01/31/2024")));
         root.GetProperty("status").GetString().ShouldBe("succeeded");
         var runId = root.GetProperty("runId").GetGuid();
@@ -149,8 +147,8 @@ public class RunEndpointTests(AppFixture fixture)
     [Fact]
     public async Task Loop_with_typed_number_bounds_runs_end_to_end()
     {
-        // CD-10: from/to/step as typed JSON numbers drive the loop end-to-end (schema → semantic pass → interpreter),
-        // behaving exactly as the Expr-string form — inclusive 0..4 by 2 accumulates [0, 2, 4].
+        // from/to/step as typed JSON numbers drive the loop end-to-end (schema → semantic pass → interpreter), behaving
+        // exactly as the Expr-string form — inclusive 0..4 by 2 accumulates [0, 2, 4].
         const string Payload =
             """
             { "name": "typed-loop", "config": { "backend": "input.backend" }, "vars": { "acc": [] },
@@ -168,10 +166,9 @@ public class RunEndpointTests(AppFixture fixture)
     [Fact]
     public async Task Non_integral_loop_bound_is_a_terminal_failure_not_a_500()
     {
-        // #33: a non-integral loop.for bound used to hit the (long) cast in ForLoopAsync and escape as an unhandled 500
-        // (InvalidCastException is outside the interpreter's catch filters). It is now a classified terminal type_error —
-        // a failed RUN is HTTP 200 with a failure body, never a failed request. POST /runs runs no save-time walker on an
-        // inline payload, so the run-time classification is what catches the typed 2.5 here.
+        // A non-integral loop.for bound is a classified terminal type_error, never an unhandled 500 — a failed run is
+        // HTTP 200 with a failure body. POST /runs runs no save-time walker on an inline payload, so run-time
+        // classification is what catches the typed 2.5 here.
         const string Payload =
             """
             { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
@@ -192,10 +189,9 @@ public class RunEndpointTests(AppFixture fixture)
     [Fact]
     public async Task Non_integral_locate_nth_is_a_terminal_failure_not_a_500()
     {
-        // #37: a non-integral locate.nth used to hit the (int)(long) cast in LocateFromHandleAsync and escape as an
-        // unhandled 500 (InvalidCastException, outside the interpreter's catch filters). It is now a classified terminal
-        // type_error — a failed RUN is HTTP 200 with a failure body, never a failed request. POST /runs runs no save-time
-        // walker on an inline payload, so the run-time RequireNthIndex is what catches the literal 2.5 here (at step 1).
+        // A non-integral locate.nth is a classified terminal type_error, never an unhandled 500 — a failed run is HTTP
+        // 200 with a failure body. POST /runs runs no save-time walker on an inline payload, so run-time
+        // RequireNthIndex is what catches the literal 2.5 here (at step 1).
         const string Payload =
             """
             { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
@@ -217,11 +213,9 @@ public class RunEndpointTests(AppFixture fixture)
     [Fact]
     public async Task Non_bool_sel_first_is_a_terminal_failure_not_a_500()
     {
-        // #41: a non-bool `first` in a structured Sel reached via the EXPRESSION path (a DOM builtin's object-literal
-        // target) used to hit the (bool)first! cast in SelResolver.ResolveMap and escape as an unhandled 500
-        // (InvalidCastException, outside the interpreter's catch filters). It is now a classified terminal type_error — a
-        // failed RUN is HTTP 200 with a failure body, never a failed request. The node path's `first` stays
-        // schema-checked (a boolean) at save time; only the uncoerced expression-path value needed the run-time guard.
+        // A non-bool `first` in a structured Sel reached via the EXPRESSION path (a DOM builtin's object-literal target)
+        // is a classified terminal type_error, never an unhandled 500. The node path's `first` stays schema-checked at
+        // save time; only the uncoerced expression-path value needs this run-time guard.
         const string Payload =
             """
             { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
@@ -242,11 +236,9 @@ public class RunEndpointTests(AppFixture fixture)
     [Fact]
     public async Task Frame_handle_as_a_dom_target_is_a_terminal_failure_not_a_500()
     {
-        // #41 (reviewer follow-up): a frame handle bound by `frame` then used as a DOM-read TARGET — exists(fr) instead
-        // of a selector's `in` — used to reach the raw (ILocatorHandle)target cast in SelResolver.ResolveBase and escape
-        // as an unhandled 500 (InvalidCastException: a frame handle is not an ILocatorHandle, outside the catch filters).
-        // Both nodes are schema-valid and the expression is dynamically typed, so it is caught only at run time — now a
-        // classified terminal type_error, never a failed request. Same family as the headline first cast.
+        // A frame handle bound by `frame` then used as a DOM-read TARGET (exists(fr) instead of a selector's `in`) is
+        // caught only at run time, since both nodes are schema-valid and the expression is dynamically typed — a
+        // classified terminal type_error, never a failed request.
         const string Payload =
             """
             { "name": "t", "config": { "backend": "input.backend" }, "vars": {},

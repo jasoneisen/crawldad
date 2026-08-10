@@ -6,23 +6,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>
-/// The Phase 4 WP2 parity backend: registered as the <c>"local"</c> adapter in the parity host, so the acceptance
-/// payloads bind to it exactly as they would the product local adapter (<c>inputs.backend = { adapter: "local" }</c>)
-/// and run through the real <c>POST /runs</c> path and interpreter. It launches ONE shared headless Chromium with the
-/// payload's §8.1 launch args (<c>--disable-web-security</c>) and, per connect, opens a fresh context (per-run
-/// isolation, §12) whose pages are served by a <see cref="FixtureSite"/> for the fixture named in
-/// <c>binding.Options["fixture"]</c> — the same fixture directory the record/replay fake reads.
-/// <para>
-/// It deliberately substitutes a fixture-fulfilling route for the product adapter's network route: the §8.1 route
-/// policy (block/cache/throttle) is exercised honestly by <c>LocalBackendTests</c> (WP1); here the goal is
-/// engine-output parity (fake ≡ real), and the canonical throttle (2 s per request) is skipped so the suite stays
-/// tolerable — the legitimate test-time throttle override the plan calls for. The shared browser is reused across every
-/// parity run (built once) and disposed with the host.
-/// </para>
-/// </summary>
-/// <param name="provider">The shared Playwright driver (a host singleton).</param>
-/// <param name="fixturesRoot">The fixtures root (the test output's copied corpus).</param>
+/// <summary>The parity backend for the <c>"local"</c> adapter: runs real headless Chromium (one shared instance, a
+/// fresh per-connect context for run isolation) so payloads exercise the identical <c>POST /runs</c> path as production,
+/// serving pages from a <see cref="FixtureSite"/>. Throttling is deliberately skipped so the parity suite stays fast.</summary>
 [SuppressMessage("Reliability", "CA2213:Disposable fields should be disposed",
     Justification = "The browser is disposed in DisposeAsync via its own DisposeAsync; the analyzer does not model async disposal of the nullable field.")]
 internal sealed class FixtureChromiumBackend(IPlaywrightProvider provider, string fixturesRoot) : IBrowserBackend, IAsyncDisposable
@@ -89,21 +75,14 @@ internal sealed class FixtureChromiumBackend(IPlaywrightProvider provider, strin
     }
 }
 
-/// <summary>
-/// One parity run's session: a real Chromium <see cref="IBrowserContext"/> whose every page is served by
-/// <paramref name="site"/> via a <c>page.RouteAsync</c> fulfilment handler. Everything on the canonical Accela origin is
-/// answered from the fixture; anything else is aborted, so <b>no request can reach the live site</b> (default-deny).
-/// Pages are wrapped in the product <see cref="PlaywrightPageHandle"/>, so the interpreter drives real Chromium through
-/// the identical seam the product adapters use.
-/// </summary>
-/// <param name="context">The per-run context (closed on dispose; the browser is shared and outlives it).</param>
-/// <param name="site">The fixture-site state machine answering this session's requests.</param>
+/// <summary>One parity run's session: every page is served by <paramref name="site"/> via <c>page.RouteAsync</c>; off-origin
+/// requests are aborted (default-deny — no request can reach the live site). Pages wrap in <see cref="PlaywrightPageHandle"/>.</summary>
+/// <param name="context">Closed on dispose; the browser is shared and outlives it.</param>
 internal sealed class FixtureBrowserSession(IBrowserContext context, FixtureSite site) : IBrowserSession
 {
-    /// <summary>The parity region tag — the local adapter's constant (§9.1).</summary>
     public string Region => "local";
 
-    /// <summary>Always 0 — the fixture route does not model the cross-run asset cache (that is WP1's LocalBackendTests).</summary>
+    /// <summary>Always 0 — the fixture route does not model the cross-run asset cache.</summary>
     public int CacheHits => 0;
 
     public async Task<IPageHandle> NewPageAsync(CancellationToken ct)

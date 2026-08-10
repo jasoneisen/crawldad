@@ -4,14 +4,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The CD-3/CD-16 per-tenant concurrent-run admission gate: the single atomic seam a run funnels through at start. Proves the
-/// cap (global default + per-tenant override), that a released slot re-opens capacity, that occupancy is counted per tenant,
-/// that the cap-exempt <c>Occupy</c> (the executor's restart self-heal) and a no-op <c>Release</c> behave, and — the CD-16
-/// addition — that <c>TryAdmit</c> refuses a run it already counts (so two concurrent promotions cannot both claim the same
-/// run). Since CD-16 the gate no longer decides the at-cap response (queue vs 429) — it answers only "is a slot free?"; the
-/// HTTP queue-at-cap surface is covered by <c>ConcurrentRunsCapTests</c>/<c>SlotQueueTests</c>.
-/// </summary>
+/// <summary>The per-tenant concurrent-run admission gate: the single atomic seam a run funnels through at start.
+/// Proves the cap (global + per-tenant override), release/re-open, per-tenant occupancy, the cap-exempt
+/// <c>Occupy</c> self-heal, and double-claim refusal. It only answers "is a slot free?" — not queue vs 429.</summary>
 public class RunAdmissionGateTests
 {
     private const string _tenantA = "tenant-a";
@@ -43,7 +38,7 @@ public class RunAdmissionGateTests
         gate.TryAdmit(_tenantA, Guid.NewGuid()).ShouldBeTrue();
         gate.TryAdmit(_tenantA, Guid.NewGuid()).ShouldBeTrue();
 
-        gate.TryAdmit(_tenantA, Guid.NewGuid()).ShouldBeFalse(); // at the cap → the caller queues (CD-16), not a rejection
+        gate.TryAdmit(_tenantA, Guid.NewGuid()).ShouldBeFalse(); // at the cap → the caller queues, not a rejection
         gate.ActiveCount(_tenantA).ShouldBe(2);
     }
 
@@ -59,7 +54,7 @@ public class RunAdmissionGateTests
     }
 
     [Fact]
-    public void Reports_free_capacity_until_the_cap_is_reached() // CD-16: the enqueue-promotion nudge hint
+    public void Reports_free_capacity_until_the_cap_is_reached() // the enqueue-promotion nudge hint
     {
         var gate = Gate(globalCap: 1, (_tenantA, null));
 

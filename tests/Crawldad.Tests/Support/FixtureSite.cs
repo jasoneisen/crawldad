@@ -10,41 +10,9 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>
-/// The Phase 4 WP2 <b>local fixture site</b>: an in-process origin that serves a fixture directory's corpus to a
-/// <b>real headless Chromium</b> under the canonical Accela origin, with real navigation semantics and
-/// <b>zero third-party traffic</b>. It is driven by the SAME <see cref="FakeManifest"/> the record/replay fake uses
-/// (single source of truth — the manifests are not forked), so a parity run over real Chromium exercises the identical
-/// state machine the fake does.
-/// <para>
-/// <b>Documents, frames, and postbacks</b> are served by <see cref="Respond"/> via Playwright's
-/// <c>route.FulfillAsync</c>: a spike proved fulfilment reproduces a canonical <c>page.Url</c> after a navigation, a
-/// real POST postback that <c>waitForRequest</c> observes, and the record-09 Error.aspx redirect — with no network at
-/// all. <b>Downloads</b> alone cannot be fulfilled (a fulfilled download surfaces the event and filename but its bytes
-/// read back "canceled"), so they are served from a genuine loopback <see cref="HttpListener"/> (<see cref="DownloadBase"/>)
-/// with a real <c>Content-Disposition</c> response — a real browser download whose bytes the payload's
-/// <c>RunAndWaitForDownloadAsync</c> can read (§9.3, the attachment content hash). The listener is loopback, so this is
-/// still zero third-party traffic.
-/// </para>
-/// <para>
-/// Manifest transitions fire in the real browser via a small injected script (<see cref="_transitionScript"/>): a
-/// captured click matching a transition's selector becomes the real browser action the transition models — a form POST
-/// to the transition's <c>emit.url</c> (the search postbacks), a download from the loopback listener (attachment
-/// file-links), or a same-frame navigation (in-frame attachment pagination, which carries no emit). The captured
-/// Accela markup's synthetic anchors (<c>href="#"</c>/<c>href="#page2"</c>) never navigate on their own, so this script
-/// is what makes clicks "real".
-/// </para>
-/// <para>
-/// Two fixture-fidelity adaptations are applied at serve time (the fixture <em>files</em> are untouched, so the fake
-/// acceptance suite is provably unaffected): the synthetic minimal CapDetail pages omit the record-detail tab controls
-/// the payload clicks unconditionally, so a standard no-op tab scaffold is injected into record pages that lack it (a
-/// real Accela CapDetail page always carries these — a missing click target auto-waits to a timeout in real Chromium,
-/// where the fake no-ops it); and every attachments iframe's <c>src="about:blank"</c> is repointed at the frame endpoint
-/// (the fake serves frame content from the manifest, not the iframe src) and its <c>title</c> dropped (real
-/// <c>getByTitle("Attachments")</c> is a case-insensitive substring match that would otherwise resolve the tab anchor
-/// AND the iframe, a strict-mode violation on click).
-/// </para>
-/// </summary>
+/// <summary>An in-process origin serving a fixture's corpus to real headless Chromium (zero third-party traffic),
+/// driven by the same <see cref="FakeManifest"/> the record/replay fake uses. Downloads need a real loopback
+/// <see cref="HttpListener"/> (fulfilled downloads yield no readable bytes); clicks need the injected <see cref="_transitionScript"/> since captured anchors don't navigate on their own.</summary>
 internal sealed class FixtureSite : IDisposable
 {
     /// <summary>The canonical origin the corpus is served under, so <c>page.Url</c> and <c>waitForRequest</c> see the real Accela URLs the goldens are built from.</summary>
@@ -70,14 +38,8 @@ internal sealed class FixtureSite : IDisposable
     /// <summary>The loopback origin the injected download links point at; allowed through by the route handler so downloads are genuine network responses.</summary>
     public string DownloadBase { get; }
 
-    /// <summary>
-    /// Answers one intercepted (canonical-origin) request from the corpus. Serialized so concurrent in-flight requests
-    /// (a document and its iframe) never race the current-state cursor.
-    /// </summary>
-    /// <param name="method">The HTTP method.</param>
-    /// <param name="url">The absolute request URL (canonical origin).</param>
-    /// <param name="postBody">The request body for a postback POST, or null.</param>
-    /// <returns>The response to fulfill.</returns>
+    /// <summary>Answers one intercepted canonical-origin request from the corpus. Serialized so a concurrent document +
+    /// iframe request pair never race the current-state cursor.</summary>
     public FixtureResponse Respond(string method, string url, string? postBody)
     {
         lock (_gate)
@@ -163,7 +125,7 @@ internal sealed class FixtureSite : IDisposable
     }
 
     // A download transition streams the fixture bytes with the manifest's suggested filename via Content-Disposition —
-    // a real, genuine browser download whose bytes RunAndWaitForDownloadAsync reads (§9.3). The transition index is on
+    // a real, genuine browser download whose bytes RunAndWaitForDownloadAsync reads. The transition index is on
     // the query; no session state is touched (a download is a self-loop, to == from).
     private void ServeDownload(HttpListenerContext context)
     {
@@ -199,11 +161,9 @@ internal sealed class FixtureSite : IDisposable
     private string TransformFrame(string html, string frameSelector) =>
         InjectScript(SelectedPage(html), Scope(frameSelector));
 
-    // Render the pagination's selected-page number to the current position (initial frame = page 1, then +1 per in-frame
-    // nav) so the payload's `waitFor SelectedPageButton "^${nextPageNumber}$"` (state "visible" — a no-op in the fake, a
-    // real wait in Chromium) resolves. This is idempotent for the multi-page-attachment fixture (its frames already
-    // carry the right numbers) and is what makes the cyclic 50-page cap fixture — whose frame statically reads "1" —
-    // reproduce the reference's pagination in a real browser instead of waiting forever on a page number that never appears.
+    // Renders the pagination's selected-page number to the current position (page 1 initially, +1 per in-frame nav) so
+    // the payload's page-number wait resolves in real Chromium. Needed because the cyclic 50-page-cap fixture's frame
+    // statically reads "1" — without this, a real wait for the next page number would hang forever.
     private string SelectedPage(string html) =>
         _selectedPage.Replace(html, m => $"{m.Groups["open"].Value}{_frameNavs + 1}</span>");
 
@@ -320,10 +280,9 @@ internal sealed class FixtureSite : IDisposable
         "<a id=\"recordInfoMenu\" title=\"Record Info menu, press tab to expand\" href=\"#\">Record Info</a>" +
         "<a id=\"attachmentsTab\" title=\"Attachments\" href=\"#\">Attachments</a>";
 
-    // Turns a captured click that matches a transition selector into the real browser action the transition models.
-    // Capturing phase + preventDefault so the synthetic anchors' native behaviour never interferes. Downloads go to the
-    // loopback listener (D) so their bytes are real; postbacks/frame-navs go to the canonical origin (O) so page.Url and
-    // waitForRequest see the real Accela URLs.
+    // Turns a captured click matching a transition selector into the real browser action it models. Capturing phase +
+    // preventDefault so the synthetic anchors' native behaviour never interferes. Downloads go to the loopback listener
+    // (D, real bytes); postbacks/frame-navs go to the canonical origin (O) so page.Url/waitForRequest see real URLs.
     private const string _transitionScript =
         "(function(){var O=\"https://aca-prod.accela.com\";var D=__D__;var T=__T__;" +
         "document.addEventListener(\"click\",function(e){var el=e.target;if(!el||!el.closest){return;}" +
@@ -338,10 +297,6 @@ internal sealed class FixtureSite : IDisposable
 
 /// <summary>One fixture-site response to fulfill. Always a body — never a 302: Chromium follows a fulfilled redirect
 /// outside route interception, so a redirecting state is served via a parse-time <c>history.replaceState</c> instead.</summary>
-/// <param name="Status">The HTTP status.</param>
-/// <param name="ContentType">The response content type.</param>
-/// <param name="Headers">Extra headers, or null.</param>
-/// <param name="Body">The response body bytes.</param>
 internal sealed record FixtureResponse(
     int Status,
     string ContentType,

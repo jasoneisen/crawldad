@@ -3,13 +3,9 @@ using Wolverine;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The <see cref="RunExecutorSaga"/> orchestration logic in isolation (§14.2, CD-5): the idempotent saga starter
-/// (<see cref="RunExecutorSaga.StartOrHandle"/>) that makes a redelivered <c>StartRun</c> a no-op, and the plain
-/// <see cref="RunDeadlineHandler"/> that stops a still-running run at its wall-clock deadline (§8.4) without ever touching the
-/// saga. The Wolverine-wired behaviour (load-first codegen, tenancy) and the atomic saga delete at terminal are exercised
-/// end-to-end in <c>DurableRunTests</c>; these are the pure guarantees underneath.
-/// </summary>
+/// <summary>The <see cref="RunExecutorSaga"/> orchestration logic in isolation: the idempotent saga starter
+/// (<see cref="RunExecutorSaga.StartOrHandle"/>) makes a redelivered <c>StartRun</c> a no-op; <see cref="RunDeadlineHandler"/>
+/// stops a still-running run at its wall-clock deadline without touching the saga. Wolverine wiring is covered by <c>DurableRunTests</c>.</summary>
 public class RunExecutorSagaTests
 {
     private static StartRun Command(Guid runId) =>
@@ -31,7 +27,6 @@ public class RunExecutorSagaTests
         saga.Script.ShouldBe("""{ "crawldad": "1" }""");
         saga.Inputs.ShouldBe("""{ "k": "v" }""");
 
-        // The fresh start kicks the durable executor and schedules the wall-clock deadline as a plain delayed message.
         outgoing.OfType<ExecuteRun>().Single().RunId.ShouldBe(runId);
         var deadline = outgoing.OfType<DeliveryMessage<RunDeadline>>().Single();
         deadline.Message.RunId.ShouldBe(runId);
@@ -43,14 +38,14 @@ public class RunExecutorSagaTests
     {
         var runId = Guid.NewGuid();
         var saga = new RunExecutorSaga();
-        saga.StartOrHandle(Command(runId)); // first delivery — starts
+        saga.StartOrHandle(Command(runId));
 
         // A redelivered / duplicate StartRun loads the already-started saga (Wolverine's load-first path): re-cascade nothing,
         // so no second ExecuteRun, no second deadline, and — crucially — no duplicate-key insert (a genuine no-op).
         var redelivered = saga.StartOrHandle(Command(runId));
 
         redelivered.ShouldBeEmpty();
-        saga.Id.ShouldBe(runId); // unchanged
+        saga.Id.ShouldBe(runId);
     }
 
     [Fact]

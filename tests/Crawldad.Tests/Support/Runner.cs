@@ -8,11 +8,9 @@ using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>
-/// White-box harness for the interpreter/fake unit tests: builds a <see cref="RunInterpreter"/> over the record/replay
-/// fake and shipped fixtures (copied to the test output), and exposes the fake page + a bound <see cref="RunScope"/>
-/// for scope/selector tests. The Alba integration tests drive the same code through real HTTP.
-/// </summary>
+/// <summary>White-box harness for the interpreter/fake unit tests: builds a <see cref="RunInterpreter"/> over the
+/// record/replay fake and shipped fixtures, exposing the fake page + a bound <see cref="RunScope"/> for scope/selector
+/// tests. The Alba integration tests drive the same code through real HTTP.</summary>
 internal static class Runner
 {
     /// <summary>The fixtures root in the test output (Crawldad.Web ships these as copied content).</summary>
@@ -21,26 +19,20 @@ internal static class Runner
     /// <summary>The default inputs binding the fake backend to the caphome-search fixture.</summary>
     public const string FakeInputs = """{ "backend": { "adapter": "fake", "options": { "fixture": "caphome-search" } } }""";
 
-    /// <summary>The Phase 1 acceptance fragment payload (JSON), read from the test output.</summary>
+    /// <summary>The acceptance fragment payload (JSON), read from the test output.</summary>
     public static string FragmentPayload() => File.ReadAllText(Path.Combine(FixturesRoot, "Payloads", "search-fragment.json"));
 
     /// <summary>The golden result body (JSON), read from the shipped fixture.</summary>
     public static string Golden() => File.ReadAllText(Path.Combine(FixturesRoot, "caphome-search", "golden.json"));
 
     /// <summary>Runs a full payload against the fake backend and returns the outcome.</summary>
-    /// <param name="payloadJson">The payload document JSON.</param>
     /// <param name="inputsJson">The inputs JSON (defaults to the fake caphome-search binding).</param>
     public static async Task<RunOutcome> RunAsync(string payloadJson, string inputsJson = FakeInputs) =>
         (await RunWithFakeAsync(payloadJson, inputsJson)).Outcome;
 
     /// <summary>Runs a payload and also hands back the fake backend, so a test can inspect the final (mutated) DOM.</summary>
-    /// <param name="payloadJson">The payload document JSON.</param>
-    /// <param name="inputsJson">The inputs JSON.</param>
-    /// <param name="clock">The time seam (defaults to the frozen <see cref="FakeClock"/>); pass a real one to exercise retry delays.</param>
-    /// <param name="sinks">The download-sink registry (defaults to a fresh in-memory fake under kind <c>"fake"</c>).</param>
-    /// <param name="limits">The server-side resource caps (CD-3); defaults to the generous <see cref="RunLimits.Default"/>.</param>
-    /// <param name="secretStores">The CD-6 secret-vault registry a <c>fill.secret</c> resolves against; null (the default) makes a fill.secret terminal.</param>
-    /// <param name="secretScope">The per-run secret registry a resolved <c>fill.secret</c> registers into; the caller opens/inspects the scope.</param>
+    /// <param name="clock">Defaults to the frozen <see cref="FakeClock"/>; pass a real one to exercise retry delays.</param>
+    /// <param name="secretStores">Null (the default) makes a <c>fill.secret</c> terminal.</param>
     public static async Task<(RunOutcome Outcome, FakeBrowserBackend Backend)> RunWithFakeAsync(
         string payloadJson, string inputsJson = FakeInputs, TimeProvider? clock = null, IDownloadSinkRegistry? sinks = null, RunLimits? limits = null,
         ISecretStoreRegistry? secretStores = null, IRunSecretScope? secretScope = null)
@@ -63,25 +55,14 @@ internal static class Runner
     }
 
     /// <summary>Runs a payload against a supplied download sink and returns the outcome, so a test can assert the
-    /// sink's exists/store call tracking (the content-addressed idempotency contract, §9.3).</summary>
-    /// <param name="payloadJson">The payload document JSON.</param>
-    /// <param name="inputsJson">The inputs JSON.</param>
-    /// <param name="sink">The sink to bind under kind <c>"fake"</c> and inspect afterwards.</param>
+    /// sink's exists/store call tracking (the content-addressed idempotency contract).</summary>
+    /// <param name="sink">Bound under kind <c>"fake"</c> and inspected afterwards.</param>
     public static async Task<RunOutcome> RunWithSinkAsync(string payloadJson, string inputsJson, FakeDownloadSink sink) =>
         (await RunWithFakeAsync(payloadJson, inputsJson, sinks: new SingleSinkRegistry("fake", sink))).Outcome;
 
-    /// <summary>Drives the interpreter on the durable path (an observer + screenshot store present) so a unit test can
-    /// assert the §13 step-trace events it emits and any failure screenshot it captures — without a database.</summary>
-    /// <param name="payloadJson">The payload document JSON.</param>
-    /// <param name="inputsJson">The inputs JSON.</param>
-    /// <param name="cancelRequested">When true, the observer forces a cooperative cancel (§11).</param>
-    /// <param name="sink">The download sink bound under kind <c>"fake"</c> (defaults to a fresh in-memory fake).</param>
-    /// <param name="backend">The backend bound under adapter <c>"fake"</c> (defaults to the record/replay fake); pass a
-    /// decorator to model a page whose screenshot capture fails.</param>
-    /// <param name="limits">The server-side resource caps (CD-3); defaults to the generous <see cref="RunLimits.Default"/>.</param>
-    /// <param name="resume">A checkpoint to resume from (§11), or null for a fresh run from the top.</param>
-    /// <param name="secretStores">The CD-6 secret-vault registry a <c>fill.secret</c> resolves against; null makes a fill.secret terminal.</param>
-    /// <param name="secretScope">The per-run secret registry a resolved <c>fill.secret</c> registers into; the caller opens/inspects the scope.</param>
+    /// <summary>Drives the interpreter on the durable path so a unit test can assert trace events and screenshots without a database.</summary>
+    /// <param name="backend">Defaults to the record/replay fake; a decorator can model a page whose screenshot capture fails.</param>
+    /// <param name="secretStores">Null (the default) makes a <c>fill.secret</c> terminal.</param>
     public static async Task<(RunOutcome Outcome, RecordingObserver Observer, InMemoryScreenshotStore Screenshots)> RunWithObserverAsync(
         string payloadJson, string inputsJson = FakeInputs, bool cancelRequested = false, FakeDownloadSink? sink = null, IBrowserBackend? backend = null,
         RunLimits? limits = null, ResumeState? resume = null, ISecretStoreRegistry? secretStores = null, IRunSecretScope? secretScope = null)

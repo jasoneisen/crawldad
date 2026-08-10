@@ -5,12 +5,9 @@ using System.Text;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>
-/// A tiny in-process HTTP origin on loopback for the real-Chromium tests: real HTTP so Playwright's routing/interception
-/// is exercised honestly. Routes are registered with <see cref="Map"/>; per-path request counts (<see cref="Hits"/>)
-/// let a test prove the route cache prevented a second origin fetch and the resource blocker prevented any fetch.
-/// Serves any method (so it doubles as the Browserbase session-create stub).
-/// </summary>
+/// <summary>A tiny in-process HTTP origin on loopback for the real-Chromium tests: real HTTP so Playwright's
+/// routing/interception is exercised honestly. Routes register via <see cref="Map"/>; <see cref="Hits"/> lets a test
+/// prove the route cache or resource blocker prevented a fetch. Serves any method (doubles as the Browserbase stub).</summary>
 internal sealed class LocalSite : IDisposable
 {
     private readonly HttpListener _listener = new();
@@ -37,16 +34,10 @@ internal sealed class LocalSite : IDisposable
     public string Url(string path) => BaseUrl.TrimEnd('/') + path;
 
     /// <summary>How many requests this origin has served for <paramref name="path"/>.</summary>
-    /// <param name="path">The absolute path.</param>
     public int Hits(string path) => _hits.GetValueOrDefault(path);
 
     /// <summary>Registers a route.</summary>
-    /// <param name="path">The absolute path.</param>
-    /// <param name="contentType">The response content type.</param>
-    /// <param name="body">The response body.</param>
-    /// <param name="cacheControl">An optional <c>Cache-Control</c> header (e.g. <c>no-store</c> to force re-requests).</param>
-    /// <param name="status">The HTTP status code.</param>
-    /// <returns>This site, for chaining.</returns>
+    /// <param name="cacheControl">Optional <c>Cache-Control</c> header (e.g. <c>no-store</c> to force re-requests).</param>
     public LocalSite Map(string path, string contentType, string body, string? cacheControl = null, int status = 200)
     {
         _routes[path] = new Response(contentType, Encoding.UTF8.GetBytes(body), cacheControl, status);

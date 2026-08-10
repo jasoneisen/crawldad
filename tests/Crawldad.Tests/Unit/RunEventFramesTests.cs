@@ -5,11 +5,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The SSE frame codec + reconnect parsing (§11): frames carry the stream <c>version</c> as the <c>id</c> (so
-/// <c>Last-Event-ID</c> resumes exactly) with camelCase JSON data; the terminal events close a tail; and the last-seen
-/// sequence is read from the <c>Last-Event-ID</c> header, then a <c>lastEventId</c> query param, else 0.
-/// </summary>
+/// <summary>SSE frame codec + reconnect parsing: the stream <c>version</c> is the frame <c>id</c> so
+/// <c>Last-Event-ID</c> resumes exactly; last-seen sequence reads the header, then a query param, else 0.</summary>
 public class RunEventFramesTests
 {
     [Fact]
@@ -18,9 +15,9 @@ public class RunEventFramesTests
         var frame = RunEventFrames.Format(7, "StepStarted", new StepStarted(2, "loop", FakeClock.Fixed));
 
         frame.ShouldStartWith("id: 7\nevent: StepStarted\ndata: {");
-        frame.ShouldContain("\"index\":2");     // camelCase, value present
+        frame.ShouldContain("\"index\":2");
         frame.ShouldContain("\"kind\":\"loop\"");
-        frame.ShouldEndWith("\n\n");            // blank-line terminated
+        frame.ShouldEndWith("\n\n");
     }
 
     [Fact]
@@ -37,7 +34,7 @@ public class RunEventFramesTests
     {
         var context = new DefaultHttpContext();
         context.Request.Headers["Last-Event-ID"] = "12";
-        context.Request.QueryString = new QueryString("?lastEventId=99"); // header wins over the query
+        context.Request.QueryString = new QueryString("?lastEventId=99");
 
         RunEventStream.ParseLastEventId(context).ShouldBe(12);
     }
@@ -46,7 +43,7 @@ public class RunEventFramesTests
     public void ParseLastEventId_falls_back_to_the_query_param()
     {
         var context = new DefaultHttpContext();
-        context.Request.Headers["Last-Event-ID"] = "not-a-number"; // ignored — falls through to the query
+        context.Request.Headers["Last-Event-ID"] = "not-a-number";
         context.Request.QueryString = new QueryString("?lastEventId=34");
 
         RunEventStream.ParseLastEventId(context).ShouldBe(34);
@@ -56,7 +53,7 @@ public class RunEventFramesTests
     public void ParseLastEventId_defaults_to_zero_when_absent_or_unparseable()
     {
         var context = new DefaultHttpContext();
-        context.Request.QueryString = new QueryString("?lastEventId=nope"); // unparseable query, no header
+        context.Request.QueryString = new QueryString("?lastEventId=nope");
 
         RunEventStream.ParseLastEventId(context).ShouldBe(0);
     }

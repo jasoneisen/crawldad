@@ -2,8 +2,8 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>The §7.2 collection surface (Appendix C): array/map access with primary null-propagation and terminal
-/// out-of-range/type failures reproducing the reference's C# throws.</summary>
+/// <summary>The collection surface: array/map access with primary null-propagation and terminal out-of-range/type
+/// failures reproducing the reference's C# throws.</summary>
 public class BuiltinCollectionTests
 {
     [Theory]

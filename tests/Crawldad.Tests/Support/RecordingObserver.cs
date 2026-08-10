@@ -2,12 +2,9 @@ using Crawldad.Web.Features.Runs.Interpreter;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>
-/// A white-box <see cref="IRunObserver"/> for interpreter unit tests: captures the trace events the interpreter emits
-/// (§13 step trace + coarse log/attempt events) and the checkpoints it reaches, and can force a cooperative cancel. It does
-/// no persistence — the executor's real observer is exercised by the durable/SSE integration tests; this one lets a unit
-/// test assert the interpreter emits the right events in order without a database.
-/// </summary>
+/// <summary>A white-box <see cref="IRunObserver"/> for interpreter unit tests: captures trace events and checkpoints
+/// the interpreter emits, and can force a cooperative cancel. Does no persistence — lets a unit test assert event order
+/// without a database (the executor's real observer is covered by the durable/SSE integration tests).</summary>
 internal sealed class RecordingObserver : IRunObserver
 {
     private readonly List<object> _events = [];

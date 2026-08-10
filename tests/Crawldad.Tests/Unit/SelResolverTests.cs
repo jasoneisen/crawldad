@@ -7,10 +7,9 @@ using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>The selector resolver (§5.2): structured <c>Sel</c> maps (css/title/base/nth/first/filter/in), node
-/// selectors from JSON (string with var-first precedence, or a structured object), and the per-field evaluation. Frame
-/// resolution proper is exercised end-to-end by <see cref="FrameNodeTests"/>; here an <c>in:</c> naming an unbound var
-/// is a terminal <c>malformed_node</c>.</summary>
+/// <summary>The selector resolver: structured <c>Sel</c> maps (css/title/base/nth/first/filter/in), node selectors from
+/// JSON (string with var-first precedence, or a structured object), and the per-field evaluation. Frame resolution proper
+/// is exercised end-to-end by <see cref="FrameNodeTests"/>; here an <c>in:</c> naming an unbound var is a terminal <c>malformed_node</c>.</summary>
 public class SelResolverTests
 {
     private static JsonElement Json(string source)
@@ -65,10 +64,9 @@ public class SelResolverTests
         (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("filter", Map(("hasTextRegex", "Void"))))).CountAsync(CapHome.Ct)).ShouldBe(1);
     }
 
-    // #37: a structured Sel nth is an already-evaluated Expr result narrowed by .Nth — a non-integer (a fractional
-    // double, or a non-number string/null/bool from a computed Expr) is a terminal type_error, never the raw (int)(long)
-    // unbox that escaped ResolveMap as an unhandled 500 (InvalidCastException / NullReferenceException). This is the
-    // sibling of the from-handle nth cast, and classifies through the same ExpressionValues.RequireNthIndex.
+    // A structured Sel nth is an already-evaluated Expr result narrowed by .Nth — a non-integer (a fractional double, or a
+    // non-number string/null/bool from a computed Expr) is a terminal type_error, never an unhandled InvalidCastException or
+    // NullReferenceException. This is the sibling of the from-handle nth cast, classifying through ExpressionValues.RequireNthIndex.
     [Fact]
     public async Task ResolveMap_nth_non_integral_or_non_numeric_is_a_terminal_type_error()
     {
@@ -84,7 +82,7 @@ public class SelResolverTests
             .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // bool
     }
 
-    // #37: a type-correct integer outside the valid 0-based 32-bit range is index_out_of_range — a negative index (the
+    // A type-correct integer outside the valid 0-based 32-bit range is index_out_of_range — a negative index (the
     // backends diverge: the fake yields no match, Playwright counts from the end) or one past int.MaxValue.
     [Fact]
     public async Task ResolveMap_nth_negative_or_out_of_range_is_index_out_of_range()
@@ -97,7 +95,7 @@ public class SelResolverTests
             .Code.ShouldBe(ExpressionErrorCodes.IndexOutOfRange); // > int.MaxValue
     }
 
-    // #37: an integral-VALUED double nth coerces to the same index a long does (3.0 ≡ 3L), so it narrows identically —
+    // An integral-VALUED double nth coerces to the same index a long does (3.0 ≡ 3L), so it narrows identically —
     // the accepted-domain coercion parity the fix preserves on the fake (real≡fake for the accepted 0-based domain).
     [Fact]
     public async Task ResolveMap_nth_integral_double_coerces_like_a_long()
@@ -108,11 +106,9 @@ public class SelResolverTests
         (await scope.Sel.ResolveMap(Map(("css", CapHome.GridRows), ("nth", 3L))).CountAsync(CapHome.Ct)).ShouldBe(1);
     }
 
-    // #41: a structured Sel `first` is a lazy .First narrowing keyed on a bool. Via the expression path (a DOM builtin's
-    // object-literal target) its value is an already-evaluated, UNCOERCED Expr result — so a non-bool (a string typo, a
-    // number, null) is a terminal type_error through ExpressionValues.RequireFirstFlag, never the raw (bool)first! unbox
-    // that escaped ResolveMap as an unhandled 500 (InvalidCastException for a non-bool, NullReferenceException for null).
-    // The sibling of the nth cast (#37); the node path still feeds a schema-checked JSON bool, unaffected.
+    // A structured Sel `first` is a lazy .First narrowing keyed on a bool. Via the expression path its value is an
+    // already-evaluated, UNCOERCED Expr result — so a non-bool is a terminal type_error through
+    // ExpressionValues.RequireFirstFlag, never an unhandled exception. The node path feeds a schema-checked JSON bool, unaffected.
     [Fact]
     public async Task ResolveMap_first_non_bool_is_a_terminal_type_error()
     {
@@ -126,11 +122,9 @@ public class SelResolverTests
             .Code.ShouldBe(ExpressionErrorCodes.TypeError);          // null (the raw-unbox NullReferenceException case)
     }
 
-    // #41 widened sweep: EVERY string-typed Sel field the resolver reads from an (uncoerced) object-literal target — the
-    // css/xpath/text/role/title/base/in roots, a base-relative css, and a role's accessible `name` — classifies a
-    // non-string through ExpressionValues.RequireString (terminal type_error), never a raw (string) unbox that escaped as
-    // a 500. A `filter` that is not an object, or one missing its `hasTextRegex` string, is a type_error too. The node
-    // path coerces every one of these to a string (RenderAsync/GetString) and is schema-checked, so it is unaffected.
+    // EVERY string-typed Sel field the resolver reads from an (uncoerced) object-literal target — the css/xpath/text/role/
+    // title/base/in roots, a base-relative css, a role's accessible `name`, and a malformed `filter` — classifies a
+    // non-string through ExpressionValues.RequireString (terminal type_error). The node path coerces these to strings and is schema-checked, so it is unaffected.
     [Fact]
     public async Task ResolveMap_non_string_field_or_malformed_filter_is_a_terminal_type_error()
     {
@@ -154,9 +148,8 @@ public class SelResolverTests
         Rejects(("css", CapHome.GridRows), ("filter", Map(("hasTextRegex", 1L)))); // hasTextRegex must be a string
     }
 
-    // #41: the same classification reached END TO END through each DOM-read consumer (exists/text/attr) that funnels an
-    // object-literal target into the resolver — the reproduction from the ticket, exists({ css:'tr', first:'x' }). Each
-    // terminates as a type_error, never a 500.
+    // The same classification reached END TO END through each DOM-read consumer (exists/text/attr) that funnels an
+    // object-literal target into the resolver, e.g. exists({ css:'tr', first:'x' }). Each terminates as a type_error, never a 500.
     [Theory]
     [InlineData("exists({ css: 'tr', first: 'x' })")]   // string
     [InlineData("text({ css: 'tr', first: 1 })")]       // number
@@ -167,7 +160,7 @@ public class SelResolverTests
         (await Xp.EvalErrorAsync(source, scope)).Code.ShouldBe(ExpressionErrorCodes.TypeError);
     }
 
-    // #41 happy path: an expression-COMPUTED bool `first` (not just a bool literal) still narrows — RequireFirstFlag
+    // The happy path: an expression-COMPUTED bool `first` (not just a bool literal) still narrows — RequireFirstFlag
     // passes any real bool through unchanged, however it was produced (the guard adds no restriction to valid input).
     [Fact]
     public async Task ResolveMap_first_accepts_an_expression_computed_bool()
@@ -176,11 +169,9 @@ public class SelResolverTests
         (await Xp.EvalAsync("exists({ css: 'tr', first: 1 == 1 })", scope)).ShouldBeOfType<bool>();
     }
 
-    // #41 (reviewer follow-up): the DOM-read TARGET itself. RequireDomTarget's catch-all admits ANY opaque handle, and
-    // the value model's second handle type — an IFrameHandle bound by `frame` — reaches ResolveBase's cast via a bare
-    // var in a target position (exists(fr)/text(fr)/…) with no type gate. A frame handle (or, defensively, any other
-    // non-locator opaque handle) is now a terminal type_error, never the raw (ILocatorHandle)target unbox that escaped
-    // as a 500; a real locator handle target still resolves (happy path unchanged).
+    // The DOM-read TARGET itself: RequireDomTarget's catch-all admits ANY opaque handle, and the value model's second
+    // handle type — an IFrameHandle bound by `frame` — reaches ResolveBase's cast via a bare var in a target position
+    // with no type gate. A frame handle (or any other non-locator opaque handle) is now a terminal type_error; a real locator handle target still resolves.
     [Fact]
     public async Task ResolveTarget_non_locator_handle_is_a_terminal_type_error()
     {
@@ -193,7 +184,7 @@ public class SelResolverTests
         (await scope.Sel.ResolveTarget(scope.Sel.RequireHandle("rows"), null).CountAsync(CapHome.Ct)).ShouldBe(15); // a locator handle still resolves
     }
 
-    // #41 (reviewer follow-up): the same classification reached END TO END — a frame handle flowed into a DOM builtin.
+    // The same classification reached END TO END — a frame handle flowed into a DOM builtin.
     [Fact]
     public async Task Dom_read_with_a_frame_handle_target_is_a_terminal_type_error()
     {

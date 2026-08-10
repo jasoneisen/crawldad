@@ -3,12 +3,9 @@ using Crawldad.Web.Infrastructure.Browser.Real;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The <see cref="BrowserlessBackend.BuildEndpoint"/> native connect URL (§9.1): the region substitutes into the
+/// <summary>The <see cref="BrowserlessBackend.BuildEndpoint"/> connect URL: the region substitutes into the
 /// template, the token is the first query param (URL-escaped), and every other non-null <c>backendOptions</c> entry
-/// (excluding <c>region</c>, which selects the datacenter) is appended, ordinally sorted, with booleans lower-cased and
-/// other scalars JSON-serialized.
-/// </summary>
+/// (excluding <c>region</c>) is appended, ordinally sorted, with booleans lower-cased and other scalars JSON-serialized.</summary>
 public class BrowserlessEndpointTests
 {
     [Fact]

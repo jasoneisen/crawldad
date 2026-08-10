@@ -8,15 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 4 WP2 parity host: one Alba host shared by both real-Chromium parity classes (built once, its schema
-/// migrated once, its browser launched once). It is the ordinary product host with two DI overrides layered on the
-/// shared single-node test defaults: the pinned <see cref="FakeClock"/> (deterministic run traces) and — the WP2 seam —
-/// the <c>"local"</c> browser adapter swapped for the <see cref="FixtureChromiumBackend"/>, so the acceptance payloads
-/// bind <c>inputs.backend = { adapter: "local" }</c> and run through the real <c>POST /runs</c> path and interpreter
-/// against real headless Chromium served entirely from the local fixture corpus. The Playwright driver is the product
-/// singleton; the fixture backend launches and owns the one shared browser and is disposed with the host.
-/// </summary>
+/// <summary>One Alba host shared by both real-Chromium parity classes (built once, schema migrated once, browser
+/// launched once), with two DI overrides: a pinned <see cref="FakeClock"/> and the <c>"local"</c> browser adapter
+/// swapped for <see cref="FixtureChromiumBackend"/>, so acceptance payloads run against real Chromium, no live traffic.</summary>
 public sealed class ParityAppFixture : IAsyncLifetime
 {
     public IAlbaHost Host { get; private set; } = null!;
@@ -30,9 +24,9 @@ public sealed class ParityAppFixture : IAsyncLifetime
             {
                 services.AddSingleton<TimeProvider>(new FakeClock());
 
-                // The WP2 override: the "local" adapter becomes the fixture-site-backed real-Chromium backend (last
-                // keyed registration wins), so the canonical acceptance payloads execute against real Chromium with no
-                // live traffic. The shared Playwright driver is the product host singleton.
+                // This override: the "local" adapter becomes the fixture-site-backed real-Chromium backend (last keyed
+                // registration wins), so the canonical acceptance payloads execute against real Chromium with no live traffic.
+                // The shared Playwright driver is the product host singleton.
                 services.AddKeyedSingleton<IBrowserBackend>("local", static (sp, _) =>
                     new FixtureChromiumBackend(sp.GetRequiredService<IPlaywrightProvider>(), Runner.FixturesRoot));
             });

@@ -3,12 +3,9 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// Unit coverage for <see cref="FakeInnerText"/>, the fake backend's layout-free approximation of Chromium's
-/// <c>innerText</c> (the "innerText trap"): <c>&lt;br&gt;</c> and block boundaries become newlines, inline whitespace
-/// collapses, and boundary blank lines drop. The processing-status integration test exercises the load-bearing
-/// <c>&lt;br&gt;</c> path end-to-end; these pin the remaining shapes.
-/// </summary>
+/// <summary><see cref="FakeInnerText"/>, the fake backend's layout-free approximation of Chromium's <c>innerText</c>
+/// (the "innerText trap"): <c>&lt;br&gt;</c>/block boundaries become newlines, inline whitespace collapses, and
+/// boundary blank lines drop; the processing-status integration test covers the <c>&lt;br&gt;</c> path end-to-end.</summary>
 public class FakeInnerTextTests
 {
     private static readonly HtmlParser _parser = new();

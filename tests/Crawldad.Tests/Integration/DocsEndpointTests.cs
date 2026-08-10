@@ -5,13 +5,9 @@ using Crawldad.Web.Features.Payloads;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The anonymous #20/#21 docs surface over real HTTP: <c>GET /schema/crawldad-1.schema.json</c>, <c>GET /llms.txt</c>, and
-/// <c>GET /openapi.json</c> all answer <b>without a key</b> (the deliberate opt-out from the tenant gate, decided like
-/// <c>/health</c>), serve the exact generated/embedded bytes, and carry the intended media types. The endpoint-enumeration
-/// <see cref="AuthenticationTests"/> already proves these are the only anonymous routes besides <c>/health</c>; this proves
-/// they are reachable and correct.
-/// </summary>
+/// <summary>The anonymous docs surface over real HTTP: <c>GET /schema/crawldad-1.schema.json</c>, <c>GET /llms.txt</c>,
+/// and <c>GET /openapi.json</c> all answer without a key, serving the exact generated/embedded bytes with the intended
+/// media types. <see cref="AuthenticationTests"/> proves these are the only anonymous routes; this proves they're correct.</summary>
 [Collection(IntegrationCollection.Name)]
 public class DocsEndpointTests(AppFixture fixture)
 {

@@ -2,7 +2,7 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>The exact expressions from the real search payload (Appendix B.1) that must parse and evaluate correctly.</summary>
+/// <summary>The exact expressions from the real search payload that must parse and evaluate correctly.</summary>
 public class ValidationTargetTests
 {
     private static Dictionary<string, object?> Map(params (string Key, object? Value)[] entries)

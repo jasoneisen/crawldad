@@ -3,11 +3,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The configured-tenant directory (CD-1): a presented API key is hash-compared (fixed-time) to a configured tenant, and a
+/// <summary>The configured-tenant directory: a presented API key is hash-compared (fixed-time) to a configured tenant, and a
 /// malformed configuration fails loudly at construction so the host never silently admits or rejects requests. Also the
-/// authority on the tenant id set the out-of-request recovery scan fans out over.
-/// </summary>
+/// authority on the tenant id set the out-of-request recovery scan fans out over.</summary>
 public class TenantRegistryTests
 {
     private static TenantRegistry Registry(params TenantDescriptor[] tenants) =>
@@ -51,7 +49,7 @@ public class TenantRegistryTests
 
     [Fact]
     public void Rejects_a_tenant_id_containing_a_colon() =>
-        // CD-6: a ':' in a tenant id would make the Secrets:{tenant}:{ref} vault namespace ambiguous.
+        // A ':' in a tenant id would make the Secrets:{tenant}:{ref} vault namespace ambiguous.
         Should.Throw<InvalidOperationException>(() => Registry(Tenant(id: "acme:evil")));
 
     [Fact]
@@ -75,11 +73,11 @@ public class TenantRegistryTests
             Tenant(id: "beta", key: "shared-key-0123456789")));
 
     [Fact]
-    public void Rejects_a_concurrent_run_override_below_one() => // CD-3: a 0/negative slot cap is a boot-time misconfiguration
+    public void Rejects_a_concurrent_run_override_below_one() => // a 0/negative slot cap is a boot-time misconfiguration
         Should.Throw<InvalidOperationException>(() => Registry(Tenant(maxConcurrentRuns: 0)));
 
     [Fact]
-    public void Resolves_a_queue_depth_override() // CD-16: a tenant's per-tier at-cap wait room
+    public void Resolves_a_queue_depth_override() // a tenant's per-tier at-cap wait room
     {
         var registry = Registry(Tenant(id: "alpha", key: "alpha-key-0123456789", maxQueueDepth: 10));
 
@@ -106,6 +104,6 @@ public class TenantRegistryTests
     }
 
     [Fact]
-    public void Rejects_a_queue_depth_override_below_one() => // CD-16: a 0/negative queue depth is a boot-time misconfiguration
+    public void Rejects_a_queue_depth_override_below_one() => // a 0/negative queue depth is a boot-time misconfiguration
         Should.Throw<InvalidOperationException>(() => Registry(Tenant(maxQueueDepth: 0)));
 }

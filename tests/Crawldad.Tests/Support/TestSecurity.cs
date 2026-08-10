@@ -6,10 +6,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>An <see cref="ISecretStoreRegistry"/> with a single keyed vault adapter — the CD-6 analogue of Runner's
+/// <summary>An <see cref="ISecretStoreRegistry"/> with a single keyed vault adapter — the analogue of Runner's
 /// <c>SingleBackendRegistry</c>, so an interpreter unit test can drive a <c>fill.secret</c> against one in-memory vault.</summary>
 /// <param name="vault">The vault kind (e.g. <see cref="SecretVaults.Config"/>).</param>
-/// <param name="store">The vault adapter registered under that kind.</param>
 internal sealed class SingleSecretVaultRegistry(string vault, ISecretStore store) : ISecretStoreRegistry
 {
     public bool TryResolve(string requested, [NotNullWhen(true)] out ISecretStore? resolved)
@@ -25,17 +24,14 @@ internal sealed class SingleSecretVaultRegistry(string vault, ISecretStore store
     }
 }
 
-/// <summary>
-/// An <see cref="IRunSecretScope"/> whose <see cref="Current"/> is a fixed set, so a unit test can drive the
-/// <see cref="CredentialScrubber"/>'s exact-match rule without opening an ambient scope. <see cref="Begin"/> and
-/// <see cref="Register"/> are inert (unit tests supply the secrets up front).
-/// </summary>
+/// <summary>An <see cref="IRunSecretScope"/> whose <see cref="Current"/> is a fixed set, so a unit test can drive the
+/// <see cref="CredentialScrubber"/>'s exact-match rule without an ambient scope. <see cref="Begin"/>/<see cref="Register"/> are inert.</summary>
 /// <param name="secrets">The secrets the scrubber sees as live for the run.</param>
 internal sealed class StubSecretScope(params string[] secrets) : IRunSecretScope
 {
     public IReadOnlyCollection<string> Current { get; } = secrets;
 
-    /// <summary>The form-fill secrets (CD-6) the scrubber sees at the lower form floor; defaults to none.</summary>
+    /// <summary>The form-fill secrets the scrubber sees at the lower form floor; defaults to none.</summary>
     public IReadOnlyCollection<string> FormSecrets { get; init; } = [];
 
     public IDisposable Begin() => new NoopScope();
@@ -60,10 +56,8 @@ internal sealed class StubSecretScope(params string[] secrets) : IRunSecretScope
 }
 
 /// <summary>An <see cref="ISecretStore"/> mapping references to secrets — the leak suite maps a distinct sentinel per
-/// credential mode (a browserless token, a browserbase apiKey). Both resolution surfaces read the same map (the form-fill
-/// path is tenant-scoped in production, but a test map keys by reference); the leak suite's form-fill variant exercises the
-/// <b>real</b> <see cref="ConfigurationSecretStore"/> tenant scoping via configuration instead.</summary>
-/// <param name="secrets">Reference → secret map.</param>
+/// credential mode. The leak suite's form-fill variant instead exercises the <b>real</b>
+/// <see cref="ConfigurationSecretStore"/> tenant scoping via configuration.</summary>
 internal sealed class MapSecretStore(IReadOnlyDictionary<string, string> secrets) : ISecretStore
 {
     public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) =>
@@ -76,7 +70,6 @@ internal sealed class MapSecretStore(IReadOnlyDictionary<string, string> secrets
 /// <summary>An <see cref="ISecretStore"/> returning one fixed secret and <b>counting</b> tenant-scoped resolutions — so a
 /// test can prove a <c>fill.secret</c> re-resolves from the vault on a checkpoint resume (rather than restoring a persisted
 /// value).</summary>
-/// <param name="secret">The value every resolution returns.</param>
 internal sealed class CountingVault(string secret) : ISecretStore
 {
     /// <summary>How many times the form-fill (tenant-scoped) resolution has been called.</summary>
@@ -94,11 +87,9 @@ internal sealed class CountingVault(string secret) : ISecretStore
     }
 }
 
-/// <summary>
-/// An <see cref="ILoggerProvider"/> that records every rendered log line. Wrapped by the host's scrubbing logger factory
-/// like any provider, so the lines it captures are exactly what a real sink would write (post-scrub) — the leak suite
-/// asserts no credential reaches it.
-/// </summary>
+/// <summary>An <see cref="ILoggerProvider"/> that records every rendered log line. Wrapped by the host's scrubbing
+/// logger factory like any provider, so captured lines are exactly what a real sink would write (post-scrub) — the
+/// leak suite asserts no credential reaches it.</summary>
 internal sealed class CapturingLoggerProvider : ILoggerProvider
 {
     private readonly ConcurrentQueue<string> _lines = new();

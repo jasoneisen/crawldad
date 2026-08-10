@@ -8,11 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The validation-at-save gate (Deliverables 1-4): drives <c>POST /payloads</c> over real HTTP. The two canonical
-/// payloads (B.1/B.2) save clean and persist an event-sourced <see cref="Payload"/>; schema and semantic violations
-/// are 400s carrying the structured error list; a malformed body is a 400 ProblemDetails.
-/// </summary>
+/// <summary>The validation-at-save gate: drives <c>POST /payloads</c> over real HTTP. The two canonical payloads
+/// (B.1/B.2) save clean and persist an event-sourced <see cref="Payload"/>; schema and semantic violations are 400s
+/// carrying the structured error list; a malformed body is a 400 ProblemDetails.</summary>
 [Collection(IntegrationCollection.Name)]
 public class PayloadEndpointTests(AppFixture fixture)
 {
@@ -70,8 +68,8 @@ public class PayloadEndpointTests(AppFixture fixture)
     [Fact]
     public async Task Draft_stamps_the_authenticated_tenant_actor_on_the_event()
     {
-        // The event's actor comes from the authenticated principal (CD-1, §12), never a request body — SavePayloadRequest
-        // carries no 'by' field at all, so there is nothing to spoof; the stamped actor is the fixture's default tenant.
+        // The event's actor comes from the authenticated principal, never a request body — SavePayloadRequest carries no
+        // 'by' field at all, so there is nothing to spoof; the stamped actor is the fixture's default tenant.
         var root = await PostAsync(Body(Fixture("search-full.json")), 200);
         var payloadId = root.GetProperty("payloadId").GetGuid();
 

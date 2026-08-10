@@ -5,10 +5,8 @@ using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The event-sink scrubbing chokepoint (<see cref="RunEventScrubber"/>, §12, WP3): credential-prone fields of each
-/// trace event are redacted before the event is appended, and events with no such field pass through unchanged.
-/// </summary>
+/// <summary>The event-sink scrubbing chokepoint (<see cref="RunEventScrubber"/>): credential-prone fields are
+/// redacted before the event is appended; events with no such field pass through unchanged.</summary>
 public class RunEventScrubberTests
 {
     private const string _redacted = CredentialScrubber.Redaction;
@@ -28,13 +26,13 @@ public class RunEventScrubberTests
 
         scrubbed.PayloadName.ShouldBe($"name-{_redacted}");
         scrubbed.InputKeys.ShouldBe([_redacted, "startDate"]);
-        scrubbed.ScriptHash.ShouldBe("hash"); // untouched
-        scrubbed.PayloadId.ShouldBe(payloadId); // pin preserved through scrub
+        scrubbed.ScriptHash.ShouldBe("hash");
+        scrubbed.PayloadId.ShouldBe(payloadId);
         scrubbed.PayloadRevision.ShouldBe(3);
     }
 
     [Fact]
-    public void RunQueued_scrubs_the_payload_name_and_input_key_names() // CD-16: the queued run's opener, scrubbed like RunStarted
+    public void RunQueued_scrubs_the_payload_name_and_input_key_names() // the queued run's opener, scrubbed like RunStarted
     {
         var payloadId = Guid.NewGuid();
         var scrubbed = (RunQueued)RunEventScrubber.Scrub(
@@ -42,8 +40,8 @@ public class RunEventScrubberTests
 
         scrubbed.PayloadName.ShouldBe($"name-{_redacted}");
         scrubbed.InputKeys.ShouldBe([_redacted, "startDate"]);
-        scrubbed.ScriptHash.ShouldBe("hash"); // untouched
-        scrubbed.PayloadId.ShouldBe(payloadId); // pin preserved through scrub
+        scrubbed.ScriptHash.ShouldBe("hash");
+        scrubbed.PayloadId.ShouldBe(payloadId);
         scrubbed.PayloadRevision.ShouldBe(3);
     }
 
@@ -86,7 +84,7 @@ public class RunEventScrubberTests
         scrubbed.AtStep.Index.ShouldBe(2);
     }
 
-    // ----- WP3 step-trace events (§13) ---------------------------------------
+    // ----- step-trace events -----
 
     [Fact]
     public void Navigated_scrubs_a_credential_bearing_url()
@@ -107,7 +105,7 @@ public class RunEventScrubberTests
     [Fact]
     public void Filled_scrubs_its_target_descriptor_defensively()
     {
-        // A CD-6 Filled carries `secret:<refName>` — safe by construction — but the target is scrubbed like any free text,
+        // A Filled carries `secret:<refName>` — safe by construction — but the target is scrubbed like any free text,
         // so even a ref name colliding with a registered secret cannot surface.
         var scrubbed = (Filled)RunEventScrubber.Scrub(new Filled($"secret:{_secret}", _at), Scrubber());
 
@@ -133,18 +131,18 @@ public class RunEventScrubberTests
     }
 
     [Fact]
-    public void Screenshotted_scrubs_the_ref_and_the_name() // #8: the ref is a credential-free hash, the name is author free text — both scrubbed defensively
+    public void Screenshotted_scrubs_the_ref_and_the_name() // the ref is a credential-free hash, the name is author free text — both scrubbed defensively
     {
         var scrubbed = (Screenshotted)RunEventScrubber.Scrub(
             new Screenshotted($"screenshots/{_secret}.png", $"after {_secret}", 4096, _at), Scrubber());
 
         scrubbed.ScreenshotRef.ShouldBe($"screenshots/{_redacted}.png");
         scrubbed.Name.ShouldBe($"after {_redacted}");
-        scrubbed.Size.ShouldBe(4096); // metadata untouched
+        scrubbed.Size.ShouldBe(4096);
     }
 
     [Fact]
-    public void Screenshotted_with_no_name_passes_the_null_label_through() // #8: the null-name branch — nothing to scrub
+    public void Screenshotted_with_no_name_passes_the_null_label_through() // the null-name branch — nothing to scrub
     {
         var scrubbed = (Screenshotted)RunEventScrubber.Scrub(new Screenshotted($"screenshots/{_secret}.png", null, 8, _at), Scrubber());
 

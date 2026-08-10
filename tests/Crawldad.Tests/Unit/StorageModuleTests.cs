@@ -7,12 +7,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The storage DI wiring (CD-2, <see cref="StorageModule"/>): the provider config value selects the blob backend for all three
-/// seams (the keyed download sink, the screenshot store, the retention store). Selecting is data — the same registry idiom as
-/// the browser backends. The azure branch resolves without any emulator (construction is I/O-free), so this wiring is covered
-/// hermetically even though the Azure adapter's I/O is exercised only against Azurite.
-/// </summary>
+/// <summary>The storage DI wiring (<see cref="StorageModule"/>): the provider config value selects the blob backend for all
+/// three seams (the keyed download sink, the screenshot store, the retention store) — the same registry idiom as the browser
+/// backends. The azure branch resolves without any emulator, so this wiring is covered hermetically even though its I/O is exercised only against Azurite.</summary>
 public class StorageModuleTests
 {
     private static ServiceProvider Build(string? provider)

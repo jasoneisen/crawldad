@@ -8,14 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 2 WP3 acceptance gate: drives <c>POST /runs</c> against the fake backend for each of LJCMG's four hardest
-/// CapDetail fragments and asserts the shaped <c>result</c> is <b>byte-identical</b> to a hand-derived golden (derived
-/// by executing the C# reference algorithm over the fixture DOM), plus the exact warning/error trace the reference
-/// emits. Covers the 3/4/5-<c>&lt;br&gt;</c> address branch (:229-268), the <c>k*2+1/k*2+2</c> violations ladder
-/// (:359-425), the processing-status split chains (:455-529), and the related-records indentation parent resolution
-/// (:625-697).
-/// </summary>
+/// <summary>Drives <c>POST /runs</c> against the fake backend for each of LJCMG's four hardest CapDetail fragments
+/// and asserts the shaped <c>result</c> is byte-identical to a hand-derived golden, plus the exact warning/error
+/// trace. Covers the address <c>&lt;br&gt;</c> branch, the violations ladder, processing-status chains, and related-record indentation.</summary>
 [Collection(IntegrationCollection.Name)]
 public class CapDetailFragmentTests(AppFixture fixture)
 {

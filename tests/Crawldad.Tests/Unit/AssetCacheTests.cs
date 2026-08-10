@@ -3,10 +3,8 @@ using Crawldad.Web.Infrastructure.Browser.Real;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The cross-run <see cref="InMemoryAssetCache"/> (§8.1): a first lookup is a miss (fetches once), a second is a hit
-/// (no fetch), and entries are region-scoped so the same URL in two regions is two independent misses.
-/// </summary>
+/// <summary>The cross-run <see cref="InMemoryAssetCache"/>: a first lookup is a miss (fetches once), a second is a
+/// hit (no fetch); entries are region-scoped so the same URL in two regions is two independent misses.</summary>
 public class AssetCacheTests
 {
     private static readonly IEnumerable<KeyValuePair<string, string>> _noHeaders = [];
@@ -28,7 +26,7 @@ public class AssetCacheTests
 
         var second = await cache.GetOrAddAsync("sfo", "https://x/app.css", Fetch);
         second.Hit.ShouldBeTrue();
-        fetches.ShouldBe(1); // the origin was fetched only once
+        fetches.ShouldBe(1);
     }
 
     [Fact]
@@ -43,7 +41,7 @@ public class AssetCacheTests
         }
 
         (await cache.GetOrAddAsync("sfo", "https://x/a.js", Fetch)).Hit.ShouldBeFalse();
-        (await cache.GetOrAddAsync("lon", "https://x/a.js", Fetch)).Hit.ShouldBeFalse(); // different region ⇒ miss
+        (await cache.GetOrAddAsync("lon", "https://x/a.js", Fetch)).Hit.ShouldBeFalse();
         fetches.ShouldBe(2);
     }
 }

@@ -3,11 +3,9 @@ using Crawldad.Web.Infrastructure.Browser.Real;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The global request throttle (§8.1): disabled at <c>minIntervalMs ≤ 0</c>, and otherwise spacing serialized callers
-/// at least the interval apart. Timing is asserted as a lower bound against the system clock (<see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/>
-/// never returns early), keeping the test deterministic and fast.
-/// </summary>
+/// <summary>The global request throttle: disabled at <c>minIntervalMs ≤ 0</c>, and otherwise spacing serialized callers at
+/// least the interval apart. Timing is asserted as a lower bound (<see cref="Task.Delay(TimeSpan, TimeProvider, CancellationToken)"/>
+/// never returns early), keeping the test deterministic and fast.</summary>
 public class ThrottleGateTests
 {
     [Fact]
@@ -18,7 +16,7 @@ public class ThrottleGateTests
         await gate.WaitAsync(0, CancellationToken.None);
         await gate.WaitAsync(-5, CancellationToken.None);
         sw.Stop();
-        sw.ElapsedMilliseconds.ShouldBeLessThan(100); // no delay at all
+        sw.ElapsedMilliseconds.ShouldBeLessThan(100);
     }
 
     [Fact]

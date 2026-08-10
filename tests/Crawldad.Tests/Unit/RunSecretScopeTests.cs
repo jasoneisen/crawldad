@@ -2,11 +2,8 @@ using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The per-run secret registry (<see cref="AmbientRunSecretScope"/>, §12, WP3): lifetime and isolation. A registered
-/// secret is visible only between <see cref="IRunSecretScope.Begin"/> and disposal, flows down the run's async call
-/// chain, and leaves no residue afterwards.
-/// </summary>
+/// <summary>The per-run secret registry (<see cref="AmbientRunSecretScope"/>): a registered secret is visible only between
+/// <see cref="IRunSecretScope.Begin"/> and disposal, flows down the run's async call chain, and leaves no residue afterwards.</summary>
 public class RunSecretScopeTests
 {
     [Fact]
@@ -95,14 +92,14 @@ public class RunSecretScopeTests
         Should.Throw<ArgumentException>(() => scope.Register(secret!));
     }
 
-    // ----- CD-6 form-fill secrets: a separate set (scrubbed at the lower form floor) -----
+    // ----- form-fill secrets: a separate set (scrubbed at the lower form floor) -----
 
     [Fact]
     public void Form_secrets_are_kept_apart_from_connect_secrets_and_cleared_on_dispose()
     {
         var scope = new AmbientRunSecretScope();
 
-        scope.FormSecrets.ShouldBeEmpty(); // no scope open
+        scope.FormSecrets.ShouldBeEmpty();
 
         using (scope.Begin())
         {

@@ -18,15 +18,9 @@ using Npgsql;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 4 WP3 security gate (§12, CRAWLDAD_PLAN.md Phase 4): a run whose backend binding carries a token /
-/// connectUrl asserts that string appears in <b>no</b> event, projection row, log line, or HTTP response body. Both real
-/// WP1 remote adapters are driven against loopback servers only (a local Playwright <c>run-server</c> for
-/// <c>browserless</c>, a local CDP endpoint + a session-create stub for <c>browserbase</c>) — <b>zero live third-party
-/// traffic</b> — with the resolved credential a distinctive sentinel. The payload adversarially interpolates the
-/// sentinel into a <c>log</c> message and the shaped <c>result</c> (simulating a page that echoes it), so the exact-match
-/// scrub is exercised at every sink; a failure-path variant carries the sentinel in a bad-port connect URL.
-/// </summary>
+/// <summary>A run whose backend binding carries a token/connectUrl asserts that string appears in no event,
+/// projection row, log line, or HTTP response body. Real remote adapters run against loopback servers only (zero
+/// live third-party traffic); the sentinel credential is adversarially echoed into a log + result to exercise the scrub.</summary>
 [Collection(RealChromiumCollection.Name)]
 public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost leak) : IClassFixture<LeakHost>
 {
@@ -115,7 +109,7 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
     }
 
     // A failing async run: connect (browserless), then fail with the secret in scope — so the executor captures a real
-    // failure screenshot (§13), exercising the screenshot ref/blob at the scrub boundary (not a vacuously-empty store).
+    // failure screenshot, exercising the screenshot ref/blob at the scrub boundary (not a vacuously-empty store).
     private const string _asyncScreenshotFailPayload =
         """
         { "name": "leak-shotfail", "config": { "backend": "input.backend" }, "vars": { "leaked": "input.echo" },
@@ -250,24 +244,22 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         // The scrubbed sinks (events, projections, run-progress, SSE, timeline, screenshots, logs, response) stay clean too.
         await AssertRunLeaksNothingAsync(host, root, LeakHost.DurableSecretSentinel);
 
-        // CD-5: the RunExecutorSaga no longer LINGERS after the run finished — the shared terminal finaliser deletes it in the
-        // SAME transaction as the run's terminal disposition, so its inputs+script are reclaimed atomically rather than sitting
-        // at rest indefinitely. Poll until it is gone (was: asserted lingering).
+        // The RunExecutorSaga no longer lingers after the run finishes — the shared terminal finaliser deletes it in the
+        // same transaction as the run's terminal disposition, so its inputs+script are reclaimed atomically. Poll until gone.
         await DurableHost.WaitUntilSagaGoneAsync(host, runId, TimeSpan.FromSeconds(20));
 
         // The durable at-rest surfaces still hold the run definition BY REFERENCE — the StartRun envelope carries inputs+script,
-        // so the credentialRef IS present at rest while the resolved secret is NOWHERE (the by-reference-model boundary, §12).
+        // so the credentialRef IS present at rest while the resolved secret is NOWHERE (the by-reference-model boundary).
         var durableState = await DumpDurableStateAsync(host);
         durableState.ShouldContain(LeakHost.DurableRef);                 // the reference is persisted (a non-vacuous sweep)…
         durableState.ShouldNotContain(LeakHost.DurableSecretSentinel);   // …the resolved secret is not, anywhere durable
     }
 
-    // ----- CD-6: form-fill secretRef leak sweep --------------------------------
+    // ----- form-fill secretRef leak sweep --------------------------------
 
-    // The fake caphome-search backend + a secretRef `pw`. The fill types the vault-resolved secret into a form field; the
-    // payload then reads it BACK from the field (attr value, which the fake reflects) and adversarially echoes it into a log
-    // and the shaped result — so the exact-match scrub of the FILL-resolved secret is exercised at every sink, not vacuously
-    // absent. `pw` carries only the REFERENCE (login-password); the secret enters solely through the vault at fill time.
+    // The fake caphome-search backend + a secretRef `pw`: the fill types the vault-resolved secret into a form field,
+    // then the payload reads it BACK from the field and adversarially echoes it into a log and the result, so the
+    // exact-match scrub is exercised at every sink. `pw` carries only the reference; the secret enters via the vault.
     private const string _fillLeakPayload =
         """
         { "name": "leak-fill", "config": { "backend": "input.backend" },
@@ -281,10 +273,9 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
           "result": "{ echoed: typed, echoedUrl: 'wss://x?token=' + typed }" }
         """;
 
-    // The async/checkpoint variant: the fill's read-back secret is snapshotted into BOTH the checkpoint cursor and the var
-    // snapshot, so the durable RunProgress checkpoint (the state a resumed run restores from) is exercised at the scrub
-    // boundary alongside the trace + result. The `fill.secret` sits inside the resumable loop body, so a resumed run re-runs
-    // it and re-resolves from the vault (verified deterministically at the unit level in RunSecretFillTests).
+    // The async/checkpoint variant: the fill's read-back secret is snapshotted into both the checkpoint cursor and the var
+    // snapshot, so the durable RunProgress checkpoint is exercised at the scrub boundary too. The `fill.secret` sits inside
+    // the resumable loop body, so a resumed run re-resolves it from the vault (verified in RunSecretFillTests).
     private const string _fillCheckpointLeakPayload =
         """
         { "name": "leak-fill-cp", "config": { "backend": "input.backend" },
@@ -329,8 +320,7 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
     [Fact]
     public async Task A_short_fill_secret_below_the_connect_floor_still_leaks_into_no_sink()
     {
-        // CD-6 short-secret guard: a 6-char PIN-shaped secret sits BELOW the connect-credential length floor (8), so under
-        // the old exact-scrub floor it would have leaked when read back and echoed. The lower form floor redacts it.
+        // A 6-char PIN-shaped secret sits below the connect-credential length floor (8); the lower form-fill floor redacts it too.
         var host = await leak.EnsureAsync(chromium);
         leak.Capturer.Clear();
 
@@ -442,11 +432,11 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         // (c) every captured log line for the run (framework categories included).
         string.Join('\n', leak.Capturer.Lines).ShouldNotContain(sentinel);
 
-        // (e, WP3) the SSE stream: the full backfilled tail carries only scrubbed event data (closes the deferred P4 gap).
+        // (e) the SSE stream: the full backfilled tail carries only scrubbed event data.
         var frames = await SseReader.ReadToCloseAsync(host, runId, lastEventId: null, TimeSpan.FromSeconds(20));
         string.Join('\n', frames.Select(f => f.Data)).ShouldNotContain(sentinel);
 
-        // (f, WP3) the RunTimeline projection row (steps, extracted refs, region, failure/screenshot ref).
+        // (f) the RunTimeline projection row (steps, extracted refs, region, failure/screenshot ref).
         var timeline = await host.Scenario(x =>
         {
             x.Get.Url($"/runs/{runId}/timeline");
@@ -454,7 +444,7 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         });
         (await timeline.ReadAsJsonAsync<JsonElement>()).GetRawText().ShouldNotContain(sentinel);
 
-        // (g, WP3) the screenshot blob store: no ref (key) nor captured byte carries the credential (§12/§13).
+        // (g) the screenshot blob store: no ref (key) nor captured byte carries the credential.
         var screenshots = (InMemoryScreenshotStore)host.Services.GetRequiredService<IScreenshotStore>();
         string.Join('\n', screenshots.Blobs.Keys).ShouldNotContain(sentinel);
         screenshots.Blobs.Values.ShouldAllBe(bytes => !Encoding.UTF8.GetString(bytes).Contains(sentinel, StringComparison.Ordinal));
@@ -480,15 +470,14 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
         await AppendRowsAsync(connection, "select data::text from crawldad_leak.mt_events", dump);
         await AppendRowsAsync(connection, "select data::text from crawldad_leak.mt_doc_run", dump);
         // The executor-owned run-progress store holds the durable checkpoint (cursor + var snapshot) and the run result an
-        // async/resumed run persists — swept here too so the §12 no-leak invariant covers the resume path.
+        // async/resumed run persists — swept here too so the no-leak invariant covers the resume path.
         await AppendRowsAsync(connection, "select data::text from crawldad_leak.mt_doc_runprogress", dump);
         return dump.ToString();
     }
 
     // The durable ORCHESTRATION state a run leaves at rest (distinct from the scrubbed Marten sinks above): the
-    // RunExecutorSaga document (inputs+script, which lingers after completion) and Wolverine's durable envelope tables —
-    // incoming (StartRun's inputs+script, ExecuteRun, the scheduled RunDeadline), outgoing, and dead-letters. Envelope
-    // bodies are bytea; escape-encoded so binary framing is skippable text and an embedded ASCII sentinel is found verbatim.
+    // RunExecutorSaga document and Wolverine's durable envelope tables (incoming, outgoing, dead-letters). Envelope
+    // bodies are bytea, escape-encoded so an embedded ASCII sentinel is found verbatim.
     private static async Task<string> DumpDurableStateAsync(IAlbaHost host)
     {
         var connectionString = host.Services.GetRequiredService<IConfiguration>().GetConnectionString("marten")!;
@@ -516,13 +505,9 @@ public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost l
     }
 }
 
-/// <summary>
-/// A single Alba host for the leak suite, wired with the real remote adapters pointed at loopback servers (a Playwright
-/// <c>run-server</c>, a local CDP endpoint + a session-create stub), a <see cref="MapSecretStore"/> resolving a distinct
-/// sentinel per credential mode, and a <see cref="CapturingLoggerProvider"/> on the (scrubbing-decorated) logging
-/// pipeline. Built lazily on first use so it can reuse the collection's shared Playwright driver; disposed with the
-/// class. <b>No live third-party traffic.</b>
-/// </summary>
+/// <summary>A single Alba host for the leak suite, wired with the real remote adapters pointed at loopback servers,
+/// a <see cref="MapSecretStore"/> resolving a distinct sentinel per credential mode, and a
+/// <see cref="CapturingLoggerProvider"/> on the logging pipeline. No live third-party traffic.</summary>
 public sealed class LeakHost : IAsyncLifetime
 {
     /// <summary>The Marten schema the leak host isolates its streams/docs into (also scanned raw by the sink sweep).</summary>
@@ -539,7 +524,7 @@ public sealed class LeakHost : IAsyncLifetime
     /// (distinct from <see cref="TokenSentinel"/>, which the echo tests deliberately place into a raw input value).</summary>
     internal const string DurableSecretSentinel = "brwsrless_DURABLEREST_secret_0123456789abcdefABCDEF";
 
-    /// <summary>The CD-6 form-fill secret sentinel: the value the tenant's <see cref="FillRef"/> resolves to via the REAL
+    /// <summary>The form-fill secret sentinel: the value the tenant's <see cref="FillRef"/> resolves to via the REAL
     /// config vault (<c>Secrets:{tenant}:{ref}</c>). It is NEVER passed as a plain input — only the reference travels — so a
     /// hit at any sink or at rest is a real form-fill-secret breach (the secret enters the run only through <c>fill.secret</c>).</summary>
     internal const string FillSecretSentinel = "f1llSECRET_LEAKCANARY_pw_0123456789abcdefABCDEF";
@@ -548,8 +533,8 @@ public sealed class LeakHost : IAsyncLifetime
     internal const string FunctionalFillSecret = "correct-horse-battery-staple-42";
 
     /// <summary>A <b>short</b> (6-char) form-fill secret sentinel — a PIN/short-password shape below the connect-credential
-    /// length floor (8), so under the old floor it would have leaked. Distinctive (mixed-case, non-hex) to stay
-    /// collision-free in the raw sweep; it must be redacted by the lower CD-6 form floor.</summary>
+    /// length floor (8). Distinctive (mixed-case, non-hex) to stay collision-free in the raw sweep; must be redacted
+    /// by the lower form-fill floor.</summary>
     internal const string ShortFillSecretSentinel = "LEAKpw";
 
     internal const string BrowserlessRef = "browserless-cred";
@@ -557,7 +542,7 @@ public sealed class LeakHost : IAsyncLifetime
     internal const string ConnectUrlRef = "browserbase-connecturl-cred";
     internal const string DurableRef = "durable-byref-cred";
 
-    /// <summary>The CD-6 form-fill secretRef (its vault value is <see cref="FillSecretSentinel"/>, per-tenant in config).</summary>
+    /// <summary>The form-fill secretRef (its vault value is <see cref="FillSecretSentinel"/>, per-tenant in config).</summary>
     internal const string FillRef = "login-password";
 
     /// <summary>The functional-parity form-fill secretRef (its vault value is <see cref="FunctionalFillSecret"/>).</summary>
@@ -579,7 +564,7 @@ public sealed class LeakHost : IAsyncLifetime
     /// <summary>Captures every rendered log line (post-scrub) so the sweep can assert no credential reaches a sink.</summary>
     internal CapturingLoggerProvider Capturer { get; } = new();
 
-    /// <summary>The loopback login page URL the CD-6 form-fill tests navigate to (built once the stub site is up).</summary>
+    /// <summary>The loopback login page URL the form-fill tests navigate to (built once the stub site is up).</summary>
     internal string LoginUrl => _stub!.Url("/login");
 
     public Task InitializeAsync() => Task.CompletedTask; // built lazily once the shared driver is available
@@ -599,7 +584,7 @@ public sealed class LeakHost : IAsyncLifetime
         _stub = new LocalSite()
             .Map("/v1/sessions", "application/json",
                 $$"""{"connectUrl":"{{_cdp.Endpoint}}","region":"us-east-1","expiresAt":"2099-01-01T00:00:00Z"}""")
-            .Map("/login", "text/html", _loginPage); // CD-6: the real-Chromium form-fill target
+            .Map("/login", "text/html", _loginPage); // the real-Chromium form-fill target
 
         var secrets = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -616,7 +601,7 @@ public sealed class LeakHost : IAsyncLifetime
             builder.UseSetting("Crawldad:Browserless:EndpointTemplate", _runServer.WsBase);
             builder.UseSetting("Crawldad:Browserbase:ApiBaseUrl", _stub.BaseUrl.TrimEnd('/'));
 
-            // CD-6: the tenant-scoped form-fill secrets, resolved by the REAL config vault (Secrets:{tenant}:{ref}) — the
+            // The tenant-scoped form-fill secrets, resolved by the REAL config vault (Secrets:{tenant}:{ref}) — the
             // connect credentials above go through the MapSecretStore override, but the form-fill path exercises the real
             // ConfigurationSecretStore, so a tenant-namespaced miss (another tenant's key) genuinely fails to resolve.
             builder.UseSetting($"Secrets:{TestTenants.PrimaryId}:{FillRef}", FillSecretSentinel);

@@ -7,12 +7,9 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The durable filesystem provider (CD-2) end-to-end through <c>POST /runs</c>: the production host wiring with
-/// <c>Crawldad:Storage:Provider=filesystem</c> stores a downloaded attachment and a failure screenshot as <b>real files on
-/// disk</b>, partitioned under the run's tenant — proving the seam the ticket ships (a durable adapter passing the
-/// download/content-hash/idempotency and screenshot paths against real storage), with zero external dependency.
-/// </summary>
+/// <summary>The durable filesystem provider end-to-end through <c>POST /runs</c>: with
+/// <c>Crawldad:Storage:Provider=filesystem</c>, a downloaded attachment and a failure screenshot are stored as real
+/// files on disk, partitioned under the run's tenant, with zero external dependency.</summary>
 [Collection(FileSystemStorageCollection.Name)]
 public class FileSystemStorageTests(FileSystemStorageFixture fixture)
 {

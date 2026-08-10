@@ -1,14 +1,8 @@
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The <b>zero-live-traffic wiring proof</b> for the Phase 4 live canary: it runs the canary's IDENTICAL code path —
-/// read <c>scrape-full.json</c> verbatim → <c>POST /runs</c> on the <c>"local"</c> adapter → assert <c>status:"succeeded"</c>
-/// → validate the <c>RecordScrapedV1</c> SHAPE (<see cref="LiveCanary.RunScrapeAsync"/> + <see cref="LiveCanary.AssertValidRecordScrapedV1"/>)
-/// — but against the in-process <b>local fixture site</b> over real headless Chromium (the WP2 <see cref="ParityAppFixture"/>,
-/// whose <c>"local"</c> adapter is the fixture-backed <see cref="Support.FixtureChromiumBackend"/>). So the canary's
-/// payload-driving and shape gate are known-good <b>short of the live hit</b>, with the live run remaining the operator's
-/// gated manual/nightly action. The only difference from <see cref="LiveCanaryTests"/> is the origin the adapter talks to.
-/// </summary>
+/// <summary>Zero-live-traffic wiring proof for the live canary: runs the canary's identical code path — read
+/// <c>scrape-full.json</c>, <c>POST /runs</c>, assert success, validate <c>RecordScrapedV1</c> shape — against the
+/// in-process fixture site instead of live Chromium. Only difference from <see cref="LiveCanaryTests"/> is the origin.</summary>
 [Collection(RealChromiumParityCollection.Name)]
 public sealed class CanaryWiringTests(ParityAppFixture fixture)
 {

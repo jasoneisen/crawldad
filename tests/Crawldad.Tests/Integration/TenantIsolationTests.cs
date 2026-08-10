@@ -12,10 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// A fake backend that records every session it hands out, so a test can assert runs never share a browser session (CD-1).
-/// </summary>
-/// <param name="fixturesRoot">The fixtures root the inner fake reads.</param>
+/// <summary>A fake backend that records every session it hands out, so a test can assert runs never share a browser session.</summary>
 public sealed class SessionRecordingBackend(string fixturesRoot) : IBrowserBackend
 {
     private readonly FakeBrowserBackend _inner = new(fixturesRoot);
@@ -45,13 +42,9 @@ public sealed class SessionRecordingBackend(string fixturesRoot) : IBrowserBacke
     }
 }
 
-/// <summary>
-/// Builds one isolation host (over the session-recording fake backend) and seeds tenant A's + tenant B's data once, so the
-/// cross-tenant assertions share a single host build (the codebase's collection-fixture pattern — a per-test host would
-/// contend with the other integration hosts under parallelism). Tenant A gets a managed payload, a pinned run driven to
-/// success, and a failing run that captures a screenshot; tenant B gets its own run so isolation is proven against
-/// populated — not empty — state.
-/// </summary>
+/// <summary>Builds one isolation host (over the session-recording fake backend) and seeds tenant A's + tenant B's data
+/// once, so the cross-tenant assertions share a single host build rather than contending with other hosts under
+/// parallelism. Tenant A gets a payload + a succeeded + a failing (screenshot) run; tenant B gets its own run too.</summary>
 public sealed class TenantIsolationFixture : IAsyncLifetime
 {
     public IAlbaHost Host { get; private set; } = null!;
@@ -159,13 +152,9 @@ public sealed class TenantIsolationCollection : ICollectionFixture<TenantIsolati
     public const string Name = "tenant-isolation";
 }
 
-/// <summary>
-/// The cross-tenant isolation proof (CD-1, §12): tenant B, with its own <b>valid</b> key, gets <b>404</b> on every one of
-/// tenant A's resources — payloads, runs, timelines, drift, replay, SSE — cannot see A's blobs, and its listings show only
-/// its own rows. 404 (not 403) is deliberate: a tenant must not be able to confirm another tenant's resource even exists.
-/// Also asserts the two structural invariants the ticket calls out: per-run backend sessions are never shared, and the
-/// storage seams partition by tenant.
-/// </summary>
+/// <summary>Cross-tenant isolation: tenant B, with its own valid key, gets 404 on every one of tenant A's resources
+/// (payloads, runs, timelines, drift, replay, SSE), cannot see A's blobs, and its listings show only its own rows.
+/// 404 (not 403) is deliberate — a tenant must not confirm another tenant's resource even exists.</summary>
 [Collection(TenantIsolationCollection.Name)]
 public class TenantIsolationTests(TenantIsolationFixture fixture)
 {
@@ -181,7 +170,7 @@ public class TenantIsolationTests(TenantIsolationFixture fixture)
             new JsonObject { ["payload"] = JsonNode.Parse(TenantIsolationFixture.DemoPayload) });
 
     [Fact]
-    public async Task Tenant_B_cannot_archive_tenant_As_payload() => // CD-1 review carry-over: an uncovered cross-tenant mutation
+    public async Task Tenant_B_cannot_archive_tenant_As_payload() =>
         await ExpectStatusAsync("POST", $"/payloads/{fixture.PayloadA}/archive", HttpStatusCode.NotFound);
 
     [Fact]
@@ -194,7 +183,7 @@ public class TenantIsolationTests(TenantIsolationFixture fixture)
         await ExpectStatusAsync("GET", $"/runs/{fixture.SucceededRunA}", HttpStatusCode.NotFound);
 
     [Fact]
-    public async Task Tenant_B_cannot_cancel_tenant_As_run() => // CD-1 review carry-over: cancel is a mutating route too
+    public async Task Tenant_B_cannot_cancel_tenant_As_run() =>
         await ExpectStatusAsync("POST", $"/runs/{fixture.SucceededRunA}/cancel", HttpStatusCode.NotFound);
 
     [Fact]

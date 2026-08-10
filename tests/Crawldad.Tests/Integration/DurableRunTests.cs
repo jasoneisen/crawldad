@@ -10,10 +10,9 @@ using Wolverine;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>One shared background-executor host for the async/cancel/deadline gates (built once, its schema migrated once —
-/// the durable tests otherwise contend on parallel schema migration). Built <b>lazily</b> on first use (mirroring the leak
-/// host) so its migration lands after the eager collection fixtures' inits, not alongside them. Its <c>fake</c> backend
-/// reads a re-armable <see cref="GateHolder"/> so each test drives its own gate + fetch recorder on the one host.</summary>
+/// <summary>One shared background-executor host for the async/cancel/deadline gates, built once (and lazily, after
+/// the eager collection fixtures' inits, so schema migrations don't contend). Its <c>fake</c> backend reads a
+/// re-armable <see cref="GateHolder"/> so each test drives its own gate + fetch recorder on the one host.</summary>
 public sealed class DurableFixture : IAsyncLifetime
 {
     private IAlbaHost? _host;
@@ -51,12 +50,9 @@ public sealed class DurableCollection : ICollectionFixture<DurableFixture>
     public const string Name = "durable-runs";
 }
 
-/// <summary>
-/// The Phase 5 WP2 durable-execution gates (§11): the async control surface (<c>202</c> + <c>GET /runs/{id}</c> poll),
+/// <summary>The durable-execution gates: the async control surface (<c>202</c> + <c>GET /runs/{id}</c> poll),
 /// cooperative cancellation with a clean teardown, checkpoint resume across an honest host kill, and the wall-clock
-/// deadline. Every run drives the FULL <c>SearchEnforcementRecords</c> payload (with its P5 checkpoint) through the real
-/// <c>POST /runs</c> path and the executor saga against the record/replay fake — no Chromium, no live traffic.
-/// </summary>
+/// deadline — all driven through the real <c>POST /runs</c> path against the record/replay fake, no live traffic.</summary>
 [Collection(DurableCollection.Name)]
 public class DurableRunTests(DurableFixture fixture)
 {
@@ -128,7 +124,7 @@ public class DurableRunTests(DurableFixture fixture)
             x.StatusCodeShouldBe(404);
         });
 
-    // ----- cooperative cancellation (§11) ------------------------------------
+    // ----- cooperative cancellation ------------------------------------
 
     [Fact]
     public async Task Cancel_mid_run_tears_the_session_down_and_reports_a_partial()
@@ -188,14 +184,14 @@ public class DurableRunTests(DurableFixture fixture)
         (await EventTypesAsync((await fixture.EnsureAsync()), runId)).ShouldNotContain(typeof(RunCancellationRequested));
     }
 
-    // ----- wall-clock deadline (§8.4) ----------------------------------------
+    // ----- wall-clock deadline ----------------------------------------
 
     [Fact]
     public async Task A_run_that_outruns_its_deadline_fails_terminally()
     {
         fixture.Gate.Arm(new RunGate("CapHome")); // stall the very first postback so the run is stuck when the deadline fires
 
-        // A minimal payload whose one postback the gate stalls; a short deadline then forcibly caps it (§8.4).
+        // A minimal payload whose one postback the gate stalls; a short deadline then forcibly caps it.
         var payload = JsonNode.Parse(
             """
             { "crawldad": "1", "name": "deadline.demo", "config": { "backend": "input.backend", "deadlineMs": 200 }, "vars": {},
@@ -222,7 +218,7 @@ public class DurableRunTests(DurableFixture fixture)
         failure.GetProperty("code").GetString().ShouldBe("run_deadline_exceeded");
     }
 
-    // ----- kill-and-restart resume (the load-bearing WP2 gate, §11) ----------
+    // ----- kill-and-restart resume (the load-bearing gate) ----------
 
     [Fact]
     public async Task Killed_run_resumes_from_the_last_checkpoint_without_refetching_earlier_pages()
@@ -381,7 +377,7 @@ public class DurableRunTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         var executor = host.Services.GetRequiredService<RunExecutor>();
 
-        // A message with no tenant cannot resolve a run (CD-1): the executor fails closed — it never touches the default
+        // A message with no tenant cannot resolve a run: the executor fails closed — it never touches the default
         // partition — and returns without effect (no crash).
         await executor.ExecuteAsync(Guid.NewGuid(), tenantId: null, CancellationToken.None);
     }
@@ -462,7 +458,7 @@ public class DurableRunTests(DurableFixture fixture)
         progress!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Running); // left running so the recovery scan re-drives it
         progress.Checkpoint.ShouldNotBeNull(); // its durable checkpoint survived
 
-        // CD-5 resume invariant: a non-finalised run is never deleted, so its saga (the script+inputs resume source) survives.
+        // A non-finalised run is never deleted, so its saga (the script+inputs resume source) survives.
         (await read.LoadAsync<RunExecutorSaga>(runId)).ShouldNotBeNull();
     }
 
@@ -488,7 +484,7 @@ public class DurableRunTests(DurableFixture fixture)
         progress.Failure!.Code.ShouldBe("invalid_backend_binding");
     }
 
-    // ----- saga completion at terminal (CD-5, §14.2) -------------------------
+    // ----- saga completion at terminal -------------------------
 
     private static async Task<RunExecutorSaga?> LoadSagaAsync(IAlbaHost host, Guid runId)
     {
@@ -515,7 +511,7 @@ public class DurableRunTests(DurableFixture fixture)
         (await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(20)))
             .GetProperty("status").GetString().ShouldBe("succeeded");
 
-        // CD-5: the saga is deleted in the SAME transaction as the terminal disposition — no RunFinished, no deadline janitor,
+        // The saga is deleted in the SAME transaction as the terminal disposition — no RunFinished, no deadline janitor,
         // just gone the instant the run reaches terminal (its deadline is 30 min away and never fires here).
         await DurableHost.WaitUntilSagaGoneAsync(host, runId, TimeSpan.FromSeconds(10));
     }
@@ -523,9 +519,9 @@ public class DurableRunTests(DurableFixture fixture)
     [Fact]
     public async Task A_deadline_killed_runs_saga_is_gone_with_no_finish_signal_and_no_second_deadline()
     {
-        // The reviewer's spent-deadline case (CD-5): a run its OWN deadline stopped — the deadline is already fired/acked and
-        // cannot fire again, and there is no separate RunFinished — so the saga is reclaimed ONLY by the atomic delete in the
-        // terminal transaction. The gate stalls the first postback so a short deadline forcibly caps the run (§8.4).
+        // The spent-deadline case: a run its OWN deadline stopped has already fired/acked that deadline (it cannot fire
+        // again), and there is no separate RunFinished — so the saga is reclaimed ONLY by the atomic delete in the terminal
+        // transaction. The gate stalls the first postback so a short deadline forcibly caps the run.
         var host = await fixture.EnsureAsync();
         fixture.Gate.Arm(new RunGate("CapHome"));
         var payload = JsonNode.Parse(

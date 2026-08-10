@@ -3,13 +3,9 @@ using Microsoft.AspNetCore.Http;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>
-/// The two tenants every integration host is configured with (CD-1). The <b>primary</b> tenant is the default identity every
-/// Alba scenario presents (via <see cref="AuthenticatedAsPrimaryTenant"/>), so the existing suite keeps passing unchanged
-/// with an authenticated caller; the <b>secondary</b> tenant is a second valid key the cross-tenant isolation test uses to
-/// prove one tenant cannot reach another's data. Keys are ≥ the registry's minimum length. This mirrors the config a real
-/// deployment binds under <c>Crawldad:Tenants</c>.
-/// </summary>
+/// <summary>The two tenants every integration host is configured with. The <b>primary</b> tenant is the default identity
+/// every Alba scenario presents (via <see cref="AuthenticatedAsPrimaryTenant"/>); the <b>secondary</b> tenant is a second
+/// valid key the cross-tenant isolation test uses to prove one tenant cannot reach another's data.</summary>
 internal static class TestTenants
 {
     public const string PrimaryId = "tenant-alpha";
@@ -36,14 +32,11 @@ internal static class TestTenants
     ];
 
     /// <summary>The bearer header value presenting a tenant's key (what an Alba scenario or a raw client sets).</summary>
-    /// <param name="apiKey">The tenant's API key.</param>
     public static string Bearer(string apiKey) => $"Bearer {apiKey}";
 
     /// <summary>Makes every Alba scenario on <paramref name="host"/> present the primary tenant's key by default, so the
     /// existing request-based tests authenticate without change; individual scenarios override with their own header (a
     /// different tenant, or none) since a scenario's setup runs after this BeforeEach.</summary>
-    /// <param name="host">The built Alba host.</param>
-    /// <returns>The same host, for chaining.</returns>
     public static IAlbaHost AuthenticatedAsPrimaryTenant(this IAlbaHost host) =>
         host.BeforeEach(context => context.Request.Headers.Authorization = Bearer(PrimaryKey));
 }

@@ -10,14 +10,9 @@ using Wolverine;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// CD-16 (#16) slot admission queue end-to-end: at the per-tenant concurrent-run cap a run is <b>queued, not 429'd</b>
-/// (docs/PRODUCT.md §Pv.3). Each test builds its own cap-1 durable host (its own schema + fresh in-process slot gate), so the
-/// scenarios are fully isolated. Drives the real <c>POST /runs</c> + executor saga against the record/replay fake — no
-/// Chromium, no live traffic. Covers the ticket's done-when matrix: FIFO fill→queue→auto-start ordering, queue-depth 429,
-/// cancel-while-queued, deadline-starts-at-execution, max-queue-wait timeout, crash/restart with a non-empty queue (durable,
-/// FIFO), queue position via GET + SSE, and p95 queue wait observability — plus the queue service's edge branches.
-/// </summary>
+/// <summary>Slot admission queue end-to-end: at the per-tenant concurrent-run cap a run is queued, not 429'd. Each
+/// test builds its own cap-1 durable host (own schema + fresh in-process slot gate) for full isolation, driving the
+/// real <c>POST /runs</c> + executor saga against the fake — no Chromium, no live traffic.</summary>
 public class SlotQueueTests
 {
     // A minimal async payload with one gated postback: it blocks at the CapHome page so a run can be caught mid-execution
@@ -389,7 +384,7 @@ public class SlotQueueTests
         return (await result.ReadAsJsonAsync<JsonElement>()).Clone();
     }
 
-    // ----- exactly one terminal writer under a cancel/promotion race (BLOCKER-1) ----
+    // ----- exactly one terminal writer under a cancel/promotion race ----
 
     // Seeds a run in a queued run's shape (stream opener + QueuedRun row + RunProgress at a chosen status), for driving the
     // terminal-transition claim white-box.
@@ -423,9 +418,9 @@ public class SlotQueueTests
 
         var runId = await SeedQueuedAsync(store, clock, RunStatus.Queued);
 
-        // Drive the interleaving the reviewer's probe hit: a promotion holds the run stream's exclusive lock and commits its
-        // transition (run -> running, slot occupied) while a REAL cancel is blocked on that same lock. The cancel must then
-        // observe the committed promotion and abort — writing no RunCancelled and leaving no leaked slot.
+        // Drive the exact interleaving: a promotion holds the run stream's exclusive lock and commits its transition (run ->
+        // running, slot occupied) while a REAL cancel is blocked on that same lock. The cancel must then observe the
+        // committed promotion and abort — writing no RunCancelled and leaving no leaked slot.
         gate.TryAdmit(TestTenants.PrimaryId, runId).ShouldBeTrue(); // the promotion reserves the slot
         Task<bool> cancel;
         await using (var promote = store.LightweightSession(TestTenants.PrimaryId))
@@ -466,14 +461,14 @@ public class SlotQueueTests
         var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
 
         // Promotion of a run whose progress already left 'queued' (a concurrent cancel/timeout won the claim): the reserved
-        // slot is RELEASED (no leak) and the call returns true so the handler re-drains the next queued run (SHOULD-FIX-3).
+        // slot is RELEASED (no leak) and the call returns true so the handler re-drains the next queued run.
         var lost = await SeedQueuedAsync(store, clock, RunStatus.Running); // QueuedRun present but progress not queued
         (await queue.PromoteOldestAsync(bus, TestTenants.PrimaryId, CancellationToken.None)).ShouldBeTrue();
         gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(0);
         await DeleteQueuedAsync(store, lost);
 
         // Promotion whose claim throws mid-flight (a QueuedRun with no RunProgress row — a corrupt/partial state): the reserved
-        // slot is RELEASED (not leaked) and the failure propagates for a retry (SHOULD-FIX-2 exception-safety).
+        // slot is RELEASED (not leaked) and the failure propagates for a retry.
         var broken = Guid.NewGuid();
         await using (var seed = store.LightweightSession(TestTenants.PrimaryId))
         {
@@ -502,7 +497,7 @@ public class SlotQueueTests
         (await StateAsync(host, promoted)).GetProperty("status").GetString().ShouldBe("running"); // untouched by the spent timeout
     }
 
-    // ----- an enqueue landing with a free slot nudges its own promotion (SHOULD-FIX-2) -
+    // ----- an enqueue landing with a free slot nudges its own promotion -
 
     // A no-backend async run POSTed at the cap, expected to QUEUE (202 "queued"); returns its id. Its payload has no steps and
     // no backend, so once promoted it fails fast (invalid_backend_binding) without touching the gated fake — a clean promotion probe.
@@ -530,9 +525,9 @@ public class SlotQueueTests
         await using var host = await HostAsync("crawldad_slotq_strand", holder);
         var admissionGate = (RunAdmissionGate)host.Services.GetRequiredService<IRunAdmissionGate>();
 
-        // A blocked run holds the one slot — and, as the first request, fully starts the host so RunRecoveryService has already
-        // scanned the (empty) schema. Everything enqueued after this is therefore enqueued via the endpoint AFTER recovery, so
-        // recovery never promotes it (the seeding-into-a-live-host artifact that made an earlier version of this test flaky).
+        // A blocked run holds the one slot — and, as the first request, fully starts the host so RunRecoveryService has
+        // already scanned the (empty) schema. Everything enqueued after this happens AFTER recovery, so recovery never
+        // promotes it.
         var blocked = await StartBlockedAsync(host, holder, gate);
         var queued = await StartQueuedNoBackendAsync(host); // queues behind the blocker
 
@@ -553,7 +548,7 @@ public class SlotQueueTests
         await DrainAsync(host, blocked, arriving);
     }
 
-    // ----- FIFO counter self-seeds above a restart's high-water mark (SHOULD-FIX-3) -
+    // ----- FIFO counter self-seeds above a restart's high-water mark -
 
     [Fact]
     public async Task The_fifo_counter_self_seeds_above_the_restored_high_water_mark()

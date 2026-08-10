@@ -3,12 +3,9 @@ using Crawldad.Web.Features.Runs;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The <see cref="RunTimelineProjection"/> fold (§13): opens on <c>RunStarted</c>, records region/steps/extracts/downloads
+/// <summary>The <see cref="RunTimelineProjection"/> fold: opens on <c>RunStarted</c>, records region/steps/extracts/downloads
 /// from the step trace, closes each step's duration when the next step (or the terminal event) lands, and attaches the
-/// failure + screenshot ref. Exercised by folding events directly so every branch — a stepless run, a failed run's
-/// screenshot carry-through, each terminal — is covered without a database.
-/// </summary>
+/// failure + screenshot ref. Exercised by folding events directly, without a database.</summary>
 public class RunTimelineProjectionTests
 {
     private static readonly DateTimeOffset _t0 = new(2026, 8, 6, 12, 0, 0, TimeSpan.Zero);
@@ -50,7 +47,7 @@ public class RunTimelineProjectionTests
     }
 
     [Fact]
-    public void A_run_folds_explicit_screenshots_in_capture_order() // #8: author-requested artifacts, curated like downloads
+    public void A_run_folds_explicit_screenshots_in_capture_order() // author-requested artifacts, curated like downloads
     {
         var projection = new RunTimelineProjection();
 

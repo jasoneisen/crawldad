@@ -2,11 +2,9 @@ using Crawldad.Web.Features.Runs;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The SSE tail-wakeup hub (§11/§13): a per-run signal completes its <c>Changed</c> task on <see cref="RunSignal.Notify"/>
-/// and re-arms; the registry hands out one signal per run, no-ops a notify for a run no one watches, and drops a run's slot
-/// on remove. It is only a wakeup — correctness comes from the durable re-read — so a missed notify is never a lost event.
-/// </summary>
+/// <summary>The SSE tail-wakeup hub: a per-run signal completes its <c>Changed</c> task on <see cref="RunSignal.Notify"/> and
+/// re-arms; the registry hands one signal per run, no-ops a notify for an unwatched run, and drops a run's slot on remove.
+/// It is only a wakeup — correctness comes from the durable re-read — so a missed notify is never a lost event.</summary>
 public class RunEventSignalsTests
 {
     [Fact]
@@ -17,10 +15,10 @@ public class RunEventSignalsTests
         first.IsCompleted.ShouldBeFalse();
 
         signal.Notify();
-        await first; // completes
+        await first;
 
         var second = signal.Changed;
-        second.ShouldNotBeSameAs(first); // re-armed
+        second.ShouldNotBeSameAs(first);
         second.IsCompleted.ShouldBeFalse();
     }
 
@@ -31,8 +29,8 @@ public class RunEventSignalsTests
         var runId = Guid.NewGuid();
 
         var signal = signals.For(runId);
-        signals.For(runId).ShouldBeSameAs(signal);          // same run ⇒ same signal
-        signals.For(Guid.NewGuid()).ShouldNotBeSameAs(signal); // different run ⇒ different signal
+        signals.For(runId).ShouldBeSameAs(signal);
+        signals.For(Guid.NewGuid()).ShouldNotBeSameAs(signal);
     }
 
     [Fact]
@@ -41,11 +39,11 @@ public class RunEventSignalsTests
         var signals = new RunEventSignals();
         var watched = Guid.NewGuid();
 
-        signals.Notify(Guid.NewGuid()); // no subscriber — must not throw and creates nothing
+        signals.Notify(Guid.NewGuid()); // must not throw and creates nothing
 
         var changed = signals.For(watched).Changed;
         signals.Notify(watched);
-        await changed; // the subscribed run's wait completes
+        await changed;
     }
 
     [Fact]
@@ -57,6 +55,6 @@ public class RunEventSignalsTests
 
         signals.Remove(runId);
 
-        signals.For(runId).ShouldNotBeSameAs(signal); // a fresh slot after removal
+        signals.For(runId).ShouldNotBeSameAs(signal);
     }
 }

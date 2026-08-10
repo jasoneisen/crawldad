@@ -4,10 +4,8 @@ using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The failure-screenshot blob store (§13) and the download content-type guess: the store is content-addressed (identical
-/// bytes ⇒ one blob, a credential-free hash ref), and the content-type helper maps a stored name's extension to a MIME type.
-/// </summary>
+/// <summary>The failure-screenshot blob store and the download content-type guess: the store is content-addressed (identical
+/// bytes ⇒ one blob, a credential-free hash ref), and the content-type helper maps a stored name's extension to a MIME type.</summary>
 public class ScreenshotStoreTests
 {
     [Fact]
@@ -32,8 +30,8 @@ public class ScreenshotStoreTests
         var first = await store.SaveAsync(TestTenants.InterpreterTenant, [1, 2, 3], CancellationToken.None);
         var second = await store.SaveAsync(TestTenants.InterpreterTenant, [1, 2, 3], CancellationToken.None);
 
-        second.ShouldBe(first);          // same content ⇒ same ref
-        store.Blobs.Count.ShouldBe(1);   // stored once
+        second.ShouldBe(first);
+        store.Blobs.Count.ShouldBe(1);
     }
 
     [Theory]

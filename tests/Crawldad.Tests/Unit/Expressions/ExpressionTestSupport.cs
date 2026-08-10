@@ -5,10 +5,8 @@ namespace Crawldad.Tests.Unit.Expressions;
 /// <summary>One DOM read the fake observed, so tests can assert the interpreter passed the right target/css through.</summary>
 internal sealed record DomCall(string Op, object Target, string? Css, string? Name);
 
-/// <summary>
-/// A scriptable <see cref="IDomAccess"/>: each operation delegates to a settable lambda (keyed off target/css) and
-/// every call is recorded. Defaults return "nothing there" so a test only wires the reads it cares about.
-/// </summary>
+/// <summary>A scriptable <see cref="IDomAccess"/>: each operation delegates to a settable lambda (keyed off target/css)
+/// and every call is recorded. Defaults return "nothing there" so a test only wires the reads it cares about.</summary>
 internal sealed class FakeDom : IDomAccess
 {
     public Func<object, string?, long> OnCount { get; set; } = static (_, _) => 0L;
@@ -87,7 +85,7 @@ internal sealed class FakeScope : IEvalScope
     }
 }
 
-/// <summary>An arbitrary non-value-model object used as an opaque locator handle in tests (§7 handle semantics).</summary>
+/// <summary>An arbitrary non-value-model object used as an opaque locator handle in tests.</summary>
 internal sealed class FakeHandle
 {
     public override string ToString() => "«handle»";

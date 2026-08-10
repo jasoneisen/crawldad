@@ -7,13 +7,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The native (<c>"browserless"</c>) and CDP (<c>"browserbase"</c>) adapters, executed against loopback servers only —
-/// a local Playwright <c>run-server</c> for native connect and a locally launched CDP endpoint for connectOverCDP, with
-/// the Browserbase session-create call answered by a local stub. <b>No live third-party traffic.</b> Covers both
-/// credential modes, the region tag, and — the security gate — that a connect failure surfaces a terminal
-/// <see cref="BrowserConnectException"/> whose message leaks neither the token nor the apiKey-embedding connect URL.
-/// </summary>
+/// <summary>The native (<c>"browserless"</c>) and CDP (<c>"browserbase"</c>) adapters, exercised only against loopback
+/// servers. Covers both credential modes, the region tag, and that a connect failure raises a
+/// <see cref="BrowserConnectException"/> whose message leaks neither the token nor the connect URL.</summary>
 [Collection(RealChromiumCollection.Name)]
 public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDisposable
 {
@@ -174,8 +170,7 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
     [Fact]
     public async Task Browserbase_connect_failure_does_not_leak_the_apiKey_embedding_connect_url()
     {
-        // connectUrl mode: the whole URL is the secret. An apiKey-bearing URL (connectUrl mode / pre-2026-08 shape; the
-        // live default now carries a per-session signingKey) must still be scrubbed on a failed connect.
+        // connectUrl mode: the whole URL is the secret, so an apiKey-bearing URL must still be scrubbed on a failed connect.
         const string Leaky = "ws://127.0.0.1:1/?apiKey=bb_live_LEAKME&sessionId=ses_x";
         var backend = Browserbase(Leaky, BrowserbaseBackend.DefaultApiBaseUrl);
         var binding = new BackendBinding("browserbase", "cred-ref", new Dictionary<string, object?>(StringComparer.Ordinal)

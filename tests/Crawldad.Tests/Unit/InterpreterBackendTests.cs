@@ -8,11 +8,9 @@ using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The interpreter's handling of a real-adapter connect failure (§8.3): a <see cref="BrowserConnectException"/> from
-/// <c>ConnectAsync</c> is a terminal <c>backend_unavailable</c>, classified like the fake's setup fault, and its
-/// (already secret-free) message is surfaced verbatim.
-/// </summary>
+/// <summary>The interpreter's handling of a real-adapter connect failure: a <see cref="BrowserConnectException"/>
+/// from <c>ConnectAsync</c> is a terminal <c>backend_unavailable</c>, classified like the fake's setup fault, and
+/// its (already secret-free) message is surfaced verbatim.</summary>
 public class InterpreterBackendTests
 {
     [Fact]

@@ -12,16 +12,9 @@ using Wolverine.Http;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The OpenAPI drift gate (#21): keeps <see cref="OpenApiSpec"/> (served at <c>GET /openapi.json</c>) truthful the same way
-/// <see cref="DocsDriftTests"/> keeps the reference docs honest. The envelope is authored from a single endpoint table; these
-/// tests cross-check that table against the <b>live Wolverine route table</b> (reflected from the
-/// <see cref="WolverineHttpMethodAttribute"/>s on the endpoint methods) — so a new routable endpoint added without a spec
-/// entry, or with the wrong auth, fails the build. They also assert the document is internally consistent (every
-/// <c>$ref</c> resolves, every path parameter is declared, every component schema is a valid JSON Schema) and that the
-/// admission surface the ticket calls out — the <c>202</c> queued/running shapes and the <c>429 queue_depth_exceeded</c>
-/// limit — is present.
-/// </summary>
+/// <summary>The OpenAPI drift gate: keeps <see cref="OpenApiSpec"/> truthful against the live Wolverine route table
+/// (a new routable endpoint or wrong auth fails the build) and internally consistent (every <c>$ref</c> resolves,
+/// every path parameter declared, every component schema valid) — including the <c>202</c>/<c>429</c> admission shapes.</summary>
 public class OpenApiSpecTests
 {
     private static readonly JsonNode _document = JsonNode.Parse(OpenApiSpec.DocumentJson)!;
@@ -78,7 +71,7 @@ public class OpenApiSpecTests
     [Fact]
     public void The_payload_schema_url_matches_the_served_schema_route()
     {
-        // The DSL $ref must point at the route SchemaEndpoint actually serves (issue #20), so the reference never dangles.
+        // The DSL $ref must point at the route SchemaEndpoint actually serves, so the reference never dangles.
         var schemaRoute = RoutableEndpoints().Single(row => ((string)row[1]).StartsWith("/schema/", StringComparison.Ordinal))[1];
         OpenApiSpec.PayloadSchemaUrl.ShouldBe(schemaRoute);
 
@@ -124,7 +117,7 @@ public class OpenApiSpecTests
     {
         var startRun = OperationAt("POST", "/runs")!["responses"]!.AsObject();
 
-        // The three run shapes + the two admission outcomes the ticket calls out.
+        // The three run shapes plus the two admission outcomes.
         startRun["200"]!["content"]!["application/json"]!["schema"]!["$ref"]!.GetValue<string>().ShouldEndWith("RunResponse");
         startRun["202"]!["content"]!["application/json"]!["schema"]!["$ref"]!.GetValue<string>().ShouldEndWith("RunStateResponse");
         startRun["429"]!["content"]!["application/json"]!["schema"]!["$ref"]!.GetValue<string>().ShouldEndWith("RunRejection");
@@ -143,7 +136,7 @@ public class OpenApiSpecTests
     [Fact]
     public void Renames_400_does_not_claim_a_save_time_gate()
     {
-        // Rename runs no save-time gate (LOW review nit): its PayloadValidationProblem 400 is only the archived guard.
+        // Rename runs no save-time gate: its PayloadValidationProblem 400 is only the archived guard.
         var rename = OperationAt("POST", "/payloads/{id}/rename")!["responses"]!["400"]!["description"]!.GetValue<string>();
         rename.ShouldContain("archived");
         rename.ShouldNotContain("save-time gate");
@@ -162,10 +155,9 @@ public class OpenApiSpecTests
     [Fact]
     public void Representative_wire_bodies_validate_against_their_component_schema()
     {
-        // Guards the class of drift the reviewer found: JsonSchemaExporter marks [JsonIgnore(WhenWritingNull)] fields as
-        // `required`, so a running run ({runId,status}) or an added diff entry (no `from`) would fail its own schema. Each body
-        // below is a REAL DTO serialized with the live wire options (web defaults + ContractsJson), evaluated against the
-        // generated component schema with the same engine the save-time gate uses.
+        // JsonSchemaExporter marks [JsonIgnore(WhenWritingNull)] fields as `required`, so a running run ({runId,status})
+        // or an added diff entry (no `from`) would fail its own schema. Each body below is a REAL DTO serialized with
+        // the live wire options (web defaults + ContractsJson), evaluated against the generated component schema.
         var wire = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         ContractsJson.Configure(wire);
 

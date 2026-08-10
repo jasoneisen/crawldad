@@ -5,12 +5,9 @@ using Crawldad.Web.Features.Runs.Interpreter;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// Phase 3 frames (§5.1 <c>frame</c>, §5.2 <c>in:</c>) and <c>addStyleTag</c> (§5.1): the CapDetail attachments iframe
-/// traversal — a <c>FrameLocator</c> bound to a var, <c>in:</c> rooting locate/click/fill/clear/waitFor and structured
-/// Sels inside it, DOM builtins over frame-bound handles, in-frame downloads, and in-frame pagination whose postback
-/// re-renders the grid — driven against the <c>capdetail-attachments</c> fixture.
-/// </summary>
+/// <summary>Frames (<c>frame</c>, <c>in:</c>) and <c>addStyleTag</c>: the CapDetail attachments iframe traversal —
+/// a <c>FrameLocator</c> bound to a var, <c>in:</c> rooting locate/click/fill/clear/waitFor and structured Sels
+/// inside it, DOM builtins over frame-bound handles, in-frame downloads, and in-frame pagination.</summary>
 public class FrameNodeTests
 {
     // The attachments fixture + a fake attachment store for the per-row download.
@@ -40,7 +37,7 @@ public class FrameNodeTests
         return outcome.Failure!;
     }
 
-    // ----- the full attachments-iframe flow (a faithful reduction of Appendix B.2 :531-621) -----
+    // ----- the full attachments-iframe flow -----
 
     [Fact]
     public async Task Attachments_iframe_traversal_downloads_paginates_across_the_postback_and_stops()
@@ -103,7 +100,7 @@ public class FrameNodeTests
     public async Task Fill_clear_and_click_target_the_frame_document_via_in()
     {
         // fill/clear with in: mutate the FRAME's document; a structured Sel { css, in } on attr reads it back; an
-        // in-frame click that matches no transition is a benign no-op (proving it resolves inside the frame).
+        // in-frame click that matches no transition is a benign no-op, resolved inside the frame.
         var steps = $$"""
             [ {{_gotoAndFrame}},
               { "fill":  { "in": "attFrame", "selector": "#frameInput", "value": "'hello'" } },
@@ -121,7 +118,7 @@ public class FrameNodeTests
     {
         // count over a frame-bound locator var flows through IDomAccess unchanged; exists/text over a structured
         // { css, in } Sel root the DOM read inside the frame (count treats a map as a collection, so frame-content
-        // counts use bound handles — as Appendix B.2 does).
+        // counts use bound handles).
         var steps = $$"""
             [ {{_gotoAndFrame}},
               { "locate": { "var": "rows", "in": "attFrame", "selector": "#attachmentList_gdvAttachmentList > tbody > tr:not(.ACA_Table_Pages)" } } ]
@@ -174,7 +171,7 @@ public class FrameNodeTests
         Ok(await Run(steps, result: "'waited'")).GetString().ShouldBe("waited");
     }
 
-    // ----- addStyleTag (§5.1) records the injected CSS observably; content is a Tmpl -----
+    // ----- addStyleTag records the injected CSS observably; content is a Tmpl -----
 
     [Fact]
     public async Task AddStyleTag_injects_css_recorded_by_the_page()

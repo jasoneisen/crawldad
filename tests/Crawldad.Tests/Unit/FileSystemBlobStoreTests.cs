@@ -5,13 +5,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The durable local-filesystem adapter (CD-2, §9.3/§12/§13). It runs the shared <see cref="BlobStoreContract"/> — the same
-/// matrix the Azure adapter runs against Azurite — proving content-addressed idempotency, tenant partitioning, and the
-/// retention lifecycle against <b>real on-disk storage</b>, with zero external dependency. The extra cases cover the
-/// filesystem-specific paths: the traversal guard on the tenant segment, the temp-file / empty-store enumeration edges, and
-/// the atomic-write cleanup on a failed upload.
-/// </summary>
+/// <summary>The durable local-filesystem adapter: runs the shared <see cref="BlobStoreContract"/> — the same matrix
+/// the Azure adapter runs against Azurite — proving content-addressed idempotency, tenant partitioning, and retention
+/// against real on-disk storage. Extra cases cover the traversal guard, temp-file enumeration, and atomic-write cleanup.</summary>
 public sealed class FileSystemBlobStoreTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "crawldad-fsbs", Guid.NewGuid().ToString("N"));

@@ -2,12 +2,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>
-/// <c>resolveUrl(base, rel)</c> = <c>new Uri(new Uri(base), rel).ToString()</c> — the reference's proper RFC
-/// resolution for related-record links (:672, §7.3), distinct from the search rows' naive concat. The expected values
-/// below are <b>pinned to the C# <see cref="System.Uri"/> output</b> (verified against the runtime), so this doubles
-/// as the golden contract a later cross-check compares against.
-/// </summary>
+/// <summary><c>resolveUrl(base, rel)</c> = <c>new Uri(new Uri(base), rel).ToString()</c> — the reference's proper RFC
+/// resolution for related-record links, distinct from the search rows' naive concat. Expected values are pinned to the
+/// C# <see cref="System.Uri"/> output (verified against the runtime) — the golden contract a later cross-check compares against.</summary>
 public class ResolveUrlTests
 {
     [Theory]

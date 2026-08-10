@@ -3,10 +3,8 @@ using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The §8.1 <see cref="SessionPolicy"/> parsed from a payload's <c>config</c>, and the <see cref="RoutePolicy.Classify"/>
-/// decision that drives the real route handler. Pure — no browser — so every parse and classify branch is covered here.
-/// </summary>
+/// <summary>The <see cref="SessionPolicy"/> parsed from a payload's <c>config</c>, and the <see cref="RoutePolicy.Classify"/>
+/// decision that drives the real route handler. Pure — no browser — so every parse and classify branch is covered here.</summary>
 public class SessionPolicyTests
 {
     private static JsonElement Config(string json)

@@ -7,12 +7,9 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The retry/resilience layer (§8.3): the retryable-vs-terminal classifier, the <c>retryOn</c> gate, retryable
-/// exhaustion, and the §3.6 page-crash reopen-and-rebind. Faults are scripted by the <c>inject-timeout</c>/
-/// <c>inject-crash</c> fixtures (§ Deliverable 3); delays run through the frozen clock at 0ms (one real-clock case
-/// proves the delay path) so the suite stays deterministic and fast.
-/// </summary>
+/// <summary>The retry/resilience layer: the retryable-vs-terminal classifier, the <c>retryOn</c> gate, retryable
+/// exhaustion, and the page-crash reopen-and-rebind. Faults are scripted by the <c>inject-timeout</c>/<c>inject-crash</c>
+/// fixtures; delays run through the frozen clock at 0ms (one real-clock case proves the delay path).</summary>
 public class RetryTests
 {
     // A tiny program: navigate the fixture form, click the (fault-injected) button, confirm the results page loaded.
@@ -100,7 +97,7 @@ public class RetryTests
     [Fact]
     public async Task A_terminal_guard_failure_is_never_retried()
     {
-        // Retry is configured generously, but a terminal guard aborts on the first attempt (the ~30-min lesson, §8.3).
+        // Retry is configured generously, but a terminal guard aborts on the first attempt.
         var outcome = await Runner.RunAsync(
             """
             { "name": "t", "config": { "backend": "input.backend", "retry": { "maxAttempts": 5, "delayMs": 0, "retryOn": ["timeout","pageCrashed"] } },
@@ -140,7 +137,7 @@ public class RetryTests
     [Fact]
     public async Task Close_quietly_tolerates_a_crashed_pages_close_failure()
     {
-        // The §3.6 reopen closes the crashed page best-effort; a real adapter's crashed page can throw on close.
+        // The reopen closes the crashed page best-effort; a real adapter's crashed page can throw on close.
         await Should.NotThrowAsync(() => RunInterpreter.CloseQuietlyAsync(new ThrowOnClosePage(), CancellationToken.None));
     }
 

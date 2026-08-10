@@ -9,13 +9,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The shared real-Chromium harness (one Playwright driver + one local-adapter browser), plus factories for a local
-/// Playwright <c>run-server</c> (the Browserless native-connect target) and a locally launched CDP endpoint (the
-/// Browserbase <c>connectOverCDP</c> target). All real-browser tests share this via the collection below so the driver
-/// and browser are built once; the collection serializes them so the Chromium/driver processes never contend.
-/// <b>Zero live third-party traffic</b>: every "remote" backend is pointed at a loopback server here.
-/// </summary>
+/// <summary>Shared real-Chromium harness: one Playwright driver + one local-adapter browser, plus factories for a
+/// local <c>run-server</c> (Browserless target) and a local CDP endpoint (Browserbase target). Serialized via the
+/// collection below so Chromium/driver processes never contend; every "remote" backend is a loopback server here.</summary>
 [SuppressMessage("Usage", "CA1001:Types that own disposable fields should be disposable",
     Justification = "Disposed via IAsyncLifetime.DisposeAsync, which xUnit invokes for the collection fixture; the type intentionally does not implement IDisposable because teardown is async.")]
 public sealed class RealChromiumFixture : IAsyncLifetime
@@ -31,7 +27,7 @@ public sealed class RealChromiumFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _provider = new PlaywrightProvider();
-        await _provider.GetAsync(CancellationToken.None); // create the driver up front
+        await _provider.GetAsync(CancellationToken.None);
         LocalBackend = new LocalChromiumBackend(_provider, new InMemoryAssetCache(), new ThrottleGate(TimeProvider.System));
     }
 
