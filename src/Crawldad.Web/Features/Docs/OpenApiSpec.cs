@@ -111,7 +111,7 @@ public static class OpenApiSpec
         new("get", "/runs/{id}/events", "streamRunEvents", "Stream a run's trace as Server-Sent Events.", _runs, Anonymous: false, [Id], null,
             [new("200", "An SSE stream of the run's (scrubbed) trace, backfilled from the durable stream then live-tailed until terminal.", MediaType: "text/event-stream", Schema: PlainTextSchema), NotFound("run")]),
         new("post", "/runs/{id}/replay", "replayRun", "Replay a pinned run.", _runs, Anonymous: false, [Id],
-            new(nameof(ReplayRunRequest), "The resupplied inputs and async flag (§12 forbids persisting input values, so inputs are supplied fresh)."),
+            new(nameof(ReplayRunRequest), "The resupplied inputs and async flag (input values are never persisted, so inputs are supplied fresh)."),
             [
                 new("200", "A synchronous replay reached its terminal state.", Component: nameof(RunResponse)),
                 new("202", "The replay is running or queued; poll GET /runs/{id}.", Component: nameof(RunStateResponse)),
@@ -124,7 +124,7 @@ public static class OpenApiSpec
         new("get", "/runs/{id}/timeline", "getRunTimeline", "The run observability timeline.", _runs, Anonymous: false, [Id], null,
             [new("200", "The run's ordered steps, extracts, downloads, screenshots, and failure.", Component: nameof(RunTimelineResponse)), NotFound("run")]),
         new("get", "/runs/queue-stats", "getQueueStats", "The tenant's admission-queue stats.", _runs, Anonymous: false, [], null,
-            [new("200", "The current queue depth and p95 queue wait (CD-16).", Component: nameof(QueueStatsResponse))]),
+            [new("200", "The current queue depth and p95 queue wait.", Component: nameof(QueueStatsResponse))]),
 
         // Managed payloads.
         new("post", "/payloads", "draftPayload", "Draft a managed payload.", _payloads, Anonymous: false, [],

@@ -88,7 +88,7 @@ internal static class InterpreterErrorCodes
 /// <summary>A terminal engine failure, carrying a stable <see cref="Code"/> from <see cref="InterpreterErrorCodes"/>.
 /// Never retried; surfaced in the response as <c>failure.class = "terminal"</c>.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "A code is mandatory so run-failure surfacing (§10) always has one; the codeless constructors would break that.")]
+    Justification = "A code is mandatory so run-failure surfacing always has one; the codeless constructors would break that.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "See CA1032 justification.")]
 internal sealed class InterpreterException : Exception

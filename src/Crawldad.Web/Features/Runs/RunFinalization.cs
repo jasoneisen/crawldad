@@ -49,7 +49,7 @@ internal static class RunFinalization
                 break;
 
             case RunStatus.Cancelled when stopReason == RunStopReason.Deadline:
-                var deadline = new RunFailureDetail("terminal", RunExecutor.DeadlineExceededCode, "the run exceeded its wall-clock deadline (§8.4)", new RunStepRef(0, "run"));
+                var deadline = new RunFailureDetail("terminal", RunExecutor.DeadlineExceededCode, "the run exceeded its wall-clock deadline", new RunStepRef(0, "run"));
                 progress.Status = RunStatus.Failed;
                 progress.Failure = deadline;
                 session.Events.Append(runId, new RunFailed(deadline, outcome.Stats, clock.GetUtcNow()));

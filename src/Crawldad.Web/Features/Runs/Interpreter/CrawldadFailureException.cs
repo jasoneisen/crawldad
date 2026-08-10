@@ -6,7 +6,7 @@ namespace Crawldad.Web.Features.Runs.Interpreter;
 /// declared <see cref="FailureClass"/> (<c>terminal</c>/<c>retryable</c>), a stable <see cref="Code"/>, and a rendered
 /// message. A <c>retryable</c> failure participates in retry like a timeout; <c>terminal</c> never retries.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "Class/code/message are all mandatory so run-failure surfacing (§10) is always complete; the codeless constructors would break that.")]
+    Justification = "Class/code/message are all mandatory so run-failure surfacing is always complete; the codeless constructors would break that.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "See CA1032 justification.")]
 internal sealed class CrawldadFailureException : Exception

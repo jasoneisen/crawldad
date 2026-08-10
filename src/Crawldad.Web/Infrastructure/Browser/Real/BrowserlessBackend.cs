@@ -23,7 +23,7 @@ internal sealed class BrowserlessBackend(
     internal const string DefaultRegion = "sfo";
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types",
-        Justification = "The connect is a credential-scrubbing boundary (§12): ANY provider fault (a PlaywrightException can embed the wss token URL in its message) must be converted to a secret-free BrowserConnectException. Cancellation and the already-scrubbed BrowserConnectException are excluded by the filter.")]
+        Justification = "The connect is a credential-scrubbing boundary: ANY provider fault (a PlaywrightException can embed the wss token URL in its message) must be converted to a secret-free BrowserConnectException. Cancellation and the already-scrubbed BrowserConnectException are excluded by the filter.")]
     public async Task<IBrowserSession> ConnectAsync(BackendBinding binding, SessionPolicy policy, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(binding);
