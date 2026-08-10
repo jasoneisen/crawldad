@@ -1,6 +1,9 @@
+using System.Reflection;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Schema;
+using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Crawldad.Contracts;
 using Crawldad.Contracts.Payloads;
@@ -49,9 +52,20 @@ public static class OpenApiSpec
     // `integer` rather than the read-from-string `["string","integer"]` union the Web defaults would emit.
     private static readonly JsonSerializerOptions _schemaOptions = CreateSchemaOptions();
 
-    private static readonly JsonSchemaExporterOptions _exporterOptions = new() { TreatNullObliviousAsNonNullable = true };
+    private static readonly JsonSchemaExporterOptions _exporterOptions = new()
+    {
+        TreatNullObliviousAsNonNullable = true,
 
-    private static readonly JsonSerializerOptions _writeOptions = new() { WriteIndented = true };
+        // JsonSchemaExporter derives `required` from constructor-parameter defaults and does NOT account for
+        // [JsonIgnore(WhenWritingNull)] — so a field the API omits at runtime (a running run's result/failure/partial/stats,
+        // an added diff entry's `from`) would be wrongly marked required, making real response bodies fail their own schema.
+        // Relax `required` to match what the wire actually emits, for every generated object node (nested types included).
+        TransformSchemaNode = RelaxRequired,
+    };
+
+    // Served as application/json (not embedded in HTML), so relax escaping: em dashes, backticks, `<`, `>`, `+` in the
+    // descriptions render as themselves rather than \uXXXX. Still valid JSON; cleaner for a published spec.
+    private static readonly JsonSerializerOptions _writeOptions = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     // Every DTO the envelope references, generated from its contract type. The three payload-carrying request bodies swap
     // their `payload` property for a $ref to the published DSL schema; StartRunRequest additionally relaxes `required`
@@ -115,7 +129,8 @@ public static class OpenApiSpec
                 new("200", "A synchronous replay reached its terminal state.", Component: nameof(RunResponse)),
                 new("202", "The replay is running or queued; poll GET /runs/{id}.", Component: nameof(RunStateResponse)),
                 NotFound("run"),
-                new("400", "The run executed an inline payload, which is not replayable (inline_not_replayable).", Component: nameof(RunRejection)),
+                new("400", "The run is inline and not replayable (inline_not_replayable), or its pinned payload is unrunnable via the shared admission path (payload_archived / unknown_payload / unknown_revision) — a replay resolves the pin and dispatches exactly as POST /runs.", Component: nameof(RunRejection)),
+                new("429", "The tenant's admission queue is at its depth (queue_depth_exceeded); a replay runs the same admission path as POST /runs.", Component: nameof(RunRejection)),
             ]),
         new("get", "/runs/{id}/drift", "getRunDrift", "Report a run's payload drift.", _runs, Anonymous: false, [Id], null,
             [new("200", "The run's pinned revision vs the payload head.", Component: nameof(RunDriftResponse)), NotFound("run")]),
@@ -137,7 +152,11 @@ public static class OpenApiSpec
             [new("200", "The new head revision.", Component: nameof(PayloadResponse)), NotFound("payload"), ValidationOrArchived]),
         new("post", "/payloads/{id}/rename", "renamePayload", "Rename a payload.", _payloads, Anonymous: false, [Id],
             new(nameof(RenamePayloadRequest), "The new logical name (metadata only; the head revision advances)."),
-            [new("200", "The renamed payload's new head.", Component: nameof(PayloadResponse)), NotFound("payload"), ValidationOrArchived]),
+            [
+                new("200", "The renamed payload's new head.", Component: nameof(PayloadResponse)),
+                NotFound("payload"),
+                new("400", "The payload is archived (returned as a PayloadValidationProblem). An empty name (RenamePayloadRequestValidator) is instead an RFC 7807 problem+json.", Component: nameof(PayloadValidationProblem)),
+            ]),
         new("post", "/payloads/{id}/archive", "archivePayload", "Archive a payload.", _payloads, Anonymous: false, [Id], null,
             [new("200", "The archived payload.", Component: nameof(PayloadResponse)), NotFound("payload"),
              new("400", "The payload is already archived (returned as a PayloadValidationProblem).", Component: nameof(PayloadValidationProblem))]),
@@ -372,6 +391,49 @@ public static class OpenApiSpec
         }
 
         return schema;
+    }
+
+    // TransformSchemaNode hook (see _exporterOptions): for each generated object schema, drop every property the wire
+    // serializer omits when null ([JsonIgnore(WhenWritingNull)]) from its `required` list, so the documented shape matches
+    // what the API actually emits (a still-running run is { runId, status }). Called for nested types too, so a diff entry's
+    // conditionally-absent from/to are relaxed as well.
+    private static JsonNode RelaxRequired(JsonSchemaExporterContext context, JsonNode schema)
+    {
+        if (schema is JsonObject node && node["required"] is JsonArray required)
+        {
+            var omit = OmittedWhenNull(context.TypeInfo.Type);
+            if (omit.Count > 0)
+            {
+                var kept = new JsonArray();
+                foreach (var name in required)
+                {
+                    if (!omit.Contains(name!.GetValue<string>()))
+                    {
+                        kept.Add(name.GetValue<string>());
+                    }
+                }
+
+                node["required"] = kept;
+            }
+        }
+
+        return schema;
+    }
+
+    // The wire (camelCase) names of a type's properties omitted when null ([JsonIgnore(WhenWritingNull)]) — the
+    // conditionally-absent fields the contracts document as present only for a given run/diff shape.
+    private static HashSet<string> OmittedWhenNull(Type type)
+    {
+        var omit = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition == JsonIgnoreCondition.WhenWritingNull)
+            {
+                omit.Add(JsonNamingPolicy.CamelCase.ConvertName(property.Name));
+            }
+        }
+
+        return omit;
     }
 
     private static JsonObject Ref(string component) => new() { ["$ref"] = "#/components/schemas/" + component };

@@ -2,6 +2,9 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Crawldad.Contracts;
+using Crawldad.Contracts.Payloads;
+using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Docs;
 using Json.Schema;
 using Microsoft.AspNetCore.Authorization;
@@ -128,6 +131,22 @@ public class OpenApiSpecTests
         startRun["429"]!["description"]!.GetValue<string>().ShouldContain("queue_depth_exceeded");
 
         OperationAt("POST", "/runs/{id}/cancel")!["responses"]!.AsObject().ContainsKey("202").ShouldBeTrue();
+
+        // Replay delegates to the same admission path, so it can also return 429 (and the pin-rejection 400s), not just
+        // the replay-specific inline_not_replayable — the spec must reflect that.
+        var replay = OperationAt("POST", "/runs/{id}/replay")!["responses"]!.AsObject();
+        replay["429"]!["content"]!["application/json"]!["schema"]!["$ref"]!.GetValue<string>().ShouldEndWith("RunRejection");
+        replay["429"]!["description"]!.GetValue<string>().ShouldContain("queue_depth_exceeded");
+        replay["400"]!["description"]!.GetValue<string>().ShouldContain("inline_not_replayable");
+    }
+
+    [Fact]
+    public void Renames_400_does_not_claim_a_save_time_gate()
+    {
+        // Rename runs no save-time gate (LOW review nit): its PayloadValidationProblem 400 is only the archived guard.
+        var rename = OperationAt("POST", "/payloads/{id}/rename")!["responses"]!["400"]!["description"]!.GetValue<string>();
+        rename.ShouldContain("archived");
+        rename.ShouldNotContain("save-time gate");
     }
 
     [Fact]
@@ -137,6 +156,47 @@ public class OpenApiSpecTests
         foreach (var (name, schema) in _document["components"]!["schemas"]!.AsObject())
         {
             Should.NotThrow(() => JsonSchema.FromText(schema!.ToJsonString()), $"component {name} is not a valid JSON Schema");
+        }
+    }
+
+    [Fact]
+    public void Representative_wire_bodies_validate_against_their_component_schema()
+    {
+        // Guards the class of drift the reviewer found: JsonSchemaExporter marks [JsonIgnore(WhenWritingNull)] fields as
+        // `required`, so a running run ({runId,status}) or an added diff entry (no `from`) would fail its own schema. Each body
+        // below is a REAL DTO serialized with the live wire options (web defaults + ContractsJson), evaluated against the
+        // generated component schema with the same engine the save-time gate uses.
+        var wire = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        ContractsJson.Configure(wire);
+
+        var id = Guid.NewGuid();
+        var stats = new RunStats(12, 3, 4, 1, 0);
+        var failure = new RunFailureDetail("terminal", "nav_failed", "boom", new RunStepRef(1, "navigate"));
+        var result = JsonSerializer.SerializeToElement(new { rows = 2 });
+        var scriptA = JsonSerializer.SerializeToElement(new { crawldad = 1 });
+        var scriptB = JsonSerializer.SerializeToElement(new { crawldad = 1, name = "x" });
+
+        var cases = new (string Component, object Body)[]
+        {
+            (nameof(RunStateResponse), new RunStateResponse(id, RunStatus.Running, null, null, null, null)),                 // 202 running: { runId, status }
+            (nameof(RunStateResponse), new RunStateResponse(id, RunStatus.Queued, null, null, null, null, Position: 3)),     // 202 queued
+            (nameof(RunStateResponse), new RunStateResponse(id, RunStatus.Succeeded, result, null, null, stats)),           // succeeded poll
+            (nameof(RunResponse), new RunResponse(id, RunStatus.Succeeded, result, null, stats)),                           // 200 succeeded
+            (nameof(RunResponse), new RunResponse(id, RunStatus.Failed, null, failure, stats)),                            // 200 failed
+            (nameof(PayloadDiffResponse), new PayloadDiffResponse(id, 1, 2, scriptA, scriptB,
+                [
+                    new PayloadDiffEntry("/steps/0", PayloadDiffKind.Added, null, JsonSerializer.SerializeToElement("added")),
+                    new PayloadDiffEntry("/name", PayloadDiffKind.Removed, JsonSerializer.SerializeToElement("old"), null),
+                ])),
+        };
+
+        foreach (var (component, body) in cases)
+        {
+            var schema = JsonSchema.FromText(_document["components"]!["schemas"]![component]!.ToJsonString());
+            var json = JsonSerializer.Serialize(body, wire);
+            using var instance = JsonDocument.Parse(json);
+            var evaluation = schema.Evaluate(instance.RootElement, new EvaluationOptions { OutputFormat = OutputFormat.List });
+            evaluation.IsValid.ShouldBeTrue($"{component} body {json} must validate against its own generated schema: {JsonSerializer.Serialize(evaluation)}");
         }
     }
 
