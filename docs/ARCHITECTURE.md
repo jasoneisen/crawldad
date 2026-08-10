@@ -166,3 +166,27 @@ Crawldad always dials **out** (wss/CDP), so each persona's only question is "can
 - **Solo dev → their own machine:** the documented on-ramp is a dev tunnel they already know (`ngrok`/`cloudflared` exposing local Chrome's `--remote-debugging-port`); the resulting public wss URL is the backend binding. The tunnel URL is **credential-bearing** — it is passed as a `credentialRef` and scrubbed exactly like a Browserbase connect URL (see [`THREAT_MODEL.md`](THREAT_MODEL.md)). Latency makes a public tunnel an authoring/debugging topology, not production — the natural upsell to a real backend. Documenting this on-ramp (and tuning connect retry/backoff for tunnel flakiness) is tracked in **issue #45**. A hosted-side relay for reaching an on-prem browser with no public endpoint stays deferred to the Enterprise case.
 
 The Enterprise deployment boundary is decided (issue #49): Enterprise runs as an **operator-managed dedicated instance** — single-tenant Crawldad deployed and operated by us in the customer's cloud subscription or a VNet-peered enclave. The App-Gateway-for-long-sync variant lives in that dedicated topology.
+
+### B.5 Staging environment (deployed)
+
+The POC floor of B.3 is realized as code in [`infra/`](../infra) (subscription-scoped `main.bicep` composing modules under `infra/modules/`) and deployed by [`.github/workflows/deploy-staging.yml`](../.github/workflows/deploy-staging.yml) — a `workflow_dispatch`-only pipeline that authenticates with GitHub OIDC (no client secrets), builds the image to ACR, deploys pinned by digest, applies schema via a `db-apply` Container Apps job, and smoke-tests `GET /health`. The one-time landing-zone bootstrap (CI identity + federation + roles + budget) is `infra/bootstrap.bicep`, run via `infra/bootstrap.sh`. Target: `sub-crawldad-staging`, region `eastus2`. Tracked in **issue #50**.
+
+**What exists once deployed** (CAF-named):
+
+| Resource | Name | Notes |
+|---|---|---|
+| Resource group | `rg-crawldad-stg-eus2` | holds everything below |
+| Container Apps env | `cae-crawldad-stg` | Consumption-only; no VNet, no workload profile |
+| Container app | `ca-crawldad-stg` | HTTP ingress 8080, **scale-to-zero** (min 0 / max 1), 0.5 vCPU / 1 GiB |
+| db-apply job | `caj-crawldad-stg-dbapply` | runs `dotnet Crawldad.Web.dll db-apply` on demand |
+| Postgres Flexible | `psql-crawldad-stg-<uniq>` | Burstable **B1ms**, 32 GiB, PG16, no HA, public + firewalled to Azure services |
+| Storage account | `stcrawldadstg<uniq>` | LRS; one blob container `crawldad-blobs`, tenant-partitioned |
+| Key Vault | `kv-crawldad-stg-<uniq>` | RBAC; marten + blob connection strings + placeholder tenant key |
+| Container registry | `crcrawldadstg<uniq>` | ACR **Basic**, managed-identity pull (no long-lived creds) |
+| Log Analytics | `log-crawldad-stg` | PerGB2018, 1 GB/day cap (inside the 5 GB free grant) |
+| App identity | `id-crawldad-stg-app` | AcrPull + Key Vault Secrets User |
+| CI-deploy identity | `id-crawldad-stg-github` | OIDC federated to `repo:jasoneisen/crawldad:environment:staging` |
+
+Secrets are never committed: the Postgres password and a placeholder-tenant API key are generated at bootstrap and passed as GitHub environment secrets; the connection-string secrets are composed inside the deploy and stored in Key Vault, resolved passwordless by the app identity. The app runs with the **Azure Blob** storage provider and one placeholder tenant so the API is callable beyond the anonymous `/health`. Steady-state cost is **~$22–25/mo** (ACR Basic ~$5, Postgres B1ms + 32 GiB ~$16, storage/Key Vault/Log Analytics ~$2, Container Apps largely inside the free grant under scale-to-zero).
+
+**Prod-only deltas, deliberately deferred** (each a B.2 line, added at the graduation trigger, not now): **Azure Front Door** + WAF, **NAT Gateway** (stable egress IP), **VNet + private endpoints** for Postgres/Key Vault/Blob, **zone redundancy + Postgres HA**, **min-replicas ≥ 1** (avoids the scale-to-zero trap — see B.3), a **Dedicated workload profile**, and the D-series SKUs. The one deliberate staging divergence from B.3's advice is **scale-to-zero** (B.3 recommends min-1): staging trades the "deadlines silently late" trap for the cost floor, and `minReplicas` is a one-line parameter flip when staging needs production durability shape. `infra/main.prod.bicepparam` carries the prod parameterization (inert until prod is bootstrapped).
