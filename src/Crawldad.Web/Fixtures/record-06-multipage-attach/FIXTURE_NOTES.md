@@ -17,7 +17,7 @@ The attachments `do…while` runs twice:
 Both file-link clicks and the Next click are **in-frame** (`on.in` = the iframe selector), so they never
 fire a page-level transition. `internalFilename` = `{contentId}.jpg` from each scraped `.jpg` name (`:576`).
 
-## contentId computation (§9.3, = `AttachmentHashing`)
+## contentId computation (= `AttachmentHashing`)
 `contentId = new Guid(SHA256(bytes)[0..16])` (mixed-endian):
 - `photo-front.bin` = `"Crawldad site photo FRONT elevation v1\n"` (39 bytes) ⇒
   **`ae20275b-b3e3-a1d3-d1d2-befafd8f1819`**.

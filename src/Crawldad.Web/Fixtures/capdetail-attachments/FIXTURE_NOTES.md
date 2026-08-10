@@ -1,7 +1,7 @@
 # capdetail-attachments fixture — provenance & fidelity notes
 
 ## What this is
-A **synthesized** (not captured) fixture for the LJCMG CapDetail **attachments iframe** (§ frames,
+A **synthesized** (not captured) fixture for the LJCMG CapDetail **attachments iframe** (frames,
 `LJCMGClient.cs:531-621`): a `FrameLocator` bound to an `<iframe>`, an in-frame paginated grid, and
 per-row downloads triggered by **in-frame** clicks. It exercises the Phase 3 seam additions
 (`IPageHandle.FrameLocator` → `IFrameHandle.Locator`, `in:` on nodes/Sels) and the fake's frame

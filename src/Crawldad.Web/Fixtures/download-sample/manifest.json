@@ -1,6 +1,6 @@
 {
   "manifest": "1",
-  "description": "Single-state CapDetail attachment row with a downloadable file link (§ Deliverable 2). Clicking the anchor yields sample.bin's bytes as a browser download (suggestedFilename 'report.pdf'), captured by RunAndWaitForDownloadAsync. The transition is a self-loop (to == from) with NO emit — a pure download click fires no navigation postback — so the same link can be clicked twice to prove content-addressed idempotency. No Chromium, no live traffic.",
+  "description": "Single-state CapDetail attachment row with a downloadable file link (Deliverable 2). Clicking the anchor yields sample.bin's bytes as a browser download (suggestedFilename 'report.pdf'), captured by RunAndWaitForDownloadAsync. The transition is a self-loop (to == from) with NO emit — a pure download click fires no navigation postback — so the same link can be clicked twice to prove content-addressed idempotency. No Chromium, no live traffic.",
   "initialState": "page",
   "states": {
     "page": {

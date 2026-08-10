@@ -22,7 +22,7 @@ The `do…while` therefore advances every iteration: `attachmentPagesVisited` = 
 no-op "visible" wait in the fake, so the SelectedPageButton text is irrelevant to the fake run. Under
 **real Chromium** (Phase 4 WP2 parity) that `waitFor` genuinely waits, so the fixture site renders the
 SelectedPageButton to the real pagination position (+1 per in-frame nav) — the static `1` here is
-untouched (it feeds only the fake); see `tests/Crawldad.Tests/ACCEPTANCE.md` § Phase 4 WP2.
+untouched (it feeds only the fake); see `tests/Crawldad.Tests/ACCEPTANCE.md` Phase 4 WP2.
 
 ## Other regions
 3-branch address `900 TENANT WAY / "" / LOUISVILLE, KY 40215`; one 3-line owner `OCCUPANCY HOLDINGS`;

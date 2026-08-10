@@ -82,7 +82,7 @@ dotnet_diagnostic.CA1056.severity = none
 
 [src/Crawldad.Web/Features/Runs/RunTraceEvents.cs]
 # The Navigated trace event carries the page's (scrubbed) URL as a plain string — the same Playwright-style string URL
-# the browser seam exempts (§13): a trace value, not a System.Uri to construct/validate. Off for this file only.
+# the browser seam exempts: a trace value, not a System.Uri to construct/validate. Off for this file only.
 dotnet_diagnostic.CA1054.severity = none
 dotnet_diagnostic.CA1056.severity = none
 

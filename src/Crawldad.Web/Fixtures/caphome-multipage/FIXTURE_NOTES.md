@@ -3,7 +3,7 @@
 ## What this is
 A **synthesized** (not captured) record/replay fixture for a **3-page** LJCMG CapHome enforcement
 search, driving the FULL Appendix B.1 `SearchEnforcementRecords` payload. It exercises the
-tension-#1 early-termination reshaping: `knownUrls` + `priorCrawlComplete` inputs replacing the
+tension early-termination reshaping: `knownUrls` + `priorCrawlComplete` inputs replacing the
 `goToNextPageCallback`. No Chromium, no live traffic.
 
 - `manifest.json` — `form → page1 → page2 → page3`. The search click and each pagination click emit a

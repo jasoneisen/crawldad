@@ -37,7 +37,7 @@ return HasMorePages;                                          // :103
 
 The B.1 payload accumulates every scanned url into a **list** `newLinks` (`push`), then the `result`
 applies `distinct(newLinks)` (`:901`) — first-occurrence-preserving, matching the `HashSet` (Appendix
-C, design §14.1). `pages` accumulates the full per-page row array for every non-empty page reached and
+C, design). `pages` accumulates the full per-page row array for every non-empty page reached and
 is **not** de-duplicated: the shared row is present in both `pages[0]` and `pages[1]`.
 
 ## Per-case derivation (hand-executed over this fixture — `knownUrls=[]`, `priorCrawlComplete=false`)

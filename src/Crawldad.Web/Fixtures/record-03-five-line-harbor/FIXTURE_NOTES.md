@@ -18,7 +18,7 @@
   `05/10/2025`. The download body `harbor.bin` hashes to `contentId` (below); `internalFilename` =
   `{contentId}` + `.pdf` (scraped extension, `:576`).
 
-## contentId computation (§9.3, = `AttachmentHashing.AttachmentIdFromHash`)
+## contentId computation (= `AttachmentHashing.AttachmentIdFromHash`)
 `harbor.bin` = ASCII `"Crawldad harbor permit attachment v1\n"` (37 bytes).
 `contentId = new Guid(SHA256(bytes)[0..16])` (mixed-endian) = **`8597a392-983c-caea-6e98-696dd59c00b7`**.
 The download's suggested name is `dock.pdf` (engine `storedAs = {contentId}.pdf`), deliberately distinct
