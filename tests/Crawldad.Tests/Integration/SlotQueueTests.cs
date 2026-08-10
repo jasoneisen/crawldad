@@ -61,7 +61,7 @@ public class SlotQueueTests
         });
         var root = (await accepted.ReadAsJsonAsync<JsonElement>()).Clone();
         root.GetProperty("status").GetString().ShouldBe("running");
-        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(20));
+        await gate.Reached.WaitAsync(DurableHost.PollTimeout);
         return root.GetProperty("runId").GetGuid();
     }
 
@@ -101,7 +101,7 @@ public class SlotQueueTests
     {
         foreach (var id in runIds)
         {
-            await DurableHost.PollUntilTerminalAsync(host, id, TimeSpan.FromSeconds(30));
+            await DurableHost.PollUntilTerminalAsync(host, id, DurableHost.PollTimeout);
         }
     }
 
@@ -144,12 +144,12 @@ public class SlotQueueTests
         // Free the slot: cancel the blocker (releasing the gate so every promoted run runs straight through).
         await CancelAsync(host, blocked);
         gate.Release();
-        (await DurableHost.PollUntilTerminalAsync(host, blocked, TimeSpan.FromSeconds(20))).GetProperty("status").GetString().ShouldBe("cancelled");
+        (await DurableHost.PollUntilTerminalAsync(host, blocked, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("cancelled");
 
         // All three queued runs auto-start and complete — never more than the one slot at a time.
         foreach (var id in new[] { b, c, d })
         {
-            (await DurableHost.PollUntilTerminalAsync(host, id, TimeSpan.FromSeconds(30))).GetProperty("status").GetString().ShouldBe("succeeded");
+            (await DurableHost.PollUntilTerminalAsync(host, id, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("succeeded");
         }
 
         // FIFO: they were promoted oldest-first (B before C before D), proven by their RunDequeued sequences.
@@ -176,12 +176,12 @@ public class SlotQueueTests
         // Free the slot so the queued run promotes and completes.
         await CancelAsync(host, blocked);
         gate.Release();
-        await DurableHost.PollUntilTerminalAsync(host, blocked, TimeSpan.FromSeconds(20));
-        (await DurableHost.PollUntilTerminalAsync(host, queued, TimeSpan.FromSeconds(30))).GetProperty("status").GetString().ShouldBe("succeeded");
+        await DurableHost.PollUntilTerminalAsync(host, blocked, DurableHost.PollTimeout);
+        (await DurableHost.PollUntilTerminalAsync(host, queued, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("succeeded");
 
         // The SSE stream (backfilled read-your-writes from the durable trace) carries the queued state and the
         // queued->running transition a live tail would have seen as they were appended.
-        var frames = await SseReader.ReadToCloseAsync(host, queued, lastEventId: null, TimeSpan.FromSeconds(30));
+        var frames = await SseReader.ReadToCloseAsync(host, queued, lastEventId: null, DurableHost.PollTimeout);
         frames.ShouldContain(f => f.Event == nameof(RunQueued));   // the queued state is visible in the timeline
         frames.ShouldContain(f => f.Event == nameof(RunDequeued)); // and SSE emits the queued->running transition
     }
@@ -242,7 +242,7 @@ public class SlotQueueTests
         // Cancelling the queued run drives it straight to cancelled — it never ran, so no RunDequeued, and the blocker keeps
         // its slot (nothing was promoted).
         await CancelAsync(host, queued);
-        (await DurableHost.PollUntilTerminalAsync(host, queued, TimeSpan.FromSeconds(20))).GetProperty("status").GetString().ShouldBe("cancelled");
+        (await DurableHost.PollUntilTerminalAsync(host, queued, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("cancelled");
 
         var types = await EventTypesAsync(host, queued);
         types.ShouldContain(typeof(RunQueued));
@@ -282,7 +282,7 @@ public class SlotQueueTests
         // Promote it — its deadline now starts, and it completes well within 500 ms of execution start.
         await CancelAsync(host, blocked);
         gate.Release();
-        (await DurableHost.PollUntilTerminalAsync(host, queued, TimeSpan.FromSeconds(30))).GetProperty("status").GetString().ShouldBe("succeeded");
+        (await DurableHost.PollUntilTerminalAsync(host, queued, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("succeeded");
         await DrainAsync(host, blocked);
     }
 
@@ -299,7 +299,7 @@ public class SlotQueueTests
         var (queued, _) = await StartQueuedAsync(host);
 
         // The blocker holds the slot past the max queue wait; the queued run terminates on its own with the typed code.
-        var terminal = await DurableHost.PollUntilTerminalAsync(host, queued, TimeSpan.FromSeconds(20));
+        var terminal = await DurableHost.PollUntilTerminalAsync(host, queued, DurableHost.PollTimeout);
         terminal.GetProperty("status").GetString().ShouldBe("failed");
         terminal.GetProperty("failure").GetProperty("code").GetString().ShouldBe(RunQueue.QueueWaitExceededCode);
 
@@ -342,8 +342,8 @@ public class SlotQueueTests
         holder2.Arm(gate: null);
         await using var host2 = await DurableHost.BuildAsync(Schema, new GatedFakeBackend(Runner.FixturesRoot, holder2), resetData: false, settings: Settings());
 
-        (await DurableHost.PollUntilTerminalAsync(host2, b, TimeSpan.FromSeconds(60))).GetProperty("status").GetString().ShouldBe("succeeded");
-        (await DurableHost.PollUntilTerminalAsync(host2, c, TimeSpan.FromSeconds(60))).GetProperty("status").GetString().ShouldBe("succeeded");
+        (await DurableHost.PollUntilTerminalAsync(host2, b, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("succeeded");
+        (await DurableHost.PollUntilTerminalAsync(host2, c, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("succeeded");
 
         // FIFO preserved across the restart: B (enqueued first) promoted before C.
         (await PromotionOrderAsync(host2, b)).ShouldBeLessThan(await PromotionOrderAsync(host2, c));
@@ -370,8 +370,8 @@ public class SlotQueueTests
         // Promote the queued run; its queue wait is recorded (0 under the frozen clock — the plumbing, not the value).
         await CancelAsync(host, blocked);
         gate.Release();
-        await DurableHost.PollUntilTerminalAsync(host, blocked, TimeSpan.FromSeconds(20));
-        await DurableHost.PollUntilTerminalAsync(host, queued, TimeSpan.FromSeconds(30));
+        await DurableHost.PollUntilTerminalAsync(host, blocked, DurableHost.PollTimeout);
+        await DurableHost.PollUntilTerminalAsync(host, queued, DurableHost.PollTimeout);
 
         var after = await QueueStatsAsync(host);
         after.GetProperty("queued").GetInt32().ShouldBe(0);
@@ -544,7 +544,7 @@ public class SlotQueueTests
         // slot is now genuinely free, the enqueue nudges a promotion — the branch under test — the stranded run's ONLY trigger.
         var arriving = await StartQueuedNoBackendAsync(host);
 
-        var terminal = await DurableHost.PollUntilTerminalAsync(host, queued, TimeSpan.FromSeconds(30));
+        var terminal = await DurableHost.PollUntilTerminalAsync(host, queued, DurableHost.PollTimeout);
         terminal.GetProperty("status").GetString().ShouldBe("failed");
         terminal.GetProperty("failure").GetProperty("code").GetString().ShouldBe("invalid_backend_binding"); // it RAN (no backend → fails)
 
