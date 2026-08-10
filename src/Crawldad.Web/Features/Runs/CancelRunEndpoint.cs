@@ -6,26 +6,12 @@ using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Runs;
 
-/// <summary>
-/// <c>POST /runs/{id}/cancel</c> (§11/CD-16): cancels a background run. A <b>running</b> run gets a cooperative cancel — it
-/// appends the durable <c>RunCancellationRequested</c> trace event and raises the in-process stop signal; the executor honours
-/// it <b>between steps</b>, tears the backend session down cleanly, and the run reaches <c>cancelled</c> with a partial result
-/// (poll <c>GET /runs/{id}</c>). A <b>queued</b> run (CD-16) is instead dequeued and driven straight to <c>cancelled</c>
-/// <em>without ever consuming a slot</em>, so nothing is promoted. Cancelling a run that has already finished is a no-op; the
-/// running signal is set through <see cref="IRunControlRegistry.GetOrAdd"/> so a cancel that lands during a resume window is
-/// still observed when the run picks back up.
-/// </summary>
+/// <summary><c>POST /runs/{id}/cancel</c>: cancels a background run. A <b>running</b> run gets a cooperative cancel — the
+/// executor honours it between steps and the run reaches <c>cancelled</c> with a partial result. A <b>queued</b> run is
+/// dequeued straight to <c>cancelled</c> without consuming a slot, so nothing is promoted.</summary>
 public static class CancelRunEndpoint
 {
     /// <summary>Handles <c>POST /runs/{id}/cancel</c>.</summary>
-    /// <param name="id">The run to cancel.</param>
-    /// <param name="session">The Marten session (appends the cancellation event / dequeues a queued run).</param>
-    /// <param name="controls">The in-process run-control registry.</param>
-    /// <param name="queue">The run queue — dequeues a run cancelled while still queued (CD-16).</param>
-    /// <param name="signals">The SSE notification hub, pinged so a tailing client sees the cancellation live.</param>
-    /// <param name="clock">The time seam for the event timestamp.</param>
-    /// <param name="ct">Cancels the request.</param>
-    /// <returns><c>202</c> with the pre-cancel <see cref="RunStateResponse"/>, or <c>404</c> when there is no such run.</returns>
     [WolverinePost("/runs/{id}/cancel")]
     public static async Task<IResult> Handle(
         Guid id,
@@ -57,9 +43,9 @@ public static class CancelRunEndpoint
         }
         else if (progress.Status == RunStatus.Queued)
         {
-            // Cancel-while-queued (CD-16): dequeue and drive to the cancelled terminal state under the run stream's exclusive
-            // lock. The run held no slot, so this frees nothing and promotes nothing. A lost claim (the run promoted in the
-            // race between our load and the claim) leaves the now-running run alone — the caller may re-cancel it.
+            // Cancel-while-queued: dequeue and drive to cancelled under the run stream's exclusive lock. The run held no
+            // slot, so nothing is freed or promoted. A lost claim (the run promoted in the race between load and claim)
+            // leaves the now-running run alone — the caller may re-cancel it.
             await queue.CancelQueuedAsync(session.TenantId!, id, ct);
         }
 

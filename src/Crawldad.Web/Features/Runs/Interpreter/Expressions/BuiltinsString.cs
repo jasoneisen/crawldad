@@ -1,13 +1,8 @@
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>
-/// The §7.2 string surface beyond the Phase-1 basics (Appendix C). Every builtin here <b>null-propagates on its
-/// primary string argument</b> (a null primary yields null, modelling C# <c>?.</c>, §7.1) — except
-/// <c>equalsIgnoreCase</c>, which is <b>null-safe</b> like C# <c>string.Equals(a, b, …)</c> (both-null true, one-null
-/// false). Comparisons and searches are <b>ordinal</b> (matching the language's <c>==</c>/<c>startsWith</c>/
-/// <c>contains</c> contract). Out-of-range surgery reproduces the reference's C# throws as terminal
-/// <c>index_out_of_range</c> (§7.2 access semantics); a malformed argument is a terminal <c>type_error</c>.
-/// </summary>
+/// <summary>The string surface. Every builtin null-propagates on its primary string argument, except
+/// <c>equalsIgnoreCase</c> which is null-safe (both-null true, one-null false). Comparisons are ordinal; out-of-range
+/// access is a terminal <c>index_out_of_range</c>, never silent.</summary>
 internal static partial class BuiltinRegistry
 {
     private static IEnumerable<Builtin> StringBuiltins() =>
@@ -25,9 +20,8 @@ internal static partial class BuiltinRegistry
         Fn2("join", Join),
     ];
 
-    /// <summary>A two-argument string builtin: null primary → null (null-propagation, §7.1); otherwise both arguments
-    /// must be strings, else a terminal <c>type_error</c>. Centralises the null/type guard shared by the ordinal
-    /// string operations.</summary>
+    /// <summary>A two-argument string builtin: null primary → null; otherwise both arguments must be strings, else a
+    /// terminal <c>type_error</c>. Centralises the null/type guard shared by the ordinal string operations.</summary>
     private static Builtin StringBinary(string name, Func<string, string, object?> fn) =>
         Fn2(name, (value, arg) => value switch
         {
@@ -37,7 +31,7 @@ internal static partial class BuiltinRegistry
                 $"{name} expects strings, got {ExpressionValues.TypeName(value)} and {ExpressionValues.TypeName(arg)}"),
         });
 
-    // replace(s, old, new) — ordinal, all occurrences (C# string.Replace, :237/:639/:489). Empty `old` is a terminal
+    // replace(s, old, new) — ordinal, all occurrences (C# string.Replace). Empty `old` is a terminal
     // type_error, reproducing C# string.Replace's ArgumentException (the reference never passes an empty search).
     private static object? Replace(object? value, object? oldValue, object? newValue)
     {
@@ -57,7 +51,7 @@ internal static partial class BuiltinRegistry
             $"replace expects strings, got {ExpressionValues.TypeName(value)}, {ExpressionValues.TypeName(oldValue)}, {ExpressionValues.TypeName(newValue)}");
     }
 
-    // replaceRegex(s, re, rep) — C# Regex.Replace through the guarded factory (size cap + match timeout, §7.2).
+    // replaceRegex(s, re, rep) — C# Regex.Replace through the guarded factory (size cap + match timeout).
     private static object? ReplaceRegex(object? value, object? pattern, object? replacement)
     {
         if (value is null)
@@ -74,7 +68,7 @@ internal static partial class BuiltinRegistry
             $"replaceRegex expects strings, got {ExpressionValues.TypeName(value)}, {ExpressionValues.TypeName(pattern)}, {ExpressionValues.TypeName(replacement)}");
     }
 
-    // split(s, sep) → array — C# string.Split(string): keeps empty entries (:236/:438/:489-493/:481).
+    // split(s, sep) → array — C# string.Split(string): keeps empty entries.
     private static object Split(string s, string separator) => new List<object?>(s.Split(separator));
 
     // substring(s, a, b?) — Crawldad (start, endExclusive), NOT C# (start, length): substring(s,2) = s[2..];
@@ -109,8 +103,8 @@ internal static partial class BuiltinRegistry
     }
 
     // substringAfterLast(s, sep) = s[(s.LastIndexOf(sep)+1)..] — the whole string when sep is absent (LastIndexOf → -1).
-    // Extension extraction after a `contains(filename, '.')` guard (Appendix B.2). An empty sep reproduces C#'s throw
-    // (LastIndexOf("") == length ⇒ start past the end ⇒ terminal index_out_of_range).
+    // Handy after a `contains(filename, '.')` guard. An empty sep reproduces C#'s throw (LastIndexOf("") == length ⇒
+    // start past the end ⇒ terminal index_out_of_range).
     private static object SubstringAfterLast(string s, string separator)
     {
         var start = s.LastIndexOf(separator, StringComparison.Ordinal) + 1;
@@ -122,7 +116,7 @@ internal static partial class BuiltinRegistry
     }
 
     // equalsIgnoreCase(a, b) — OrdinalIgnoreCase, null-safe like C# string.Equals(a, b, …): both-null true, one-null
-    // false (:369). NOT null-propagating.
+    // false. NOT null-propagating.
     private static object? EqualsIgnoreCase(object? a, object? b)
     {
         if (a is null || b is null)

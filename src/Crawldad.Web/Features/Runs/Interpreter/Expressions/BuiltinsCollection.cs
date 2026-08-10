@@ -1,12 +1,8 @@
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>
-/// The §7.2 collection surface over the array/map value model (Appendix C). Every builtin <b>null-propagates on its
-/// primary argument</b> (null → null, §7.1). Element/range access reproduces the reference's C# throws as terminal
-/// <c>index_out_of_range</c> (empty <c>first</c>/<c>last</c>/<c>min</c>/<c>max</c>, an out-of-range <c>nth</c>/
-/// <c>slice</c>) — never a silent null (§7.2 access semantics). A wrong container or element type is a terminal
-/// <c>type_error</c>. Results are always fresh lists — a builtin never mutates its input.
-/// </summary>
+/// <summary>The collection surface over the array/map value model. Every builtin null-propagates on its primary
+/// argument; out-of-range access (empty <c>first</c>/<c>last</c>/<c>min</c>/<c>max</c>, bad <c>nth</c>/<c>slice</c>) is a
+/// terminal <c>index_out_of_range</c>, never a silent null. Results are always fresh lists.</summary>
 internal static partial class BuiltinRegistry
 {
     private static IEnumerable<Builtin> CollectionBuiltins() =>
@@ -46,7 +42,7 @@ internal static partial class BuiltinRegistry
         return list.Count > 0 ? list[^1] : throw IndexError("last of an empty array");
     }
 
-    // nth(x, i) — 0-based element access (Playwright .Nth(i), :130); out of range is a terminal index_out_of_range.
+    // nth(x, i) — 0-based element access (Playwright .Nth(i)); out of range is a terminal index_out_of_range.
     private static object? Nth(object? value, object? index)
     {
         if (value is null)
@@ -61,9 +57,8 @@ internal static partial class BuiltinRegistry
             : throw IndexError($"nth index {i} is out of range for an array of length {list.Count}");
     }
 
-    // slice(x, a, b?) — (start, endExclusive), mirroring substring on arrays. Out-of-range start/end is a terminal
-    // index_out_of_range (C# Range semantics — not clamped), keeping the collection surface consistent with substring
-    // and the language's "out-of-range → terminal" rule (§7.2). The 2-arg form runs to the end.
+    // slice(x, a, b?) — (start, endExclusive), mirroring substring on arrays; out-of-range start/end is a terminal
+    // index_out_of_range (C# Range semantics — not clamped), not a silent clamp. The 2-arg form runs to the end.
     private static async ValueTask<object?> SliceAsync(IReadOnlyList<ExpressionNode> args, EvalContext ctx)
     {
         var value = await args[0].EvaluateAsync(ctx);
@@ -96,8 +91,8 @@ internal static partial class BuiltinRegistry
         return copy;
     }
 
-    // distinct(x) — first-occurrence-preserving dedup (= the reference's HashSet<string> newLinks, HistoricalCrawler:79),
-    // by scalar value-equality (ordinal strings); a non-scalar element is a terminal type_error (as == rejects it).
+    // distinct(x) — first-occurrence-preserving dedup by scalar value-equality (ordinal strings); a non-scalar
+    // element is a terminal type_error (as == rejects it).
     private static object? Distinct(object? value)
     {
         if (value is null)
@@ -155,7 +150,7 @@ internal static partial class BuiltinRegistry
         return best;
     }
 
-    // keys(map) — the map's keys in insertion order (:655).
+    // keys(map) — the map's keys in insertion order.
     private static object? Keys(object? value)
     {
         if (value is null)
@@ -168,7 +163,7 @@ internal static partial class BuiltinRegistry
             : throw ExpressionValues.TypeError($"keys expects a map, got {ExpressionValues.TypeName(value)}");
     }
 
-    // get(map, key) — the value for a string key, or null when absent (:675). Null map propagates to null.
+    // get(map, key) — the value for a string key, or null when absent. Null map propagates to null.
     private static object? Get(object? value, object? key)
     {
         if (value is null)

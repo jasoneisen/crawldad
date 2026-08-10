@@ -8,36 +8,25 @@ namespace Crawldad.Web.Features.Payloads;
 /// <param name="ScriptHash">The revision's script hash (SHA-256, lowercase hex).</param>
 internal sealed record ResolvedRevision(string Script, string ScriptHash);
 
-/// <summary>
-/// A payload folded from its event stream, exposing every revision's script (§14.1). Because a revision is one event =
-/// one version, revision <c>N</c> is the state after the first <c>N</c> events, and <see cref="At"/> is the event-sourced
-/// equivalent of <c>AggregateStreamAsync(id, version:N)</c> — but it also carries the script body, which the metadata-only
-/// aggregate does not. A rename/archive carries the prior script forward unchanged.
-/// </summary>
-/// <param name="Status">The payload's current lifecycle state.</param>
-/// <param name="Revisions">Every revision's script in version order (index <c>N-1</c> ⇒ revision <c>N</c>).</param>
+/// <summary>A payload folded from its event stream, exposing every revision's script. Revision <c>N</c> is the state
+/// after the first <c>N</c> events (index <c>N-1</c> in <see cref="Revisions"/>); a rename/archive carries the prior
+/// script forward unchanged.</summary>
 internal sealed record ResolvedPayload(PayloadStatus Status, IReadOnlyList<ResolvedRevision> Revisions)
 {
     /// <summary>The current head revision (the number of events in the stream).</summary>
     public int HeadRevision => Revisions.Count;
 
-    /// <summary>The script at a given revision, or null when the revision is out of range (§14.2 unknown-revision guard).</summary>
+    /// <summary>The script at a given revision, or null when the revision is out of range.</summary>
     /// <param name="revision">The 1-based revision.</param>
     public ResolvedRevision? At(int revision) => revision >= 1 && revision <= Revisions.Count ? Revisions[revision - 1] : null;
 }
 
-/// <summary>
-/// Resolves a managed payload's revisions from its event stream (§14.1) — the read path for run-pinning
-/// (<c>StartRunEndpoint</c>) and the revision/diff query endpoints, all of which need the script body. Folds the stream
-/// once and records each version's script so any revision can be pinned or diffed.
-/// </summary>
+/// <summary>Resolves a managed payload's revisions from its event stream — the read path for run-pinning
+/// (<c>StartRunEndpoint</c>) and the revision/diff query endpoints, all of which need the script body. Folds the
+/// stream once and records each version's script so any revision can be pinned or diffed.</summary>
 internal static class PayloadRevisions
 {
-    /// <summary>Loads a payload's folded revision history, or null when the payload does not exist (§14.2 unknown-payload guard).</summary>
-    /// <param name="session">The Marten session.</param>
-    /// <param name="id">The payload id.</param>
-    /// <param name="ct">Cancels the fetch.</param>
-    /// <returns>The resolved payload, or null when no such stream exists.</returns>
+    /// <summary>Loads a payload's folded revision history, or null when the payload does not exist.</summary>
     public static async Task<ResolvedPayload?> LoadAsync(IDocumentSession session, Guid id, CancellationToken ct)
     {
         var events = await session.Events.FetchStreamAsync(id, token: ct);
@@ -52,7 +41,7 @@ internal static class PayloadRevisions
         var revisions = new List<ResolvedRevision>(events.Count);
         foreach (var e in events)
         {
-            // The payload stream carries exactly these four event types (§14.1); a draft/revise sets a new script, and a
+            // The payload stream carries exactly these four event types; a draft/revise sets a new script, and a
             // rename (the default arm) carries the prior script forward unchanged.
             switch (e.Data)
             {

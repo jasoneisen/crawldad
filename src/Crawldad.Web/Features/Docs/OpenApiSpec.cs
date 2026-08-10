@@ -12,24 +12,12 @@ using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Web.Features.Docs;
 
-/// <summary>
-/// The generated OpenAPI 3.1 document for the HTTP <b>envelope</b> (#21): every routable endpoint, its authentication, the
-/// request/response contracts from <c>Crawldad.Contracts</c>, and the status codes — including the <c>202</c> running/queued
-/// run shapes and the <c>429 queue_depth_exceeded</c> admission limit. Served at <c>GET /openapi.json</c>
-/// (<see cref="OpenApiEndpoint"/>).
-/// <para>
-/// <b>Built, not hand-copied.</b> The component schemas are generated from the actual contract types via
-/// <see cref="JsonSchemaExporter"/> (honouring the wire conventions — camelCase, string enums — so they cannot drift from the
-/// DTOs), while the envelope (paths, auth, status codes) is authored from a single endpoint table below. The DSL is NOT
-/// restated: request bodies that carry a payload <c>$ref</c> the published payload JSON Schema at
-/// <see cref="PayloadSchemaUrl"/> (issue #20's <see cref="SchemaEndpoint"/>). A drift test cross-checks this table against the
-/// live Wolverine route table (every routable endpoint is present, with matching auth), the same way <c>DocsDriftTests</c>
-/// keeps the reference docs honest.
-/// </para>
-/// </summary>
+/// <summary>The generated OpenAPI 3.1 document for the HTTP envelope, served at <c>GET /openapi.json</c>
+/// (<see cref="OpenApiEndpoint"/>). <b>Built, not hand-copied:</b> component schemas come from the contract types via
+/// <see cref="JsonSchemaExporter"/> so they cannot drift from the DTOs; a drift test checks this table against Wolverine's live routes.</summary>
 public static class OpenApiSpec
 {
-    /// <summary>The served payload DSL JSON Schema (issue #20) that payload-carrying request bodies reference instead of
+    /// <summary>The served payload DSL JSON Schema that payload-carrying request bodies reference instead of
     /// restating the DSL. Same-origin path so it resolves against whatever host serves this document; a drift test asserts it
     /// equals <see cref="SchemaEndpoint"/>'s route.</summary>
     public const string PayloadSchemaUrl = "/schema/crawldad-1.schema.json";
@@ -56,10 +44,9 @@ public static class OpenApiSpec
     {
         TreatNullObliviousAsNonNullable = true,
 
-        // JsonSchemaExporter derives `required` from constructor-parameter defaults and does NOT account for
-        // [JsonIgnore(WhenWritingNull)] — so a field the API omits at runtime (a running run's result/failure/partial/stats,
-        // an added diff entry's `from`) would be wrongly marked required, making real response bodies fail their own schema.
-        // Relax `required` to match what the wire actually emits, for every generated object node (nested types included).
+        // JsonSchemaExporter derives `required` from constructor-parameter defaults and ignores [JsonIgnore(WhenWritingNull)],
+        // so a field the API omits at runtime (a running run's result/failure/partial/stats, a diff entry's `from`) would be
+        // wrongly marked required. Relax `required` to match what the wire actually emits (nested types included).
         TransformSchemaNode = RelaxRequired,
     };
 
@@ -106,7 +93,7 @@ public static class OpenApiSpec
         new("get", "/llms.txt", "getLlmsTxt", "The llms.txt discovery index.", _docs, Anonymous: true, [], null,
             [new("200", "The llms.txt discovery index pointing at the reference, schema, and examples.", MediaType: "text/plain", Schema: PlainTextSchema)]),
 
-        // Runs (§10/§11/CD-16).
+        // Runs.
         new("post", "/runs", "startRun", "Start a run.", _runs, Anonymous: false, [],
             new(nameof(StartRunRequest), "The inline payload (or a pinned payloadId + optional revision) plus inputs and the async flag."),
             [
@@ -139,7 +126,7 @@ public static class OpenApiSpec
         new("get", "/runs/queue-stats", "getQueueStats", "The tenant's admission-queue stats.", _runs, Anonymous: false, [], null,
             [new("200", "The current queue depth and p95 queue wait (CD-16).", Component: nameof(QueueStatsResponse))]),
 
-        // Managed payloads (§14.1).
+        // Managed payloads.
         new("post", "/payloads", "draftPayload", "Draft a managed payload.", _payloads, Anonymous: false, [],
             new(nameof(SavePayloadRequest), "The inline payload to scrub, validate, and draft as revision 1."),
             [new("200", "The drafted payload (revision 1).", Component: nameof(PayloadResponse)), ValidationProblem]),
@@ -393,10 +380,9 @@ public static class OpenApiSpec
         return schema;
     }
 
-    // TransformSchemaNode hook (see _exporterOptions): for each generated object schema, drop every property the wire
-    // serializer omits when null ([JsonIgnore(WhenWritingNull)]) from its `required` list, so the documented shape matches
-    // what the API actually emits (a still-running run is { runId, status }). Called for nested types too, so a diff entry's
-    // conditionally-absent from/to are relaxed as well.
+    // TransformSchemaNode hook (see _exporterOptions): drops every property the wire serializer omits when null
+    // ([JsonIgnore(WhenWritingNull)]) from a generated schema's `required` list, so the documented shape matches what the
+    // API actually emits (a still-running run is { runId, status }); nested types are covered too (e.g. a diff entry's from/to).
     private static JsonNode RelaxRequired(JsonSchemaExporterContext context, JsonNode schema)
     {
         if (schema is JsonObject node && node["required"] is JsonArray required)

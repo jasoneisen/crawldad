@@ -4,19 +4,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Web.Features.Runs.Interpreter;
 
-/// <summary>
-/// The save-time semantic pass (§12): walks a schema-valid payload in execution order and, for every leaf expression,
-/// template, and <c>set</c> path, (a) parses it through the <b>real</b> <see cref="CrawldadExpression"/>/
-/// <see cref="CrawldadTemplate"/>/<see cref="SetPath"/> parser — surfacing unknown-builtin/wrong-arity/syntax errors —
-/// and (b) checks that every free identifier and every structural var/frame reference (<c>in</c>/<c>from</c>/
-/// <c>base</c>/<c>into</c>) is defined before use. Ordinary vars (<c>set</c>/<c>locate</c>/<c>frame</c>/<c>download</c>
-/// targets and declared <c>vars</c>) accrue and persist (the flat run scope, §8.2); loop/binding variables are scoped
-/// to their body. <c>input</c> is always in scope; its sub-keys are not checked (an absent input key is null at run
-/// time, not a failure). Bare-string node selectors are var-first at run time, so they are treated as templates and
-/// their (non-interpolated) text is not resolved as a reference — matching run-time leniency. It also (c) enforces the
-/// §11 checkpoint-placement rules the resume machinery can honour — a <c>checkpoint</c> must head a single, top-level
-/// <c>while</c> loop and be the only one there — rejecting anything the top-level-step cursor model cannot re-enter.
-/// </summary>
+/// <summary>The save-time semantic pass: walks a schema-valid payload and, for every leaf expression/template/path,
+/// parses it through the real parser and checks that every free identifier and var/frame reference is defined before
+/// use. Ordinary vars persist across the flat scope; loop/binding vars are scoped to their body; also enforces checkpoint placement.</summary>
 internal sealed class SemanticWalker
 {
     private readonly List<PayloadIssue> _issues;
@@ -25,7 +15,7 @@ internal sealed class SemanticWalker
     private int _stepIndex = -1;
     private string _stepKind = "";
 
-    // ----- checkpoint-placement context (§11) --------------------------------
+    // ----- checkpoint-placement context --------------------------------
     // The number of loops (loop/forEach) enclosing the current node, counted through normal control blocks only.
     private int _loopDepth;
 
@@ -44,20 +34,19 @@ internal sealed class SemanticWalker
     // Checkpoints already seen in the current top-level step — the resume unit permits at most one (reset per step).
     private int _checkpointsInStep;
 
-    // The mutually-exclusive structured-Sel root keys (§5.2), in the resolver's precedence order.
+    // The mutually-exclusive structured-Sel root keys, in the resolver's precedence order.
     private static readonly string[] _selRootKeys = ["css", "xpath", "text", "role", "title", "base"];
 
     public SemanticWalker(List<PayloadIssue> issues) => _issues = issues;
 
     /// <summary>Validates the whole payload: <c>config.backend</c>, then <c>vars</c> (in order), then <c>steps</c>, then <c>result</c>.</summary>
-    /// <param name="payload">The schema-valid payload document.</param>
     public void Walk(JsonElement payload)
     {
-        // CD-6: the declared secretRef inputs — the only inputs a fill.secret may reference, and the ones no expression/template
+        // The declared secretRef inputs — the only inputs a fill.secret may reference, and the ones no expression/template
         // may name (the structural guarantee that a secret never enters the expression value space).
         _secretRefInputs = SecretRefInputs.Names(payload);
 
-        // config.backend resolves before vars, so it may reference only input (§8.1 order).
+        // config.backend resolves before vars, so it may reference only input.
         _stepKind = "config";
         CheckExpr(payload.GetProperty("config").GetProperty("backend").GetString()!, "/config/backend");
 
@@ -80,7 +69,7 @@ internal sealed class SemanticWalker
         foreach (var step in payload.GetProperty("steps").EnumerateArray())
         {
             _stepIndex = index;
-            _checkpointsInStep = 0; // §11: at most one checkpoint per top-level step (the resume unit)
+            _checkpointsInStep = 0; // at most one checkpoint per top-level step (the resume unit)
             _atTopLevel = true; // a direct member of `steps`; WalkBlock clears this as it descends
             WalkNode(step, $"/steps/{index}");
             index++;
@@ -105,7 +94,7 @@ internal sealed class SemanticWalker
         _stepKind = head;
         if (string.Equals(head, "comment", StringComparison.Ordinal))
         {
-            return; // §6: no-op annotation.
+            return; // no-op annotation.
         }
 
         var body = node.GetProperty(head);
@@ -142,7 +131,7 @@ internal sealed class SemanticWalker
         }
     }
 
-    // Navigation + DOM interaction nodes (§5.1): selector/template/frame leaves, no scope mutation except `frame`.
+    // Navigation + DOM interaction nodes: selector/template/frame leaves, no scope mutation except `frame`.
     private void WalkInteractionNode(string head, JsonElement body, string p)
     {
         switch (head)
@@ -176,7 +165,7 @@ internal sealed class SemanticWalker
                 CheckNodeIn(body, p);
                 if (body.TryGetProperty("secret", out var fillSecret))
                 {
-                    CheckFillSecret(fillSecret.GetString()!, $"{p}/secret"); // CD-6: a restricted secretRef reference, never an Expr
+                    CheckFillSecret(fillSecret.GetString()!, $"{p}/secret"); // a restricted secretRef reference, never an Expr
                 }
                 else
                 {
@@ -185,7 +174,7 @@ internal sealed class SemanticWalker
 
                 break;
             case "screenshot":
-                // #8: a full-page capture with no scope effect; its only leaf is the optional author `name` label (a Tmpl,
+                // A full-page capture with no scope effect; its only leaf is the optional author `name` label (a Tmpl,
                 // interpolation-consistent with log.message/goto.url), so a bad reference in it is caught at save time.
                 if (body.TryGetProperty("name", out var shotName))
                 {
@@ -200,7 +189,7 @@ internal sealed class SemanticWalker
         }
     }
 
-    // State + logging + failure nodes (§5.1/§6): expression leaves and the var-defining nodes.
+    // State + logging + failure nodes: expression leaves and the var-defining nodes.
     private void WalkStateNode(string head, JsonElement body, string p)
     {
         switch (head)
@@ -239,7 +228,7 @@ internal sealed class SemanticWalker
         }
     }
 
-    // Control-flow nodes (§6): the expression predicates and the recursed child blocks.
+    // Control-flow nodes: the expression predicates and the recursed child blocks.
     private void WalkControlNode(string head, JsonElement body, string p)
     {
         switch (head)
@@ -320,7 +309,7 @@ internal sealed class SemanticWalker
     private void WalkLoop(JsonElement body, string p)
     {
         var isWhileForm = !body.TryGetProperty("for", out var forSpec);
-        var loop = EnterLoop(isWhileForm); // §11: classify this loop as a checkpoint host (top-level while) or not
+        var loop = EnterLoop(isWhileForm); // classify this loop as a checkpoint host (top-level while) or not
         if (!isWhileForm)
         {
             CheckBound(forSpec.GetProperty("from"), "from", $"{p}/for/from");
@@ -336,7 +325,7 @@ internal sealed class SemanticWalker
         }
         else
         {
-            // while-form (do-while): the body runs before the test, so the test may read what the body set (§6).
+            // while-form (do-while): the body runs before the test, so the test may read what the body set.
             WalkBlock(body.GetProperty("do"), $"{p}/do");
             CheckExpr(body.GetProperty("while").GetString()!, $"{p}/while");
         }
@@ -344,8 +333,8 @@ internal sealed class SemanticWalker
         ExitLoop(loop);
     }
 
-    // checkpoint (§11): the cursor Expr resolves against the current scope; the resume sub-program runs only on resume
-    // with the restored cursor bound to the `checkpoint` var, so that name is in scope for the resume block alone.
+    // The cursor Expr resolves against the current scope; the resume sub-program runs only on resume with the
+    // restored cursor bound to the `checkpoint` var, so that name is in scope for the resume block alone.
     private void WalkCheckpoint(JsonElement body, string p)
     {
         ValidateCheckpointPlacement(p);
@@ -358,13 +347,9 @@ internal sealed class SemanticWalker
         }
     }
 
-    // The §11 placement rules the resume machinery can actually honour, derived from the interpreter: resume re-enters at
-    // the checkpoint's enclosing TOP-LEVEL step (RunInterpreter._currentStepIndex only tracks the top level), re-runs it
-    // against a fresh session, restores ONE stored cursor + var snapshot, and the FIRST checkpoint reached consumes the
-    // resume. So a checkpoint is resumable only when it heads a single, top-level `while` loop and is the only checkpoint
-    // in that step. A `for`/`forEach` re-initialises its counter from `from`/`in` at entry (RunScope.Shadow overwrites any
-    // restored value), so its iteration cannot be resumed; a nested/second loop or a loop below a top-level step cannot be
-    // re-entered directly; and a `resume`/`trigger` sub-program persists no checkpoint of its own.
+    // Derived from the interpreter: resume re-enters only at the checkpoint's enclosing top-level step, restoring ONE
+    // cursor + var snapshot, and the FIRST checkpoint reached in that step consumes the resume — so a checkpoint is
+    // resumable only when it heads a single, top-level `while` loop and is the only one in that step (see below).
     private void ValidateCheckpointPlacement(string p)
     {
         _checkpointsInStep++;
@@ -403,7 +388,7 @@ internal sealed class SemanticWalker
     {
         CheckExpr(body.GetProperty("in").GetString()!, $"{p}/in");
 
-        var loop = EnterLoop(isWhileForm: false); // §11: forEach re-iterates from index 0 on resume — never a checkpoint host
+        var loop = EnterLoop(isWhileForm: false); // forEach re-iterates from index 0 on resume — never a checkpoint host
         var added = body.TryGetProperty("index", out var index)
             ? EnterScope(body.GetProperty("as").GetString()!, index.GetString()!)
             : EnterScope(body.GetProperty("as").GetString()!);
@@ -427,7 +412,7 @@ internal sealed class SemanticWalker
     }
 
     // A re-established sub-program (a checkpoint `resume` or an action `trigger`): walked like any block, but a checkpoint
-    // inside it is rejected (§11) — the block re-runs on resume and records no checkpoint of its own.
+    // inside it is rejected — the block re-runs on resume and records no checkpoint of its own.
     private void WalkReestablishBlock(JsonElement block, string path)
     {
         var saved = _inReestablishBlock;
@@ -436,7 +421,7 @@ internal sealed class SemanticWalker
         _inReestablishBlock = saved;
     }
 
-    // ----- checkpoint-placement tracking (§11) -------------------------------
+    // ----- checkpoint-placement tracking -------------------------------
 
     // Records entry into a loop for checkpoint-placement tracking: classifies the OUTERMOST enclosing loop as a checkpoint
     // host (a top-level-step `while` loop) and deepens the nesting. Returns the prior context to restore on exit.
@@ -475,13 +460,9 @@ internal sealed class SemanticWalker
         CheckNoSecretRefs(expr.InputMemberReferences(), path);
     }
 
-    // A loop-for bound (from/to/step, CD-10) is an Expr string or a typed JSON number literal. Both are parsed through
-    // the same expression parser — the number via its raw text — so a typed number N is validated exactly as the Expr
-    // "N" of the same digits: a plain literal has no free identifiers and validates clean, an unparseable one is rejected
-    // here, and (#33) a bare NON-INTEGRAL literal (typed 2.5 or the Expr "2.5", either sign) is rejected too — the long
-    // loop counter can never take a fractional value, so it is a save-time type_error, the same code the run-time
-    // integral check raises (RunInterpreter.RequireIntegralBound). A computed expression is not a constant literal and is
-    // left to that run-time check; an integral-valued double (2.0) is accepted (it coerces), so only fractions reject.
+    // A loop-for bound (from/to/step) is an Expr string or a typed JSON number literal, both parsed through the same
+    // expression parser. A bare NON-INTEGRAL literal (2.5, either form, either sign) is a save-time type_error — the
+    // long counter can never be fractional; a computed expression defers to the run-time integral check instead.
     private void CheckBound(JsonElement bound, string boundName, string path)
     {
         CrawldadExpression expr;
@@ -507,13 +488,9 @@ internal sealed class SemanticWalker
         }
     }
 
-    // A locate nth (#37) is an Expr string that must evaluate to a whole 0-based index. It flows through the same
-    // parse + defined-before-use + secretRef checks as any leaf, and then — where it is a bare compile-time-constant
-    // literal (the statically-detectable case, incl. a negated one, via TryGetConstantNumber) — a NON-INTEGRAL literal
-    // (2.5, "2.5", -2.5) is rejected as the same type_error the run-time RequireNthIndex raises, and an integral literal
-    // OUTSIDE the valid 0-based 32-bit range (a NEGATIVE index, or one past int.MaxValue) as the same index_out_of_range.
-    // A computed expression is not a constant and is left to that run-time check; a non-negative integer literal (0, 3,
-    // 2.0) validates clean. Only the two nth sites (locate.from and the structured Sel map) route through here.
+    // A locate nth is an Expr string that must evaluate to a whole 0-based index; it gets the same parse +
+    // defined-before-use + secretRef checks as any leaf. Where it is a bare compile-time-constant literal, a
+    // NON-INTEGRAL value is a save-time type_error and an OUT-OF-RANGE one is index_out_of_range; a computed expression defers to the run-time check.
     private void CheckNth(string source, string path)
     {
         CrawldadExpression expr;
@@ -568,7 +545,7 @@ internal sealed class SemanticWalker
         CheckNoSecretRefs(template.InputMemberReferences(), path);
     }
 
-    // CD-6: a fill.secret is a restricted reference, not an Expr — it must be exactly `input.<name>` naming a declared
+    // A fill.secret is a restricted reference, not an Expr — it must be exactly `input.<name>` naming a declared
     // secretRef input. Anything else (a general expression, or a reference to a non-secretRef input) is rejected, so the
     // secret channel and the expression value space stay disjoint.
     private void CheckFillSecret(string source, string path)
@@ -592,7 +569,7 @@ internal sealed class SemanticWalker
         }
     }
 
-    // CD-6: reject a secretRef input named anywhere in the expression value space — a secretRef may be consumed ONLY by
+    // Reject a secretRef input named anywhere in the expression value space — a secretRef may be consumed ONLY by
     // fill.secret, so a secret can never be interpolated into a log/result/selector or otherwise routed through an Expr.
     private void CheckNoSecretRefs(IReadOnlySet<string> inputMembers, string path)
     {
@@ -677,10 +654,9 @@ internal sealed class SemanticWalker
         CheckSelCombination(selector, path);
     }
 
-    // §5.2 union coherence: a structured Sel roots at EXACTLY ONE of css/xpath/text/role/title/base — only base+css may
-    // pair (css as the base handle's relative child) — and `name` is the accessible name of a `role`. Enforced here with
-    // a clear message as well as in the JSON Schema, since an ambiguous selector would otherwise be resolved silently by
-    // the resolver's root precedence rather than rejected.
+    // Union coherence: a structured Sel roots at EXACTLY ONE of css/xpath/text/role/title/base — only base+css may
+    // pair (css as the base handle's relative child) — and `name` is the accessible name of a `role`. Enforced here
+    // (and in the JSON Schema) since an ambiguous selector would otherwise resolve silently by root precedence.
     private void CheckSelCombination(JsonElement selector, string path)
     {
         var roots = _selRootKeys.Where(k => selector.TryGetProperty(k, out _)).ToList();

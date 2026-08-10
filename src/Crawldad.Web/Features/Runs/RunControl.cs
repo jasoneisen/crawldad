@@ -2,25 +2,21 @@ using System.Collections.Concurrent;
 
 namespace Crawldad.Web.Features.Runs;
 
-/// <summary>Why a run was asked to stop cooperatively (§11), so the executor maps the interpreter's stopped outcome to the
-/// right disposition: a user <see cref="Cancelled"/> reports <c>cancelled</c> + partial; a <see cref="Deadline"/> breach is
-/// a terminal failure (§8.4).</summary>
+/// <summary>Why a run was asked to stop cooperatively, so the executor maps the interpreter's stopped outcome to the right
+/// disposition: a user <see cref="Cancelled"/> reports <c>cancelled</c> + partial; a <see cref="Deadline"/> breach is a
+/// terminal failure.</summary>
 public enum RunStopReason
 {
     /// <summary>A caller requested cancellation via <c>POST /runs/{id}/cancel</c>.</summary>
     Cancelled,
 
-    /// <summary>The run's wall-clock deadline elapsed (the saga timeout, §8.4).</summary>
+    /// <summary>The run's wall-clock deadline elapsed (the saga timeout).</summary>
     Deadline,
 }
 
-/// <summary>
-/// The in-process stop signal for one executing run (§11): the cancel endpoint and the saga's wall-clock timeout set it;
-/// the executor's run observer reads it between steps. It is a fast, lock-free, single-process control (the executor and
-/// the control surface share a process in the solo-mode host) — the <em>persistent</em> record of a cancel is the
-/// <c>RunCancellationRequested</c> trace event, not this. First writer wins so a late deadline never overrides a user
-/// cancel already in flight.
-/// </summary>
+/// <summary>The in-process stop signal for one executing run: the cancel endpoint and the saga's wall-clock timeout set
+/// it; the executor's observer reads it between steps. Fast and lock-free — the durable record of a cancel is the
+/// <c>RunCancellationRequested</c> trace event, not this. First writer wins, so a late deadline never overrides an in-flight user cancel.</summary>
 public sealed class RunControl
 {
     private const int _notStopped = -1;
@@ -30,7 +26,7 @@ public sealed class RunControl
     private bool _forcibleForEveryReason;
 
     /// <summary>Atomically claims the run for the calling executor, returning true for the first caller only. Prevents two
-    /// executors in a process (a durable redelivery and the startup recovery scan) from driving the same run at once (§11).</summary>
+    /// executors in a process (a durable redelivery and the startup recovery scan) from driving the same run at once.</summary>
     public bool TryClaim() => Interlocked.CompareExchange(ref _claimed, 1, 0) == 0;
 
     /// <summary>Whether a stop (cancel or deadline) has been requested — read by the interpreter between steps.</summary>
@@ -46,14 +42,9 @@ public sealed class RunControl
         }
     }
 
-    /// <summary>The executor binds its deadline-cancellation source so a <see cref="RunStopReason.Deadline"/> stop can
-    /// forcibly interrupt a run blocked mid-call (§8.4) — a user <see cref="RunStopReason.Cancelled"/> stop stays
-    /// cooperative, honoured between steps and never yanked mid-step (§11). A <b>CD-15 auto-upgraded</b> run passes
-    /// <paramref name="forEveryReason"/> <c>true</c>: its interpreter runs without an observer (the lean synchronous engine),
-    /// so it never sees a cooperative cancel between steps — every stop, cancel included, must forcibly cancel the source to
-    /// take effect.</summary>
-    /// <param name="forcible">The linked cancellation source the run observes.</param>
-    /// <param name="forEveryReason">When true, any stop reason (not just a deadline) forcibly cancels the source.</param>
+    /// <summary>Binds the deadline-cancellation source so a <see cref="RunStopReason.Deadline"/> stop can forcibly interrupt
+    /// a blocked run — a user <see cref="RunStopReason.Cancelled"/> stays cooperative unless <paramref name="forEveryReason"/>
+    /// is true, which an observer-less auto-upgraded run needs since it never sees a cooperative cancel between steps.</summary>
     public void UseForcibleCancellation(CancellationTokenSource forcible, bool forEveryReason = false)
     {
         _forcible = forcible;
@@ -61,9 +52,8 @@ public sealed class RunControl
     }
 
     /// <summary>Requests a cooperative stop for <paramref name="reason"/>; the first request wins (idempotent thereafter).
-    /// A deadline (or any reason when the bound source is <see cref="UseForcibleCancellation(CancellationTokenSource, bool)"/>
-    /// forcible-for-every-reason, CD-15) additionally cancels the bound source so a stuck run does not outrun its cap.</summary>
-    /// <param name="reason">Why the run should stop.</param>
+    /// A deadline (or any reason when bound forcible-for-every-reason) additionally cancels the bound source so a stuck
+    /// run does not outrun its cap.</summary>
     public void Stop(RunStopReason reason)
     {
         if (Interlocked.CompareExchange(ref _reason, (int)reason, _notStopped) == _notStopped
@@ -74,21 +64,17 @@ public sealed class RunControl
     }
 }
 
-/// <summary>The registry of in-process <see cref="RunControl"/>s keyed by run id (§11). A singleton shared by the executor
+/// <summary>The registry of in-process <see cref="RunControl"/>s keyed by run id. A singleton shared by the executor
 /// (which registers a run's control while it drives it) and the control surface (cancel endpoint, saga deadline).</summary>
 public interface IRunControlRegistry
 {
     /// <summary>Gets (creating if absent) the control for a run — used by the executor when it starts driving the run.</summary>
-    /// <param name="runId">The run id.</param>
     RunControl GetOrAdd(Guid runId);
 
     /// <summary>Tries to get an existing control for a run, present only while the executor is actively driving it.</summary>
-    /// <param name="runId">The run id.</param>
-    /// <param name="control">The control, when present.</param>
     bool TryGet(Guid runId, out RunControl control);
 
     /// <summary>Drops a run's control once the executor stops driving it (finalised or interrupted).</summary>
-    /// <param name="runId">The run id.</param>
     void Remove(Guid runId);
 }
 

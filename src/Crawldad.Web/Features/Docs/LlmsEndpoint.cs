@@ -6,7 +6,7 @@ using Wolverine.Http;
 namespace Crawldad.Web.Features.Docs;
 
 /// <summary>The committed <c>llms.txt</c> (repo root), embedded into this assembly under its own logical name so the served
-/// bytes and the checked-in file are one source of truth (Deliverable 4, #20). Read once at first use.</summary>
+/// bytes and the checked-in file are one source of truth. Read once at first use.</summary>
 internal static class LlmsText
 {
     private const string _resourceName = "llms.txt";
@@ -25,21 +25,11 @@ internal static class LlmsText
     }
 }
 
-/// <summary>
-/// <c>GET /llms.txt</c> (Deliverable 4, #20): serves the committed <c>llms.txt</c> at the API root — the llms.txt convention
-/// (llmstxt.org) — a compact, LLM-oriented index pointing at <c>docs/API.md</c>, the served schema
-/// (<c>/schema/crawldad-1.schema.json</c>), and the curated examples, so an agent discovering the host can find the consumer
-/// docs without scraping.
-/// <para>
-/// <b>Deliberately anonymous (CD-1),</b> for the same reason as <c>/health</c> and the schema route: a root-level discovery
-/// pointer carries no tenant data and is only useful when reachable without a key. Allowlisted in the endpoint-enumeration
-/// auth test. Served as <c>text/plain</c>.
-/// </para>
-/// </summary>
+/// <summary><c>GET /llms.txt</c>: serves the committed <c>llms.txt</c> at the API root (the llms.txt convention,
+/// llmstxt.org), pointing at <c>docs/API.md</c>, the served schema, and curated examples. Deliberately anonymous, like
+/// <c>/health</c> and the schema route: a root-level discovery pointer carries no tenant data. Served as <c>text/plain</c>.</summary>
 public static class LlmsEndpoint
 {
-    /// <summary>Handles <c>GET /llms.txt</c>.</summary>
-    /// <returns><c>200</c> with the committed <c>llms.txt</c> as <c>text/plain</c>.</returns>
     [AllowAnonymous]
     [WolverineGet("/llms.txt")]
     public static IResult Get() => Results.Text(LlmsText.Content, "text/plain", Encoding.UTF8);

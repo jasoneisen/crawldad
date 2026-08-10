@@ -3,17 +3,12 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Web.Features.Runs.Interpreter;
 
-/// <summary>
-/// Bridges System.Text.Json and the run value model (§7.1: null|bool|long|double|string|array|map|handle). Inputs and
-/// literal <c>vars</c> come in as JSON; the payload's evaluated <c>result</c> goes out as JSON with object-literal key
-/// order preserved (maps are insertion-ordered). Opaque handles are never serialisable — a handle anywhere in the
-/// result tree is a terminal <c>handle_in_result</c> failure.
-/// </summary>
+/// <summary>Bridges System.Text.Json and the run value model (null|bool|long|double|string|array|map|handle). Inputs
+/// and literal <c>vars</c> come in as JSON; the evaluated <c>result</c> goes out as JSON with key order preserved.
+/// Opaque handles are never serialisable — one anywhere in the result tree is a terminal <c>handle_in_result</c>.</summary>
 internal static class JsonValues
 {
     /// <summary>Converts a JSON element to a value-model value (numbers: integral ⇒ <see cref="long"/>, else <see cref="double"/>).</summary>
-    /// <param name="element">The JSON element (from request inputs or a literal <c>var</c>).</param>
-    /// <returns>The value-model value.</returns>
     public static object? FromJson(JsonElement element) => element.ValueKind switch
     {
         JsonValueKind.Object => ObjectFromJson(element),
@@ -48,9 +43,6 @@ internal static class JsonValues
     }
 
     /// <summary>Serialises an evaluated result value to a <see cref="JsonElement"/>, preserving map key order.</summary>
-    /// <param name="value">The value-model value produced by the payload's <c>result</c> expression.</param>
-    /// <returns>The JSON element to embed in the response.</returns>
-    /// <exception cref="InterpreterException">On an opaque handle anywhere in the tree (<c>handle_in_result</c>).</exception>
     public static JsonElement ToJson(object? value)
     {
         var buffer = new System.Buffers.ArrayBufferWriter<byte>();

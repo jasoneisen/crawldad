@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>The lexical categories of the expression grammar (§7.1).</summary>
+/// <summary>The lexical categories of the expression grammar.</summary>
 internal enum TokenType
 {
     Number, String, Identifier, True, False, Null,
@@ -18,11 +18,9 @@ internal enum TokenType
 /// <see cref="Value"/> (number/string/bool/null) or identifier <see cref="Text"/> where relevant.</summary>
 internal readonly record struct Token(TokenType Type, int Position, string Text = "", object? Value = null);
 
-/// <summary>
-/// Turns an expression source string into a flat token list ending in <see cref="TokenType.End"/> (§7.1).
-/// Pure and total; malformed input is a terminal <see cref="ExpressionParseException"/> (<c>syntax_error</c>) with
-/// the offending position. Single-quoted strings support the escapes the payloads use (<c>\n \t \r \\ \'</c>).
-/// </summary>
+/// <summary>Turns an expression source string into a flat token list ending in <see cref="TokenType.End"/>. Pure and
+/// total; malformed input is a terminal <see cref="ExpressionParseException"/> (<c>syntax_error</c>) with the
+/// offending position. Single-quoted strings support <c>\n \t \r \\ \'</c> escapes.</summary>
 internal static class Lexer
 {
     public static List<Token> Tokenize(string source)

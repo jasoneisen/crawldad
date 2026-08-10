@@ -5,19 +5,12 @@ using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Runs;
 
-/// <summary>
-/// <c>GET /runs/queue-stats</c> (CD-16, docs/PRODUCT.md §Pv.3): the tenant's admission-queue observability — current depth and
-/// the <b>p95 queue wait</b>, the upgrade signal the slot-pricing model depends on. Both are computed on read, tenant-scoped
-/// (CD-1): depth is a count of the tenant's <see cref="QueuedRun"/> rows, and p95 is the 95th percentile (nearest-rank) of the
-/// per-run <see cref="RunProgress.QueueWaitMs"/> recorded at promotion — so "p95 queue wait per tenant" is derivable from
-/// stored data with no metrics library, exactly as the ticket asks.
-/// </summary>
+/// <summary><c>GET /runs/queue-stats</c>: the tenant's admission-queue observability — current depth and the p95 queue
+/// wait. Both computed on read: depth is a count of <see cref="QueuedRun"/> rows, and p95 is the nearest-rank percentile
+/// of the per-run <see cref="RunProgress.QueueWaitMs"/> recorded at promotion.</summary>
 public static class QueueStatsEndpoint
 {
     /// <summary>Handles <c>GET /runs/queue-stats</c>.</summary>
-    /// <param name="session">The tenant-scoped Marten query session (CD-1).</param>
-    /// <param name="ct">Cancels the queries.</param>
-    /// <returns><c>200</c> with the tenant's <see cref="QueueStatsResponse"/>.</returns>
     [WolverineGet("/runs/queue-stats")]
     public static async Task<IResult> Handle(IQuerySession session, CancellationToken ct)
     {

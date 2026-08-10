@@ -3,44 +3,26 @@ using System.Globalization;
 
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>Runs a builtin over its (unevaluated) argument nodes and the eval context. Most builtins evaluate all
-/// arguments eagerly; a few (<c>coalesce</c>) are lazy, so the invoker receives nodes, not values.</summary>
-/// <param name="args">The argument expression nodes, arity already validated at parse time.</param>
-/// <param name="ctx">The scope + cancellation token.</param>
+/// <summary>Runs a builtin over its (unevaluated) argument nodes; most evaluate eagerly, but <c>coalesce</c> is lazy.
+/// Argument arity is already validated at parse time.</summary>
 internal delegate ValueTask<object?> BuiltinInvoker(IReadOnlyList<ExpressionNode> args, EvalContext ctx);
 
-/// <summary>One registered builtin: its name, the argument-count window the parser enforces (<c>unknown_function</c>
-/// / <c>wrong_arity</c> are the static safety boundary), and the invoker.</summary>
-/// <param name="Name">The function name as written in source.</param>
-/// <param name="MinArity">Fewest arguments accepted (inclusive).</param>
-/// <param name="MaxArity">Most arguments accepted (inclusive); <see cref="int.MaxValue"/> for variadic.</param>
-/// <param name="Invoke">The evaluator.</param>
+/// <summary>One registered builtin: name, the parser-enforced arity window (<c>MaxArity</c> = <see cref="int.MaxValue"/>
+/// for variadic; violations are <c>unknown_function</c>/<c>wrong_arity</c>), and the invoker.</summary>
 internal sealed record Builtin(string Name, int MinArity, int MaxArity, BuiltinInvoker Invoke);
 
-/// <summary>
-/// Runs a binding builtin (<c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c>, §7.2) — the fixed
-/// <c>fn(source, v, body)</c> form whose middle argument is a scoped binding, not a value. The parser has already
-/// validated the shape and extracted the binding name, so the invoker receives the source-list node, the binding
-/// name, and the per-element body node (evaluated in a <see cref="BindingScope"/>).
-/// </summary>
-/// <param name="source">The node producing the list to iterate.</param>
-/// <param name="binding">The per-element variable name introduced for <paramref name="body"/>.</param>
-/// <param name="body">The predicate / projection / key node.</param>
-/// <param name="ctx">The scope + cancellation token.</param>
+/// <summary>A binding builtin's invoker: <c>fn(source, v, body)</c> whose middle argument is a scoped binding, not a
+/// value, already validated and extracted by the parser. Receives the source node, binding name, and body node
+/// (evaluated in a <see cref="BindingScope"/>).</summary>
 internal delegate ValueTask<object?> BindingBuiltinInvoker(
     ExpressionNode source, string binding, ExpressionNode body, EvalContext ctx);
 
 /// <summary>One registered binding builtin: its name and invoker. Arity (always 3) and the bare-identifier binding
 /// slot are enforced structurally by the parser, so no arity window is stored.</summary>
-/// <param name="Name">The function name as written in source.</param>
-/// <param name="Invoke">The evaluator over the <c>(source, binding, body)</c> form.</param>
 internal sealed record BindingBuiltin(string Name, BindingBuiltinInvoker Invoke);
 
-/// <summary>
-/// The enumerated builtin surface (§7.2) — the safety boundary. Only the Phase 1 fragment set is registered; the
-/// registry shape (name → arity window → invoker) is exactly what Phase 2's additions slot into without
-/// restructuring. Resolution is by exact name; an unknown name or an out-of-window arity is a parse-time failure.
-/// </summary>
+/// <summary>The registered builtin surface: name → arity window → invoker, resolved by exact name. An unknown name or
+/// out-of-window arity is a parse-time failure.</summary>
 internal static partial class BuiltinRegistry
 {
     private static Dictionary<string, Builtin> Registry { get; } = Build();
@@ -48,22 +30,16 @@ internal static partial class BuiltinRegistry
     private static Dictionary<string, BindingBuiltin> BindingRegistry { get; } = BuildBindings();
 
     /// <summary>Looks an ordinary builtin up by exact name.</summary>
-    /// <param name="name">The function name from source.</param>
-    /// <param name="builtin">The resolved builtin when found.</param>
-    /// <returns><see langword="true"/> when <paramref name="name"/> is a registered ordinary builtin.</returns>
     public static bool TryGet(string name, out Builtin builtin) => Registry.TryGetValue(name, out builtin!);
 
     /// <summary>Looks a binding builtin (<c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c>) up by exact name.</summary>
-    /// <param name="name">The function name from source.</param>
-    /// <param name="binding">The resolved binding builtin when found.</param>
-    /// <returns><see langword="true"/> when <paramref name="name"/> is a registered binding builtin.</returns>
     public static bool TryGetBinding(string name, out BindingBuiltin binding) => BindingRegistry.TryGetValue(name, out binding!);
 
     private static Dictionary<string, Builtin> Build()
     {
         var builtins = new[]
         {
-            // String — null-propagate on the primary argument (§7.1).
+            // String — null-propagates on the primary argument.
             Fn1("isNullOrWhitespace", IsNullOrWhitespace),
             Fn1("trim", Trim),
             Fn1("lower", Lower),
@@ -85,7 +61,7 @@ internal static partial class BuiltinRegistry
             Fn2("resolveUrl", ResolveUrl),
             new Builtin("pageUrl", 0, 0, static (_, ctx) => new ValueTask<object?>(ctx.Scope.PageUrl())),
 
-            // DOM — the only page access (§7.2). count is polymorphic (string ⇒ selector query).
+            // DOM — the only page access. count is polymorphic (string ⇒ selector query).
             new Builtin("count", 1, 1, CountAsync),
             new Builtin("exists", 1, 2, ExistsAsync),
             new Builtin("text", 1, 2, DomString(static (dom, target, css, ct) => dom.TextAsync(target, css, ct))),
@@ -96,15 +72,15 @@ internal static partial class BuiltinRegistry
 
         var map = new Dictionary<string, Builtin>(StringComparer.Ordinal);
         AddAll(map, builtins);
-        AddAll(map, StringBuiltins());     // §7.2 string surface (BuiltinsString.cs)
-        AddAll(map, CollectionBuiltins()); // §7.2 collection surface (BuiltinsCollection.cs)
+        AddAll(map, StringBuiltins());     // string surface (BuiltinsString.cs)
+        AddAll(map, CollectionBuiltins()); // collection surface (BuiltinsCollection.cs)
         return map;
     }
 
     private static Dictionary<string, BindingBuiltin> BuildBindings()
     {
         var map = new Dictionary<string, BindingBuiltin>(StringComparer.Ordinal);
-        foreach (var binding in BindingBuiltins()) // §7.2 binding surface (BuiltinsBinding.cs)
+        foreach (var binding in BindingBuiltins()) // binding surface (BuiltinsBinding.cs)
         {
             map.Add(binding.Name, binding);
         }
@@ -299,10 +275,9 @@ internal static partial class BuiltinRegistry
             ExpressionErrorCodes.InvalidUrl, $"not a valid absolute URL (got {ExpressionValues.TypeName(value)})");
     }
 
-    // resolveUrl(base, rel) = new Uri(new Uri(base), rel).ToString() — the reference's proper RFC resolution (:672,
-    // §7.3), distinct from the search rows' naive scheme://host+href concat. base must be an absolute URL (else
-    // invalid_url, like the other URL builtins); rel must be a string (else type_error); a malformed rel that the Uri
-    // resolver rejects is invalid_url. NOT null-propagating — base is always present in the reference (input.link).
+    // resolveUrl(base, rel) = new Uri(new Uri(base), rel).ToString() — proper RFC resolution, not naive concatenation.
+    // base must be an absolute URL (else invalid_url); rel must be a string (else type_error); a malformed rel is
+    // invalid_url. NOT null-propagating — base is always present.
     private static string ResolveUrl(object? baseValue, object? relValue)
     {
         if (baseValue is not string baseText || !Uri.TryCreate(baseText, UriKind.Absolute, out var baseUri))

@@ -3,15 +3,9 @@ using Marten.Events.Aggregation;
 
 namespace Crawldad.Web.Features.Runs;
 
-/// <summary>
-/// The async run-observability read model (§13): one document per run, folded from its step-trace event stream into the
-/// ordered step list (with durations), the redacted input key names, the extracted-value refs, the download + explicit
-/// <c>screenshot</c> (#8) artifact refs, the failure + screenshot ref, the pinned payload revision + script hash, and the backend region. This is the lag-tolerant cross-run
-/// dashboard view (§11) — distinct from the read-your-writes <see cref="RunProgress"/> state — and it derives <b>purely</b>
-/// from already-<b>scrubbed</b> events (§12), so it holds no raw credentials or bulk PII by construction. It is exposed as
-/// the <see cref="RunTimelineResponse"/> DTO, never this document. Populated only for the executor path (which emits the
-/// step trace); a synchronous run yields a minimal timeline (no steps, no region).
-/// </summary>
+/// <summary>The async run-observability read model: one document per run, folded from its step-trace into the ordered
+/// step list, artifact refs, and failure. Distinct from the read-your-writes <see cref="RunProgress"/> — this is the
+/// lag-tolerant cross-run dashboard view, exposed as <see cref="RunTimelineResponse"/>, never this document directly.</summary>
 public sealed record RunTimeline
 {
     /// <summary>The run id (the event-stream id; assigned by Marten from the stream).</summary>
@@ -23,16 +17,16 @@ public sealed record RunTimeline
     /// <summary>The script hash pinned at start (SHA-256, lowercase hex).</summary>
     public string ScriptHash { get; init; } = "";
 
-    /// <summary>The pinned managed payload (§14.2), or null for an inline run.</summary>
+    /// <summary>The pinned managed payload, or null for an inline run.</summary>
     public Guid? PayloadId { get; init; }
 
-    /// <summary>The pinned payload revision (§14.2), or null for an inline run.</summary>
+    /// <summary>The pinned payload revision, or null for an inline run.</summary>
     public int? PayloadRevision { get; init; }
 
-    /// <summary>The supplied input key names (redacted — never values, §12).</summary>
+    /// <summary>The supplied input key names (redacted — never values).</summary>
     public IReadOnlyList<string> InputKeys { get; init; } = [];
 
-    /// <summary>The backend region the session ran in (§9.1), or null before a session opened.</summary>
+    /// <summary>The backend region the session ran in, or null before a session opened.</summary>
     public string? Region { get; init; }
 
     /// <summary>The run's disposition (running until a terminal event lands).</summary>
@@ -56,7 +50,7 @@ public sealed record RunTimeline
     /// <summary>The downloads streamed to blob storage (refs + metadata, never bytes).</summary>
     public IReadOnlyList<RunTimelineDownload> Downloads { get; init; } = [];
 
-    /// <summary>The explicit <c>screenshot</c> captures (refs + metadata, never images), in capture order (#8).</summary>
+    /// <summary>The explicit <c>screenshot</c> captures (refs + metadata, never images), in capture order.</summary>
     public IReadOnlyList<RunTimelineScreenshot> Screenshots { get; init; } = [];
 
     /// <summary>The failure screenshot's ref captured on the failing step, carried into <see cref="Failure"/> at the terminal event.</summary>
@@ -66,17 +60,12 @@ public sealed record RunTimeline
     public RunTimelineFailure? Failure { get; init; }
 }
 
-/// <summary>
-/// Folds a run's trace events into its <see cref="RunTimeline"/> (§13). Registered on the shared, config-driven projection
-/// lifecycle (Inline under the test switch, Async in production, §11/HostConfiguration) beside the aggregate snapshots. It
-/// reacts only to the events it curates — <c>StepStarted</c> spines the step list, <c>Extracted</c>/<c>Downloaded</c>/
-/// <c>Screenshotted</c> collect the run's artifacts, terminals close durations — and ignores the finer <c>Navigated</c>/
-/// <c>Clicked</c>/<c>Waited</c> events (those serve the live SSE tail, not this summary).
-/// </summary>
+/// <summary>Folds a run's trace events into its <see cref="RunTimeline"/>. Reacts only to the events it curates —
+/// <c>StepStarted</c> spines the step list, <c>Extracted</c>/<c>Downloaded</c>/<c>Screenshotted</c> collect artifacts,
+/// terminals close durations — and ignores the finer <c>Navigated</c>/<c>Clicked</c>/<c>Waited</c> events (those serve the live SSE tail).</summary>
 public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTimeline, Guid>
 {
     /// <summary>Opens the timeline on the run's opening event (a run started immediately, under the cap).</summary>
-    /// <param name="started">The opening event.</param>
     public RunTimeline Create(RunStarted started) => new()
     {
         PayloadName = started.PayloadName,
@@ -87,10 +76,9 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
         StartedAt = started.StartedAt,
     };
 
-    /// <summary>Opens the timeline on the opening event of a run <b>queued</b> at the cap (CD-16). <see cref="RunTimeline.StartedAt"/>
-    /// is seeded to the enqueue instant so a run cancelled or expired while still queued has a sane baseline; a promoted run
-    /// overwrites it with its real execution start at <see cref="Apply(RunDequeued, RunTimeline)"/>.</summary>
-    /// <param name="queued">The opening event of a queued run.</param>
+    /// <summary>Opens the timeline on the opening event of a run <b>queued</b> at the cap. <see cref="RunTimeline.StartedAt"/>
+    /// is seeded to the enqueue instant so a run cancelled or expired while still queued has a sane baseline; a promoted
+    /// run overwrites it with its real execution start at <see cref="Apply(RunDequeued, RunTimeline)"/>.</summary>
     public RunTimeline Create(RunQueued queued) => new()
     {
         PayloadName = queued.PayloadName,
@@ -101,20 +89,14 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
         StartedAt = queued.QueuedAt,
     };
 
-    /// <summary>Stamps the real execution start when a queued run is promoted (CD-16), so the timeline's duration measures
+    /// <summary>Stamps the real execution start when a queued run is promoted, so the timeline's duration measures
     /// execution — not the time spent waiting in the queue.</summary>
-    /// <param name="dequeued">The promotion event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(RunDequeued dequeued, RunTimeline timeline) => timeline with { StartedAt = dequeued.StartedAt };
 
     /// <summary>Records the backend region once the session opened.</summary>
-    /// <param name="opened">The session-opened event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(RunSessionOpened opened, RunTimeline timeline) => timeline with { Region = opened.Region };
 
     /// <summary>Closes the previous step's duration and appends the newly-started step.</summary>
-    /// <param name="started">The step-started event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(StepStarted started, RunTimeline timeline)
     {
         var closed = CloseLastStep(timeline, started.At);
@@ -122,42 +104,28 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
     }
 
     /// <summary>Records one extracted value ref.</summary>
-    /// <param name="extracted">The extracted event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(Extracted extracted, RunTimeline timeline) =>
         timeline with { Extracted = [.. timeline.Extracted, new RunTimelineExtract(extracted.Key, extracted.ValueRef)] };
 
     /// <summary>Records one download's blob ref + metadata.</summary>
-    /// <param name="downloaded">The download event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(Downloaded downloaded, RunTimeline timeline) =>
         timeline with { Downloads = [.. timeline.Downloads, new RunTimelineDownload(downloaded.BlobRef, downloaded.ContentType, downloaded.Size, downloaded.Sha256)] };
 
-    /// <summary>Records one explicit screenshot's ref + metadata (#8), curated like a download — an author-requested
+    /// <summary>Records one explicit screenshot's ref + metadata, curated like a download — an author-requested
     /// artifact, unlike the finer per-node events the timeline drops.</summary>
-    /// <param name="shot">The screenshot event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(Screenshotted shot, RunTimeline timeline) =>
         timeline with { Screenshots = [.. timeline.Screenshots, new RunTimelineScreenshot(shot.ScreenshotRef, shot.Name, shot.Size)] };
 
     /// <summary>Captures the failing step's screenshot ref (carried into the failure at the terminal event).</summary>
-    /// <param name="failed">The step-failed event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(StepFailed failed, RunTimeline timeline) => timeline with { ScreenshotRef = failed.ScreenshotRef };
 
     /// <summary>Closes the timeline as succeeded.</summary>
-    /// <param name="succeeded">The success event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(RunSucceeded succeeded, RunTimeline timeline) => Finish(timeline, RunStatus.Succeeded, succeeded.FinishedAt, null);
 
     /// <summary>Closes the timeline as failed, attaching the failure + screenshot ref.</summary>
-    /// <param name="failed">The failure event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(RunFailed failed, RunTimeline timeline) => Finish(timeline, RunStatus.Failed, failed.FinishedAt, failed.Failure);
 
     /// <summary>Closes the timeline as cancelled.</summary>
-    /// <param name="cancelled">The cancellation event.</param>
-    /// <param name="timeline">The current timeline.</param>
     public RunTimeline Apply(RunCancelled cancelled, RunTimeline timeline) => Finish(timeline, RunStatus.Cancelled, cancelled.FinishedAt, null);
 
     // Closes the currently-open (last) step's duration from its start to `at`. A stepless run (a setup failure that never

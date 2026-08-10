@@ -4,19 +4,16 @@ using Json.Schema;
 
 namespace Crawldad.Web.Features.Payloads;
 
-/// <summary>
-/// The JSON Schema gate (Deliverable 1/§12): validates a payload against <c>schema/crawldad-1.schema.json</c>, the
-/// normative structural spec (§4-§6). The schema is embedded in this assembly and parsed once. It fixes the document
-/// shape and the node vocabulary — an unknown head or a loop/forEach missing <c>maxIterations</c> fails here — so the
-/// semantic pass only ever runs on structurally sound payloads. Errors are reported per (instance location, keyword).
-/// </summary>
+/// <summary>Validates a payload against the embedded <c>schema/crawldad-1.schema.json</c>, fixing document shape and
+/// node vocabulary so the semantic pass only ever runs on structurally sound payloads. Errors are reported per
+/// (instance location, keyword).</summary>
 internal static class PayloadSchema
 {
     private const string _resourceName = "crawldad-1.schema.json";
 
     /// <summary>The raw payload v1 JSON Schema document — the embedded <c>crawldad-1.schema.json</c>, read once. Served
-    /// verbatim at <c>GET /schema/crawldad-1.schema.json</c> (Deliverable 2, #20) so an editor or an LLM consumes exactly
-    /// the normative DSL reference this save-time validator enforces (the served bytes and the validated bytes are one file).</summary>
+    /// verbatim at <c>GET /schema/crawldad-1.schema.json</c> so an editor or an LLM consumes exactly the normative DSL
+    /// reference this save-time validator enforces (the served bytes and the validated bytes are one file).</summary>
     public static string Json { get; } = ReadEmbedded();
 
     private static readonly JsonSchema _schema = JsonSchema.FromText(Json);
@@ -24,7 +21,6 @@ internal static class PayloadSchema
     private static readonly EvaluationOptions _options = new() { OutputFormat = OutputFormat.List };
 
     /// <summary>Validates <paramref name="payload"/> against the payload v1 schema.</summary>
-    /// <param name="payload">The payload document.</param>
     /// <returns>The schema violations (empty when the payload is structurally valid).</returns>
     public static IReadOnlyList<PayloadValidationError> Validate(JsonElement payload)
     {

@@ -2,21 +2,13 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Web.Features.Runs.Interpreter;
 
-/// <summary>
-/// Parses a <c>set</c> node's <c>path</c> (§7.4) into ordered segments. The grammar is dotted literal names and
-/// <c>[${Expr}]</c> computed segments, composable (<c>a.b[${k}]</c>): a literal segment is a fixed map key; a computed
-/// segment renders a <see cref="CrawldadTemplate"/> at mutation time to produce its key. B.2 needs the single-segment
-/// forms <c>"title"</c> and <c>"[${indent}]"</c>; the composed form is supported for completeness. Parsing is pure and
-/// happens per mutation (paths are short); a bracket run is scanned for its closing <c>]</c> while skipping
-/// single-quoted strings, so a key expression may itself contain a <c>']'</c> literal (as in
-/// <c>[${endsWith(h,':') ? … : h}]</c>).
-/// </summary>
+/// <summary>Parses a <c>set</c> node's <c>path</c> into ordered segments: dotted literal names and <c>[${Expr}]</c>
+/// computed segments, composable (<c>a.b[${k}]</c>). A bracket run is scanned for its closing <c>]</c> while skipping
+/// single-quoted strings, so a key expression may itself contain a <c>']'</c> literal.</summary>
 internal static class SetPath
 {
-    /// <summary>Parses <paramref name="path"/> into its segments.</summary>
-    /// <param name="path">The <c>set.path</c> source.</param>
-    /// <returns>The ordered path segments.</returns>
-    /// <exception cref="InterpreterException">On a <c>[</c> with no matching <c>]</c> (<c>malformed_node</c>).</exception>
+    /// <summary>Parses <paramref name="path"/> into its segments. An unmatched <c>[</c> is a terminal
+    /// <c>malformed_node</c>.</summary>
     public static IReadOnlyList<PathSegment> Parse(string path)
     {
         var segments = new List<PathSegment>();
@@ -89,20 +81,16 @@ internal static class SetPath
 internal abstract record PathSegment
 {
     /// <summary>Resolves this segment to its map key against <paramref name="scope"/>.</summary>
-    /// <param name="scope">The run scope (for a computed segment's interpolations).</param>
-    /// <param name="ct">Cancels in-flight DOM reads during rendering.</param>
     public abstract ValueTask<string> KeyAsync(IEvalScope scope, CancellationToken ct);
 }
 
 /// <summary>A fixed dotted key (e.g. <c>title</c> in <c>path:"title"</c>).</summary>
-/// <param name="Name">The literal key.</param>
 internal sealed record LiteralSegment(string Name) : PathSegment
 {
     public override ValueTask<string> KeyAsync(IEvalScope scope, CancellationToken ct) => new(Name);
 }
 
 /// <summary>A computed key (e.g. <c>[${indent}]</c>): the template renders to the key at mutation time.</summary>
-/// <param name="Template">The bracket-content template.</param>
 internal sealed record ComputedSegment(CrawldadTemplate Template) : PathSegment
 {
     public override ValueTask<string> KeyAsync(IEvalScope scope, CancellationToken ct) => Template.RenderAsync(scope, ct);
