@@ -2,10 +2,11 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Crawldad.Web.Infrastructure.Security;
 
-/// <summary>The Data-Protection key-ring persistence knobs, bound from <c>Crawldad:DataProtection</c>. Both values set
-/// ⇒ the key ring is persisted to the blob at <see cref="KeyRingBlobUri"/> and each key is wrapped by the Key Vault key
-/// at <see cref="KeyVaultKeyId"/> (managed-identity auth). Both empty (the default) ⇒ the framework's default local key
-/// ring, so dev/tests are untouched. Half-configured fails fast at boot (<see cref="DataProtectionOptionsValidator"/>).</summary>
+/// <summary>The Data-Protection key-ring persistence knobs, bound from <c>Crawldad:DataProtection</c> for the boot-time
+/// guard (<see cref="DataProtectionOptionsValidator"/>). Both values set ⇒ the key ring is persisted to the blob at
+/// <see cref="KeyRingBlobUri"/> and each key is wrapped by the Key Vault key at <see cref="KeyVaultKeyId"/>
+/// (managed-identity auth). Both empty (the default) ⇒ the framework's default local key ring, so dev/tests are
+/// untouched. Half-configured fails fast at boot. <see cref="DataProtectionModule"/> reads the pair to wire persistence.</summary>
 public sealed class DataProtectionOptions
 {
     /// <summary>The configuration section these bind from.</summary>
@@ -20,9 +21,4 @@ public sealed class DataProtectionOptions
     /// <summary>The Key Vault key identifier used to wrap/unwrap each key (e.g.
     /// <c>https://vault.vault.azure.net/keys/dataprotection</c>; versionless so rotation keeps decrypting). Empty ⇒ off.</summary>
     public string KeyVaultKeyId { get; init; } = "";
-
-    /// <summary>Whether both knobs are set, i.e. the Azure-backed key ring should be wired. A half-configured pair is a
-    /// misconfiguration the validator rejects, so this stays a simple both-present gate.</summary>
-    public bool IsAzurePersisted =>
-        !string.IsNullOrWhiteSpace(KeyRingBlobUri) && !string.IsNullOrWhiteSpace(KeyVaultKeyId);
 }

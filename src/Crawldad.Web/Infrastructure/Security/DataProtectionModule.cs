@@ -27,11 +27,13 @@ public static class DataProtectionModule
 
         var builder = services.AddDataProtection();
 
-        // The wiring choice is a registration-time decision, so read the section directly (IOptions isn't available yet).
-        var options = configuration.GetSection(DataProtectionOptions.Section).Get<DataProtectionOptions>() ?? new();
-        if (!options.IsAzurePersisted)
+        // The wiring choice is a registration-time decision, so read the section directly (IOptions isn't available yet) —
+        // the same indexer idiom StorageModule uses to select its provider.
+        var blobUri = configuration[$"{DataProtectionOptions.Section}:KeyRingBlobUri"];
+        var keyVaultKeyId = configuration[$"{DataProtectionOptions.Section}:KeyVaultKeyId"];
+        if (string.IsNullOrWhiteSpace(blobUri) || string.IsNullOrWhiteSpace(keyVaultKeyId))
         {
-            return; // absent config → the framework's default local key ring, untouched
+            return; // no config → the default local ring; a half-set pair is rejected loudly by the boot validator
         }
 
         // Persist the whole ring to one blob and wrap each key with the Key Vault key, both via the app's managed
@@ -39,7 +41,7 @@ public static class DataProtectionModule
         // I/O-free — the ring is read only on the first protect/unprotect.
         var credential = new DefaultAzureCredential();
         builder
-            .PersistKeysToAzureBlobStorage(new Uri(options.KeyRingBlobUri), credential)
-            .ProtectKeysWithAzureKeyVault(new Uri(options.KeyVaultKeyId), credential);
+            .PersistKeysToAzureBlobStorage(new Uri(blobUri), credential)
+            .ProtectKeysWithAzureKeyVault(new Uri(keyVaultKeyId), credential);
     }
 }
