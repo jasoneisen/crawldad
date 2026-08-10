@@ -1,5 +1,5 @@
 // RG-scoped module for bootstrap.bicep: the CI-deploy user-assigned identity, its GitHub OIDC federated credential,
-// and the two RG-scoped roles the deploy needs beyond subscription Contributor. A UAMI (not an Entra app
+// and the three RG-scoped roles the deploy needs beyond subscription Contributor. A UAMI (not an Entra app
 // registration) is used deliberately: its federatedIdentityCredentials are ARM resources, so the identity + its
 // GitHub trust are fully bicep-able in one deploy — no `az ad app federated-credential` CLI step.
 
@@ -21,6 +21,7 @@ param tags object
 // Built-in roles.
 var uaaRoleId = '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9' // User Access Administrator
 var kvSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7' // Key Vault Secrets Officer
+var kvCryptoOfficerRoleId = '14b46e9e-c2b7-41b4-b07b-48a6ebf60603' // Key Vault Crypto Officer
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: identityName
@@ -62,6 +63,18 @@ resource kvSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   name: guid(resourceGroup().id, identity.id, kvSecretsOfficerRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsOfficerRoleId)
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Key Vault Crypto Officer, scoped to this RG: creating a KEY via ARM on an RBAC vault is a data-plane write (like the
+// secret writes above), so subscription Contributor alone gets Forbidden. Needed so the keyvault module can create the
+// Data Protection wrapping key (issue #65). Granted at bootstrap — re-run bootstrap.sh once before deploying that change.
+resource kvCryptoOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, identity.id, kvCryptoOfficerRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvCryptoOfficerRoleId)
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
   }
