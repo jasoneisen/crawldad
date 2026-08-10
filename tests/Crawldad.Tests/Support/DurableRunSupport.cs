@@ -187,6 +187,16 @@ internal sealed class GatedPage(IPageHandle inner, PageFetchRecorder recorder, R
 /// <summary>Builds and polls durable-run hosts for the §11 async/cancel/kill/deadline gates.</summary>
 public static class DurableHost
 {
+    /// <summary>The default terminal/queue poll window (issue #38): a generous contention margin, <b>not</b> a functional
+    /// expectation. In the happy path a queued run promotes and reaches terminal in well under a second, and the test host's
+    /// tightened Wolverine durability cadence (<see cref="TestDefaults"/>) keeps even a missed-in-process-delivery
+    /// backstop sub-second — so this window is only ever consumed by the multi-second stalls a loaded / slow shared runner
+    /// injects <em>outside</em> the durable layer (connection-pool acquisition, Marten schema/advisory-lock waits, GC or
+    /// thread-pool spikes under concurrent-agent load). It replaces the scattered 20–30 s magic constants that the two #38
+    /// occurrences timed out against; large enough that contention never flakes the promotion tests, small enough that a
+    /// genuinely stuck pipeline still fails the suite rather than hanging.</summary>
+    public static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>Builds an Alba host on <paramref name="schema"/> with a frozen clock and the given <c>fake</c> backend
     /// override. Set <paramref name="resetData"/> false for the SECOND host of a kill-and-restart, which must inherit the
     /// first host's persisted checkpoint on the same schema.</summary>

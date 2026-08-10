@@ -37,6 +37,22 @@ public static class TestDefaults
             services.MartenDaemonModeIsSolo();
             services.DisableAllExternalWolverineTransports();
             services.RunWolverineInSoloMode();
+
+            // Sub-second durability cadence for the TEST HOST ONLY (issue #38). Production keeps Wolverine's 5 s default
+            // (HostConfiguration.ConfigureWolverine is untouched). In the happy path every promotion hop (PromoteQueued ->
+            // StartRun -> ExecuteRun) is delivered in-process in well under a second; but when a loaded/slow runner starves
+            // the thread pool and an in-process flush is missed, the message is only recovered by the durability agent's
+            // backstop poll — at the 5 s default (first execution ~1.2 s) that backstop, stacked across the ~4-hop promotion
+            // pipeline, can approach the tests' poll windows and time out (the two #38 occurrences). A scheduled QueueWaitDeadline
+            // (due at +400 ms) was measured reaching terminal at 0.8–3.8 s purely waiting on this poll. Tightening the cadence
+            // collapses the worst-case backstop latency to a fraction of a second, so a missed in-process delivery self-heals
+            // promptly rather than sitting behind idle capacity. The polls are lightweight indexed queries, so the higher
+            // frequency adds negligible load.
+            services.ConfigureWolverine(options =>
+            {
+                options.Durability.ScheduledJobFirstExecution = TimeSpan.FromMilliseconds(100);
+                options.Durability.ScheduledJobPollingTime = TimeSpan.FromMilliseconds(250);
+            });
         });
         return builder;
     }
