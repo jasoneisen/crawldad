@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using AspNetDataProtectionOptions = Microsoft.AspNetCore.DataProtection.DataProtectionOptions;
 
 namespace Crawldad.Tests.Unit;
 
@@ -57,6 +58,22 @@ public class DataProtectionModuleTests
         options.XmlRepository.GetType().Name.ShouldContain("Blob");         // persisted to Azure blob storage
         options.XmlEncryptor.ShouldNotBeNull();
         options.XmlEncryptor.GetType().Name.ShouldContain("KeyVault");     // each key wrapped by the vault key
+    }
+
+    [Fact]
+    public void Pins_a_fixed_application_discriminator_so_the_ring_survives_a_workdir_change()
+    {
+        // Unconditional — needs no DataProtection config; the default discriminator otherwise derives from the
+        // content-root path, so a WORKDIR change would silently break Unprotect on already-encrypted credentials.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var config = new ConfigurationBuilder().Build();
+        services.AddSingleton<IConfiguration>(config);
+        DataProtectionModule.AddKeyRingProtection(services, config);
+
+        using var sp = services.BuildServiceProvider();
+        sp.GetRequiredService<IOptions<AspNetDataProtectionOptions>>().Value
+            .ApplicationDiscriminator.ShouldBe(DataProtectionModule.ApplicationName);
     }
 
     [Fact]

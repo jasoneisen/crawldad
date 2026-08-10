@@ -12,6 +12,11 @@ namespace Crawldad.Web.Infrastructure.Security;
 /// default local ring, so dev/tests are untouched. Mirrors <see cref="Storage.StorageModule"/>'s config-gated shape.</summary>
 public static class DataProtectionModule
 {
+    /// <summary>The fixed Data-Protection application discriminator. Pinned so decryptability never rides on the
+    /// container WORKDIR (the framework derives the default from the content-root path) — changing it once beta
+    /// credentials are encrypted would break Unprotect at connect.</summary>
+    internal const string ApplicationName = "crawldad";
+
     /// <summary>Registers Data Protection plus the key-ring options + boot guard, and — only when the section is fully
     /// configured — the Azure blob-persist + Key-Vault-wrap providers.</summary>
     /// <param name="services">The DI container.</param>
@@ -26,6 +31,10 @@ public static class DataProtectionModule
         services.AddSingleton<IValidateOptions<DataProtectionOptions>, DataProtectionOptionsValidator>();
 
         var builder = services.AddDataProtection();
+
+        // Pin the discriminator unconditionally (the local-default AND Azure-persisted rings), so a WORKDIR/content-root
+        // change never silently shifts it and breaks Unprotect at connect. Free now — no durable ciphertext exists yet.
+        builder.SetApplicationName(ApplicationName);
 
         // The wiring choice is a registration-time decision, so read the section directly (IOptions isn't available yet) —
         // the same indexer idiom StorageModule uses to select its provider.
