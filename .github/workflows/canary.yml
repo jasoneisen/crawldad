@@ -1,12 +1,12 @@
 name: Live canary
 
-# The nightly/manual drift signal (CRAWLDAD_PLAN.md Phase 4 + Testing strategy): scrape ONE real enforcement record
+# The nightly/manual drift signal (issue #7; drift/observability in docs/SPEC.md): scrape ONE real enforcement record
 # from the LIVE Accela portal and validate the RecordScrapedV1 shape. This is the ONLY workflow that sends live
 # third-party traffic, and it is NEVER triggered by push or pull_request — only the nightly schedule and manual
 # dispatch. A failed run (status != succeeded, or a broken shape) fails the job → that red check is the drift alert.
 on:
   schedule:
-    # Nightly at 07:17 UTC. Off-peak, once a day — gentle by design (the payload also enforces the §8.1 2 s throttle).
+    # Nightly at 07:17 UTC. Off-peak, once a day — gentle by design (the payload also enforces the 2 s route throttle).
     - cron: "17 7 * * *"
   workflow_dispatch:
     inputs:
@@ -86,7 +86,7 @@ jobs:
         run: eng/install-browsers.sh Debug
 
       # Run ONLY the live canary. Coverage is off — a single-test run cannot meet the 100% gate (that gate is CI's).
-      # This is the real live hit: real Chromium, real network, §8.1 policy for real, concurrency 1. If
+      # This is the real live hit: real Chromium, real network, session policy for real, concurrency 1. If
       # CRAWLDAD_CANARY_LINK is unset the test self-skips and the job passes green (safe no-op).
       - name: Live canary
         run: dotnet test Crawldad.slnx -c Debug --filter "Category=LiveCanary" /p:CollectCoverage=false
