@@ -14,9 +14,9 @@ internal sealed class ScrubbingLoggerFactory(ILoggerFactory inner, CredentialScr
     public void Dispose() => inner.Dispose();
 }
 
-/// <summary>One category's scrubbing logger: delegates enablement and scopes to the inner logger, but wraps the
-/// message <paramref name="formatter"/> so the rendered string every sink writes is scrubbed. Structured state and any
-/// exception are forwarded unchanged.</summary>
+/// <summary>One category's scrubbing logger: wraps the message <paramref name="formatter"/> so the rendered string every
+/// sink writes is scrubbed. Structured state and any exception are forwarded unchanged — safe because the connect
+/// boundary already turns provider faults into secret-free exceptions, so exception messages carry no credentials.</summary>
 internal sealed class ScrubbingLogger(ILogger inner, CredentialScrubber scrubber) : ILogger
 {
     public IDisposable? BeginScope<TState>(TState state)

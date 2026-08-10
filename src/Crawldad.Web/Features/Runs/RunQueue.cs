@@ -209,9 +209,9 @@ public sealed class RunQueue(
         return true;
     }
 
-    // The single mutual-exclusion point for a queued run's competing writers (promotion, cancel, wait-timeout).
-    // AppendExclusive holds the run stream's Postgres advisory lock while it re-reads RunProgress and commits the
-    // transition IFF still queued — so exactly one writer wins; the rest find it already left the queue and commit nothing.
+    // The single mutual-exclusion point for a queued run's competing writers (promotion, cancel, wait-timeout):
+    // AppendExclusive holds the stream's advisory lock while it re-reads RunProgress and commits IFF still queued, so
+    // exactly one wins. RunProgress is created at enqueue and only updated (never deleted), so it is present under the lock.
     private async Task<bool> TryClaimTerminalAsync(string tenantId, Guid runId, object transition, Action<RunProgress> applyWon, CancellationToken ct)
     {
         await using var session = store.LightweightSession(tenantId);

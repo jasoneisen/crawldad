@@ -68,6 +68,8 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
             }
         }
 
+        // Redact known credential query-param values (apiKey/token/signingKey): a connectUrl can embed the apiKey as a
+        // query param, so scrubbing the param here is defence-in-depth on top of exact-secret redaction.
         return CredentialParamRegex().Replace(result, static match => match.Groups["name"].Value + "=" + Redaction);
     }
 
