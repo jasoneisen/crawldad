@@ -279,26 +279,17 @@ internal sealed class RunInterpreter
 
     private RetryPolicy ParseRetryPolicy()
     {
-        if (!_payload.GetProperty("config").TryGetProperty("retry", out var retry))
+        if (NodeJson.OptionalObject(_payload.GetProperty("config"), "retry") is not { } retry)
         {
             return new RetryPolicy(1, 0, _defaultRetryOn); // absent ⇒ a single attempt
         }
 
-        var maxAttempts = retry.TryGetProperty("maxAttempts", out var m) ? m.GetInt32() : 1;
-        var delayMs = retry.TryGetProperty("delayMs", out var d) ? d.GetInt32() : 0;
-        var retryOn = retry.TryGetProperty("retryOn", out var r) ? ReadStringSet(r) : _defaultRetryOn;
+        var maxAttempts = NodeJson.OptionalInt(retry, "maxAttempts", 1);
+        var delayMs = NodeJson.OptionalInt(retry, "delayMs", 0);
+        var retryOn = retry.TryGetProperty("retryOn", out _)
+            ? new HashSet<string>(NodeJson.OptionalStringArray(retry, "retryOn"), StringComparer.Ordinal) // present (even empty) overrides the default
+            : _defaultRetryOn;
         return new RetryPolicy(maxAttempts, delayMs, retryOn);
-    }
-
-    private static HashSet<string> ReadStringSet(JsonElement array)
-    {
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in array.EnumerateArray())
-        {
-            set.Add(item.GetString()!);
-        }
-
-        return set;
     }
 
     private sealed record RetryPolicy(int MaxAttempts, int DelayMs, IReadOnlySet<string> RetryOn);
@@ -326,7 +317,7 @@ internal sealed class RunInterpreter
 
     private async ValueTask<BackendBinding> ResolveBackendAsync(CancellationToken ct)
     {
-        var expr = _payload.GetProperty("config").GetProperty("backend").GetString()!;
+        var expr = NodeJson.RequireString(_payload.GetProperty("config"), "backend");
         if (await CrawldadExpression.Parse(expr).EvaluateAsync(_scope, ct) is not Dictionary<string, object?> map)
         {
             throw new InterpreterException(InterpreterErrorCodes.InvalidBackendBinding, "config.backend must resolve to a { adapter, options } object");
@@ -346,7 +337,7 @@ internal sealed class RunInterpreter
             return;
         }
 
-        foreach (var declared in vars.EnumerateObject())
+        foreach (var declared in NodeJson.RequireObjectValue(vars, "vars").EnumerateObject())
         {
             _scope.Set(declared.Name, await EvaluateVarValueAsync(declared.Value, ct));
         }
@@ -371,7 +362,7 @@ internal sealed class RunInterpreter
     }
 
     private ValueTask<object?> EvaluateResultAsync(CancellationToken ct) =>
-        CrawldadExpression.Parse(_payload.GetProperty("result").GetString()!).EvaluateAsync(_scope, ct);
+        CrawldadExpression.Parse(NodeJson.RequireString(_payload, "result")).EvaluateAsync(_scope, ct);
 
     // ----- node dispatch -----------------------------------------------------
 
@@ -452,7 +443,7 @@ internal sealed class RunInterpreter
 
     private async ValueTask GotoAsync(JsonElement body, CancellationToken ct)
     {
-        var url = await CrawldadTemplate.Parse(body.GetProperty("url").GetString()!).RenderAsync(_scope, ct);
+        var url = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "url")).RenderAsync(_scope, ct);
         await _scope.PageHandle.GotoAsync(url, OptString(body, "waitUntil"), Timeout(body), ct);
         _requests++;
         await StepAsync(new Navigated(url, _clock.GetUtcNow()), ct); // the URL is scrubbed at the sink
@@ -460,7 +451,7 @@ internal sealed class RunInterpreter
 
     private async ValueTask WaitForLoadStateAsync(JsonElement body, CancellationToken ct)
     {
-        var state = body.GetProperty("state").GetString()!;
+        var state = NodeJson.RequireString(body, "state");
         var start = _clock.GetUtcNow();
         await _scope.PageHandle.WaitForLoadStateAsync(state, Timeout(body), ct);
         await StepAsync(new Waited($"loadState:{state}", ElapsedMs(start), _clock.GetUtcNow()), ct);
@@ -470,21 +461,21 @@ internal sealed class RunInterpreter
     // selector is the iframe element's CSS Tmpl (Playwright FrameLocator takes a string, so a Sel here is its string form).
     private async ValueTask FrameAsync(JsonElement body, CancellationToken ct)
     {
-        var selector = await CrawldadTemplate.Parse(body.GetProperty("selector").GetString()!).RenderAsync(_scope, ct);
-        _scope.Set(body.GetProperty("var").GetString()!, _scope.PageHandle.FrameLocator(selector));
+        var selector = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "selector")).RenderAsync(_scope, ct);
+        _scope.Set(NodeJson.RequireString(body, "var"), _scope.PageHandle.FrameLocator(selector));
     }
 
     // addStyleTag injects CSS (data, not code); the reference forces record tabs visible.
     private async ValueTask AddStyleTagAsync(JsonElement body, CancellationToken ct)
     {
-        var content = await CrawldadTemplate.Parse(body.GetProperty("content").GetString()!).RenderAsync(_scope, ct);
+        var content = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "content")).RenderAsync(_scope, ct);
         await _scope.PageHandle.AddStyleTagAsync(content, ct);
     }
 
     private async ValueTask WaitForRequestAsync(JsonElement body, CancellationToken ct)
     {
-        var urlPrefix = await CrawldadTemplate.Parse(body.GetProperty("urlPrefix").GetString()!).RenderAsync(_scope, ct);
-        var trigger = body.GetProperty("trigger");
+        var urlPrefix = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "urlPrefix")).RenderAsync(_scope, ct);
+        var trigger = NodeJson.RequireElement(body, "trigger");
         var start = _clock.GetUtcNow();
         await _scope.PageHandle.RunAndWaitForRequestAsync(
             () => ExecuteBlockAsync(trigger, ct).AsTask(),
@@ -523,13 +514,13 @@ internal sealed class RunInterpreter
         // secret scope (so every sink scrubs it) and typed straight into the field — it is never bound into any scope var.
         if (body.TryGetProperty("secret", out var secretRef))
         {
-            var (refName, secret) = await ResolveFillSecretAsync(secretRef.GetString()!, ct);
+            var (refName, secret) = await ResolveFillSecretAsync(NodeJson.RequireStringValue(secretRef, "fill.secret"), ct);
             await handle.FillAsync(secret, ct);
             await StepAsync(new Filled($"secret:{refName}", _clock.GetUtcNow()), ct); // the ref NAME, never the secret
             return;
         }
 
-        var value = ExpressionValues.ToStringValue(await ExprAsync(body.GetProperty("value"), ct));
+        var value = ExpressionValues.ToStringValue(await ExprAsync(body, "value", ct));
         await handle.FillAsync(value, ct);
     }
 
@@ -592,9 +583,8 @@ internal sealed class RunInterpreter
             return;
         }
 
-        var name = body.TryGetProperty("name", out var label)
-            ? await CrawldadTemplate.Parse(label.GetString()!).RenderAsync(_scope, ct)
-            : null;
+        var nameLabel = NodeJson.OptionalString(body, "name");
+        var name = nameLabel is null ? null : await CrawldadTemplate.Parse(nameLabel).RenderAsync(_scope, ct);
         var png = await _scope.PageHandle.ScreenshotAsync(ct);
         var screenshotRef = await _screenshots.SaveAsync(_tenant, png, ct);
         await StepAsync(new Screenshotted(screenshotRef, name, png.Length, _clock.GetUtcNow()), ct); // ref + metadata only, never the bytes
@@ -605,10 +595,10 @@ internal sealed class RunInterpreter
     private async ValueTask LocateAsync(JsonElement body, CancellationToken ct)
     {
         var handle = body.TryGetProperty("from", out var from)
-            ? await LocateFromHandleAsync(body, from.GetString()!, ct)
+            ? await LocateFromHandleAsync(body, NodeJson.RequireStringValue(from, "locate 'from'"), ct)
             : await LocateFromSelectorAsync(body, ct);
 
-        _scope.Set(body.GetProperty("var").GetString()!, handle);
+        _scope.Set(NodeJson.RequireString(body, "var"), handle);
     }
 
     private async ValueTask<ILocatorHandle> LocateFromHandleAsync(JsonElement body, string fromVar, CancellationToken ct)
@@ -617,7 +607,8 @@ internal sealed class RunInterpreter
 
         if (body.TryGetProperty("filter", out var filter))
         {
-            handle = handle.Filter(await CrawldadTemplate.Parse(filter.GetProperty("hasTextRegex").GetString()!).RenderAsync(_scope, ct));
+            var regex = NodeJson.RequireString(NodeJson.RequireObjectValue(filter, "filter"), "hasTextRegex");
+            handle = handle.Filter(await CrawldadTemplate.Parse(regex).RenderAsync(_scope, ct));
         }
 
         if (body.TryGetProperty("nth", out var nth))
@@ -627,7 +618,7 @@ internal sealed class RunInterpreter
             handle = handle.Nth(ExpressionValues.RequireNthIndex(await ExprAsync(nth, ct)));
         }
 
-        if (body.TryGetProperty("first", out var first) && first.GetBoolean())
+        if (NodeJson.OptionalBool(body, "first", false))
         {
             handle = handle.First;
         }
@@ -641,11 +632,11 @@ internal sealed class RunInterpreter
         // template on it.
         if (body.TryGetProperty("base", out var baseVar))
         {
-            var css = await CrawldadTemplate.Parse(body.GetProperty("selector").GetString()!).RenderAsync(_scope, ct);
-            return _scope.Sel.RequireHandle(baseVar.GetString()!).Locator(css);
+            var css = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "selector")).RenderAsync(_scope, ct);
+            return _scope.Sel.RequireHandle(NodeJson.RequireStringValue(baseVar, "base")).Locator(css);
         }
 
-        return await _scope.Sel.ResolveNodeAsync(body.GetProperty("selector"), FrameArg(body), ct);
+        return await _scope.Sel.ResolveNodeAsync(NodeJson.RequireElement(body, "selector"), FrameArg(body), ct);
     }
 
     // ----- download ---------------------------------------------------
@@ -655,8 +646,8 @@ internal sealed class RunInterpreter
     // dl = { contentId, sha256, sizeBytes, storedAs, stored }; download failure/timeout is retryable.
     private async ValueTask DownloadAsync(JsonElement body, CancellationToken ct)
     {
-        var sink = ResolveSink(await ExprAsync(body.GetProperty("to"), ct));
-        var trigger = body.GetProperty("trigger");
+        var sink = ResolveSink(await ExprAsync(body, "to", ct));
+        var trigger = NodeJson.RequireElement(body, "trigger");
         var download = await _scope.PageHandle.RunAndWaitForDownloadAsync(
             () => ExecuteBlockAsync(trigger, ct).AsTask(), Timeout(body), ct);
 
@@ -678,7 +669,7 @@ internal sealed class RunInterpreter
             || await sink.StoreAsync(_tenant, new StoredDownload(contentId, storedAs, sizeBytes, sha256), new MemoryStream(data, writable: false), ct);
 
         _downloads++;
-        _scope.Set(body.GetProperty("var").GetString()!, new Dictionary<string, object?>(StringComparer.Ordinal)
+        _scope.Set(NodeJson.RequireString(body, "var"), new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["contentId"] = contentId.ToString(),
             ["sha256"] = sha256,
@@ -733,11 +724,11 @@ internal sealed class RunInterpreter
 
     private async ValueTask SetAsync(JsonElement body, CancellationToken ct)
     {
-        var varName = body.GetProperty("var").GetString()!;
-        var value = await ExprAsync(body.GetProperty("value"), ct);
-        if (body.TryGetProperty("path", out var path))
+        var varName = NodeJson.RequireString(body, "var");
+        var value = await ExprAsync(body, "value", ct);
+        if (NodeJson.OptionalString(body, "path") is { } setPath)
         {
-            await SetPathAsync(varName, path.GetString()!, value, ct);
+            await SetPathAsync(varName, setPath, value, ct);
         }
         else
         {
@@ -773,27 +764,27 @@ internal sealed class RunInterpreter
 
     private async ValueTask PushAsync(JsonElement body, CancellationToken ct)
     {
-        var into = body.GetProperty("into").GetString()!;
-        var value = await ExprAsync(body.GetProperty("value"), ct);
+        var into = NodeJson.RequireString(body, "into");
+        var value = await ExprAsync(body, "value", ct);
         _scope.Push(into, value);
         await StepAsync(new Extracted(into, ValueRef(value), _clock.GetUtcNow()), ct); // list name + pushed-item shape ref
     }
 
     private async ValueTask LogAsync(JsonElement body, CancellationToken ct)
     {
-        var level = body.GetProperty("level").GetString()!;
-        var message = await CrawldadTemplate.Parse(body.GetProperty("message").GetString()!).RenderAsync(_scope, ct);
+        var level = NodeJson.RequireString(body, "level");
+        var message = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "message")).RenderAsync(_scope, ct);
         await EmitAsync(new LogEmitted(level, message, _clock.GetUtcNow()), ct);
     }
 
     private async ValueTask GuardAsync(JsonElement body, CancellationToken ct)
     {
-        if (ExpressionValues.RequireBool(await ExprAsync(body.GetProperty("cond"), ct)))
+        if (ExpressionValues.RequireBool(await ExprAsync(body, "cond", ct)))
         {
             return; // the condition held — nothing to do
         }
 
-        await RaiseFailureAsync(body.GetProperty("elseFail"), ct);
+        await RaiseFailureAsync(NodeJson.RequireObject(body, "elseFail"), ct);
     }
 
     private ValueTask FailAsync(JsonElement body, CancellationToken ct) => RaiseFailureAsync(body, ct);
@@ -801,17 +792,17 @@ internal sealed class RunInterpreter
     // Builds and throws the typed failure from a Failure payload, rendering its message template at raise time.
     private async ValueTask RaiseFailureAsync(JsonElement failure, CancellationToken ct)
     {
-        var failureClass = failure.GetProperty("class").GetString()!;
-        var code = failure.GetProperty("code").GetString()!;
-        var message = await CrawldadTemplate.Parse(failure.GetProperty("message").GetString()!).RenderAsync(_scope, ct);
+        var failureClass = NodeJson.RequireString(failure, "class");
+        var code = NodeJson.RequireString(failure, "code");
+        var message = await CrawldadTemplate.Parse(NodeJson.RequireString(failure, "message")).RenderAsync(_scope, ct);
         throw new CrawldadFailureException(failureClass, code, message);
     }
 
     private async ValueTask<Flow> IfAsync(JsonElement body, CancellationToken ct)
     {
-        if (ExpressionValues.RequireBool(await ExprAsync(body.GetProperty("cond"), ct)))
+        if (ExpressionValues.RequireBool(await ExprAsync(body, "cond", ct)))
         {
-            return await ExecuteBlockAsync(body.GetProperty("then"), ct);
+            return await ExecuteBlockAsync(NodeJson.RequireElement(body, "then"), ct);
         }
 
         return body.TryGetProperty("else", out var elseBlock)
@@ -822,11 +813,11 @@ internal sealed class RunInterpreter
     // switch: first true `when` wins; its Flow (a break/continue) propagates like `if`. No default + no match = no-op.
     private async ValueTask<Flow> SwitchAsync(JsonElement body, CancellationToken ct)
     {
-        foreach (var branch in body.GetProperty("cases").EnumerateArray())
+        foreach (var branch in NodeJson.RequireElement(body, "cases").EnumerateArray())
         {
-            if (ExpressionValues.RequireBool(await ExprAsync(branch.GetProperty("when"), ct)))
+            if (ExpressionValues.RequireBool(await ExprAsync(branch, "when", ct)))
             {
-                return await ExecuteBlockAsync(branch.GetProperty("do"), ct);
+                return await ExecuteBlockAsync(NodeJson.RequireElement(branch, "do"), ct);
             }
         }
 
@@ -843,14 +834,14 @@ internal sealed class RunInterpreter
     private async ValueTask<Flow> ForLoopAsync(JsonElement body, CancellationToken ct)
     {
         var max = ReadMaxIterations(body);
-        var forSpec = body.GetProperty("for");
-        var varName = forSpec.GetProperty("var").GetString()!;
-        var toExpr = forSpec.GetProperty("to");
-        var inclusive = forSpec.TryGetProperty("inclusiveTo", out var inc) && inc.GetBoolean();
+        var forSpec = NodeJson.RequireObject(body, "for");
+        var varName = NodeJson.RequireString(forSpec, "var");
+        var toExpr = NodeJson.RequireElement(forSpec, "to");
+        var inclusive = NodeJson.OptionalBool(forSpec, "inclusiveTo", false);
         var step = forSpec.TryGetProperty("step", out var s) ? RequireIntegralBound(await BoundAsync(s, ct), "step") : 1L;
-        var doBlock = body.GetProperty("do");
+        var doBlock = NodeJson.RequireElement(body, "do");
 
-        var i = RequireIntegralBound(await BoundAsync(forSpec.GetProperty("from"), ct), "from");
+        var i = RequireIntegralBound(await BoundAsync(NodeJson.RequireElement(forSpec, "from"), ct), "from");
         var iterations = 0L;
         using var shadow = _scope.Shadow((varName, (object?)i));
 
@@ -883,7 +874,7 @@ internal sealed class RunInterpreter
     private async ValueTask<Flow> WhileLoopAsync(JsonElement body, JsonElement whileExpr, CancellationToken ct)
     {
         var max = ReadMaxIterations(body);
-        var doBlock = body.GetProperty("do");
+        var doBlock = NodeJson.RequireElement(body, "do");
         var iterations = 0L;
 
         while (true)
@@ -909,10 +900,10 @@ internal sealed class RunInterpreter
 
     private async ValueTask<Flow> ForEachAsync(JsonElement body, CancellationToken ct)
     {
-        var asName = body.GetProperty("as").GetString()!;
-        var indexName = body.TryGetProperty("index", out var idx) ? idx.GetString() : null;
-        var doBlock = body.GetProperty("do");
-        var source = await ExprAsync(body.GetProperty("in"), ct);
+        var asName = NodeJson.RequireString(body, "as");
+        var indexName = NodeJson.OptionalString(body, "index");
+        var doBlock = NodeJson.RequireElement(body, "do");
+        var source = await ExprAsync(body, "in", ct);
 
         if (source is List<object?> list)
         {
@@ -985,14 +976,19 @@ internal sealed class RunInterpreter
     }
 
     private async ValueTask<ILocatorHandle> ResolveSelectorAsync(JsonElement body, CancellationToken ct) =>
-        await _scope.Sel.ResolveNodeAsync(body.GetProperty("selector"), FrameArg(body), ct);
+        await _scope.Sel.ResolveNodeAsync(NodeJson.RequireElement(body, "selector"), FrameArg(body), ct);
 
     // Resolves a node's `in:` (a frame var name) to a bound frame handle, or null when absent (page-rooted).
     private IFrameHandle? FrameArg(JsonElement body) =>
-        body.TryGetProperty("in", out var inVar) ? _scope.Sel.RequireFrame(inVar.GetString()!) : null;
+        NodeJson.OptionalString(body, "in") is { } inVar ? _scope.Sel.RequireFrame(inVar) : null;
+
+    // A required expression field on a node body: a missing/non-string field is a classified malformed_node, never a
+    // raw GetString throw. The two-arg overload takes an already-extracted value (an optional field, or the while test).
+    private ValueTask<object?> ExprAsync(JsonElement body, string field, CancellationToken ct) =>
+        CrawldadExpression.Parse(NodeJson.RequireString(body, field)).EvaluateAsync(_scope, ct);
 
     private ValueTask<object?> ExprAsync(JsonElement expr, CancellationToken ct) =>
-        CrawldadExpression.Parse(expr.GetString()!).EvaluateAsync(_scope, ct);
+        CrawldadExpression.Parse(NodeJson.RequireStringValue(expr, "expression")).EvaluateAsync(_scope, ct);
 
     // A loop-for bound (from/to/step) is either an Expr string or a typed JSON number literal, evaluated through the
     // very same expression parser (a number is parsed from its raw text) — so a JSON number N behaves exactly as the
@@ -1014,13 +1010,14 @@ internal sealed class RunInterpreter
             $"loop.for bound '{boundName}' must be an integer, got {ExpressionValues.TypeName(value)}"),
     };
 
-    private static long ReadMaxIterations(JsonElement body) => body.GetProperty("maxIterations").GetInt64();
+    // maxIterations is present by the structural pre-pass (loop/forEach require it), but its KIND is unchecked on an
+    // inline payload — a non-integer classifies as malformed_node here rather than throwing from a raw GetInt64.
+    private static long ReadMaxIterations(JsonElement body) =>
+        NodeJson.RequireLongValue(body.GetProperty("maxIterations"), "maxIterations");
 
-    private static string? OptString(JsonElement body, string field) =>
-        body.TryGetProperty(field, out var value) ? value.GetString() : null;
+    private static string? OptString(JsonElement body, string field) => NodeJson.OptionalString(body, field);
 
-    private int Timeout(JsonElement body) =>
-        body.TryGetProperty("timeoutMs", out var t) ? t.GetInt32() : _defaultTimeoutMs;
+    private int Timeout(JsonElement body) => NodeJson.OptionalInt(body, "timeoutMs", _defaultTimeoutMs);
 
     private RunStats Stats(DateTimeOffset startedAt) =>
         new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, _session?.CacheHits ?? 0, _downloads);
@@ -1128,7 +1125,7 @@ internal sealed class RunInterpreter
 
     // screenshot-on-failure toggle: captured by default, suppressed by config.screenshotOnFailure:false.
     private static bool ReadScreenshotOnFailure(JsonElement config) =>
-        !config.TryGetProperty("screenshotOnFailure", out var flag) || flag.GetBoolean();
+        NodeJson.OptionalBool(config, "screenshotOnFailure", true);
 
     // A cooperative cancel stopped the run between steps. Salvage a partial result (the payload's `result` over the
     // accumulated vars) best-effort — a result expression that faults on the partial state yields no partial, not a crash.
@@ -1162,11 +1159,11 @@ internal sealed class RunInterpreter
         if (_resumePending)
         {
             _resumePending = false;
-            await ExecuteBlockAsync(body.GetProperty("resume"), ct); // re-navigate to the restored cursor (bound to `checkpoint`)
+            await ExecuteBlockAsync(NodeJson.RequireElement(body, "resume"), ct); // re-navigate to the restored cursor (bound to `checkpoint`)
         }
 
-        var name = body.GetProperty("name").GetString()!;
-        var cursor = JsonValues.ToJson(await ExprAsync(body.GetProperty("cursor"), ct));
+        var name = NodeJson.RequireString(body, "name");
+        var cursor = JsonValues.ToJson(await ExprAsync(body, "cursor", ct));
         EnforceEventBudget(); // the checkpoint marker is a stream event too
         await _observer.CheckpointReachedAsync(new CheckpointSnapshot(name, ++_checkpointSeq, _currentStepIndex, cursor, SnapshotVarsJson()), ct);
     }
