@@ -153,8 +153,8 @@ public sealed class TenantIsolationCollection : ICollectionFixture<TenantIsolati
 }
 
 /// <summary>Cross-tenant isolation: tenant B, with its own valid key, gets 404 on every one of tenant A's resources
-/// (payloads, runs, timelines, drift, replay, SSE), cannot see A's blobs, and its listings show only its own rows.
-/// 404 (not 403) is deliberate — a tenant must not confirm another tenant's resource even exists.</summary>
+/// (payloads, runs, timelines, drift, replay, SSE, screenshots), cannot see A's blobs, and its listings show only its
+/// own rows. 404 (not 403) is deliberate — a tenant must not confirm another tenant's resource even exists.</summary>
 [Collection(TenantIsolationCollection.Name)]
 public class TenantIsolationTests(TenantIsolationFixture fixture)
 {
@@ -225,6 +225,19 @@ public class TenantIsolationTests(TenantIsolationFixture fixture)
         var timeline = await GetJsonAsync(TestTenants.PrimaryKey, $"/runs/{fixture.FailedRunA}/timeline");
         timeline.GetProperty("failure").GetProperty("screenshotRef").GetString().ShouldStartWith("screenshots/");
         await ExpectStatusAsync("GET", $"/runs/{fixture.SucceededRunA}", HttpStatusCode.OK, apiKey: TestTenants.PrimaryKey);
+    }
+
+    [Fact]
+    public async Task Tenant_B_cannot_retrieve_tenant_As_failure_screenshot()
+    {
+        // A's failing run captured a screenshot-on-failure; its ref is exposed on A's timeline as screenshots/{sha}.png.
+        var timeline = await GetJsonAsync(TestTenants.PrimaryKey, $"/runs/{fixture.FailedRunA}/timeline");
+        var tail = timeline.GetProperty("failure").GetProperty("screenshotRef").GetString()!["screenshots/".Length..];
+
+        // B is refused (404, indistinguishable from an unknown run) while A retrieves its own capture — proving the run
+        // association, not blob knowledge, is the authorization.
+        await ExpectStatusAsync("GET", $"/runs/{fixture.FailedRunA}/screenshots/{tail}", HttpStatusCode.NotFound);
+        await ExpectStatusAsync("GET", $"/runs/{fixture.FailedRunA}/screenshots/{tail}", HttpStatusCode.OK, apiKey: TestTenants.PrimaryKey);
     }
 
     [Fact]

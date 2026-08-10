@@ -123,6 +123,12 @@ public static class OpenApiSpec
             [new("200", "The run's pinned revision vs the payload head.", Component: nameof(RunDriftResponse)), NotFound("run")]),
         new("get", "/runs/{id}/timeline", "getRunTimeline", "The run observability timeline.", _runs, Anonymous: false, [Id], null,
             [new("200", "The run's ordered steps, extracts, downloads, screenshots, and failure.", Component: nameof(RunTimelineResponse)), NotFound("run")]),
+        new("get", "/runs/{id}/screenshots/{reference}", "getRunScreenshot", "Retrieve a run's captured screenshot.", _runs, Anonymous: false, [Id, Reference], null,
+            [
+                new("200", "The captured screenshot as PNG bytes (content-addressed, so privately cacheable with a digest ETag).", MediaType: "image/png", Schema: BinarySchema),
+                new("404", "No such run, the ref is not recorded on this run, or the screenshot has expired per the storage retention policy."),
+            ],
+            Description: "Streams a captured screenshot (an authored `screenshot` node, or a screenshot-on-failure) back to the run's tenant. The `{reference}` is the timeline's `screenshotRef` with its `screenshots/` prefix dropped. Authorization is by run association: the ref must appear in this run's tenant-scoped trace, so a foreign or guessed ref is a 404, indistinguishable from an unknown run."),
         new("get", "/runs/queue-stats", "getQueueStats", "The tenant's admission-queue stats.", _runs, Anonymous: false, [], null,
             [new("200", "The current queue depth and p95 queue wait.", Component: nameof(QueueStatsResponse))]),
 
@@ -156,8 +162,10 @@ public static class OpenApiSpec
     /// <summary>The generated OpenAPI 3.1 document, as indented JSON. Built once — deterministic, like the embedded schema.</summary>
     public static string DocumentJson { get; } = Build();
 
-    // Shared path parameters (a UUID id, and the integer revision selectors).
+    // Shared path parameters (a UUID id, the integer revision selectors, and the screenshot ref tail).
     private static Param Id => new("id", Integer: false, "The resource id (UUID).");
+
+    private static Param Reference => new("reference", Integer: false, "The screenshot ref's {sha256}.png tail (the timeline's screenshotRef without its screenshots/ prefix).", Uuid: false);
 
     private static Param Revision => new("revision", Integer: true, "The 1-based revision number.");
 
@@ -272,9 +280,12 @@ public static class OpenApiSpec
                 ["in"] = "path",
                 ["required"] = true,
                 ["description"] = param.Description,
-                ["schema"] = param.Integer
-                    ? new JsonObject { ["type"] = "integer" }
-                    : new JsonObject { ["type"] = "string", ["format"] = "uuid" },
+                ["schema"] = param switch
+                {
+                    { Integer: true } => new JsonObject { ["type"] = "integer" },
+                    { Uuid: true } => new JsonObject { ["type"] = "string", ["format"] = "uuid" },
+                    _ => new JsonObject { ["type"] = "string" },
+                },
             });
         }
 
@@ -428,6 +439,8 @@ public static class OpenApiSpec
 
     private static JsonObject PlainTextSchema() => new() { ["type"] = "string" };
 
+    private static JsonObject BinarySchema() => new() { ["type"] = "string", ["format"] = "binary" };
+
     private static JsonObject OpenApiSelfSchema() => new() { ["type"] = "object", ["description"] = "An OpenAPI 3.1 document." };
 
     private sealed record Endpoint(
@@ -442,7 +455,7 @@ public static class OpenApiSpec
         Response[] Responses,
         string? Description = null);
 
-    private sealed record Param(string Name, bool Integer, string Description);
+    private sealed record Param(string Name, bool Integer, string Description, bool Uuid = true);
 
     private sealed record Body(string Component, string Description);
 
