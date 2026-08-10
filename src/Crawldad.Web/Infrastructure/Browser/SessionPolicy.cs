@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Crawldad.Web.Features.Runs.Interpreter;
 
 namespace Crawldad.Web.Infrastructure.Browser;
 
@@ -81,39 +82,31 @@ public sealed record SessionPolicy(
     /// accordingly.</summary>
     public static SessionPolicy FromConfig(JsonElement config)
     {
-        var launchArgs = config.TryGetProperty("launch", out var launch) && launch.TryGetProperty("args", out var args)
-            ? args.EnumerateArray().Select(static a => a.GetString()!).ToArray()
+        // config is a validated object here (the run-time pre-pass guarantees it); each sub-key stays optional, but a
+        // present one of the wrong JSON kind classifies as malformed_node rather than throwing from a raw accessor.
+        IReadOnlyList<string> launchArgs = NodeJson.OptionalObject(config, "launch") is { } launch
+            ? NodeJson.OptionalStringArray(launch, "args")
             : [];
 
-        var bypassCsp = config.TryGetProperty("context", out var context)
-            && context.TryGetProperty("bypassCsp", out var csp)
-            && csp.GetBoolean();
+        var bypassCsp = NodeJson.OptionalObject(config, "context") is { } context
+            && NodeJson.OptionalBool(context, "bypassCsp", false);
 
-        var defaultTimeoutMs = config.TryGetProperty("defaultTimeoutMs", out var t) ? t.GetInt32() : 120000;
+        var defaultTimeoutMs = NodeJson.OptionalInt(config, "defaultTimeoutMs", 120000);
 
-        var route = config.TryGetProperty("route", out var routeElement) ? ReadRoute(routeElement) : RoutePolicy.None;
+        var route = NodeJson.OptionalObject(config, "route") is { } routeElement ? ReadRoute(routeElement) : RoutePolicy.None;
 
         return new SessionPolicy(launchArgs, bypassCsp, defaultTimeoutMs, route);
     }
 
     private static RoutePolicy ReadRoute(JsonElement route)
     {
-        var throttle = route.TryGetProperty("throttle", out var th) && th.TryGetProperty("minIntervalMs", out var mi)
-            ? mi.GetInt32()
-            : 0;
+        var throttle = NodeJson.OptionalObject(route, "throttle") is { } th ? NodeJson.OptionalInt(th, "minIntervalMs", 0) : 0;
 
         return new RoutePolicy(
-            ReadSet(route, "blockHosts"),
-            ReadSet(route, "blockResourceTypes"),
-            ReadSet(route, "cacheResourceTypes"),
-            route.TryGetProperty("cacheUrlSuffixes", out var suffixes)
-                ? suffixes.EnumerateArray().Select(static s => s.GetString()!).ToArray()
-                : [],
+            new HashSet<string>(NodeJson.OptionalStringArray(route, "blockHosts"), StringComparer.Ordinal),
+            new HashSet<string>(NodeJson.OptionalStringArray(route, "blockResourceTypes"), StringComparer.Ordinal),
+            new HashSet<string>(NodeJson.OptionalStringArray(route, "cacheResourceTypes"), StringComparer.Ordinal),
+            NodeJson.OptionalStringArray(route, "cacheUrlSuffixes"),
             throttle);
     }
-
-    private static HashSet<string> ReadSet(JsonElement parent, string name) =>
-        parent.TryGetProperty(name, out var array)
-            ? array.EnumerateArray().Select(static e => e.GetString()!).ToHashSet(StringComparer.Ordinal)
-            : new HashSet<string>(StringComparer.Ordinal);
 }

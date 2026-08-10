@@ -42,7 +42,7 @@ public static class ExpressionErrorCodes
 /// <summary>A terminal failure raised while evaluating an expression. Never retried; surfaced to the caller with its
 /// <see cref="Code"/> (one of the eval-time <see cref="ExpressionErrorCodes"/>).</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "A code is mandatory; the parameterless/message-only/inner-exception constructors would allow codeless failures that break run-failure surfacing (§10).")]
+    Justification = "A code is mandatory; the parameterless/message-only/inner-exception constructors would allow codeless failures that break run-failure surfacing.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "A code is mandatory; see CA1032 justification.")]
 public sealed class ExpressionEvaluationException : Exception
@@ -59,7 +59,7 @@ public sealed class ExpressionEvaluationException : Exception
 /// unknown builtin, wrong arity, or malformed syntax is rejected here, before any execution, so a schema-valid
 /// payload has a bounded, inspectable effect surface.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "A code and position are mandatory; the standard codeless constructors would break run-failure surfacing (§10).")]
+    Justification = "A code and position are mandatory; the standard codeless constructors would break run-failure surfacing.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "A code and position are mandatory; see CA1032 justification.")]
 public sealed class ExpressionParseException : Exception

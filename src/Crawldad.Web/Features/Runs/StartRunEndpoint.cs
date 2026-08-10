@@ -231,7 +231,7 @@ public static class StartRunEndpoint
         }
 
         var input = JsonValues.FromJson(request.Inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
-        var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
+        var payloadName = PayloadName(payload);
 
         var queued = new QueuedRunRequest(runId, payloadName, scriptHash, script, InputsJson(request.Inputs), [.. input.Keys], payloadId, payloadRevision, ReadDeadlineMs(payload));
         var position = await queue.EnqueueAsync(session, bus, queued, scrubber, ct);
@@ -276,7 +276,7 @@ public static class StartRunEndpoint
         payload = payload.Clone();
 
         var input = JsonValues.FromJson(inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
-        var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
+        var payloadName = PayloadName(payload);
 
         // The per-run secret scope and the interpreter's own cancellation source span the WHOLE run. Both are disposed
         // here on the inline path; on upgrade they are TRANSFERRED to the supervisor (it disposes them once the run
@@ -401,7 +401,7 @@ public static class StartRunEndpoint
         CancellationToken ct)
     {
         var input = JsonValues.FromJson(inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
-        var payloadName = payload.TryGetProperty("name", out var name) ? name.GetString()! : "unnamed";
+        var payloadName = PayloadName(payload);
 
         session.Events.StartStream<Run>(
             runId,
@@ -414,9 +414,20 @@ public static class StartRunEndpoint
         return Results.Accepted($"/runs/{runId}", new RunStateResponse(runId, RunStatus.Running, null, null, null, null));
     }
 
-    // The run wall-clock cap: config.deadlineMs when set, else the generous default.
-    private static int ReadDeadlineMs(JsonElement payload) =>
-        payload.GetProperty("config").TryGetProperty("deadlineMs", out var deadline) ? deadline.GetInt32() : DefaultDeadlineMs;
+    // The run's display name: a string `name`, else "unnamed". Total on an UNVALIDATED inline payload — a wrong-kinded
+    // (or absent) name never faults this request-thread read; the interpreter classifies any deeper malformation.
+    internal static string PayloadName(JsonElement payload) =>
+        payload.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString()! : "unnamed";
+
+    // The run wall-clock cap: config.deadlineMs when set, else the generous default. Total on an UNVALIDATED inline
+    // payload — a missing/wrong-kinded config or deadlineMs falls back to the default rather than faulting this
+    // request-thread read (which runs BEFORE the interpreter, so it cannot itself raise a classified run failure).
+    internal static int ReadDeadlineMs(JsonElement payload) =>
+        payload.TryGetProperty("config", out var config) && config.ValueKind == JsonValueKind.Object
+        && config.TryGetProperty("deadlineMs", out var deadline) && deadline.ValueKind == JsonValueKind.Number
+        && deadline.TryGetInt32(out var ms)
+            ? ms
+            : DefaultDeadlineMs;
 
     // The run inputs as persistable JSON: an absent (undefined) inputs value becomes the empty object.
     private static string InputsJson(JsonElement inputs) =>

@@ -6,7 +6,7 @@ namespace Crawldad.Web.Infrastructure.Browser;
 /// <see cref="BrowserPageCrashedException"/>). A common base lets the reopen path tolerate a crashed page's close
 /// failure with one specific catch — never a blanket <c>catch (Exception)</c>.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "A message is mandatory so run-failure surfacing (§10) always has one; a parameterless constructor would allow messageless browser faults.")]
+    Justification = "A message is mandatory so run-failure surfacing always has one; a parameterless constructor would allow messageless browser faults.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "See CA1032 justification.")]
 public abstract class BrowserException : Exception
@@ -23,7 +23,7 @@ public abstract class BrowserException : Exception
 /// <c>waitFor</c> whose element never reached its state). Retried per <c>config.retry</c> when <c>"timeout"</c> is in
 /// <c>retryOn</c>; exhausting the attempts yields <c>retryable-exhausted</c>.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "A message is mandatory so run-failure surfacing (§10) always has one; a parameterless constructor would allow messageless timeouts.")]
+    Justification = "A message is mandatory so run-failure surfacing always has one; a parameterless constructor would allow messageless timeouts.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "See CA1032 justification.")]
 public sealed class BrowserTimeoutException : BrowserException
@@ -40,7 +40,7 @@ public sealed class BrowserTimeoutException : BrowserException
 /// — this is terminal, not a retryable page condition. Its message is always hand-written and carries no connect URL,
 /// token, or secret: the raw provider fault (which can embed credentials in the URL) is never wrapped into it.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "A message is mandatory so run-failure surfacing (§10) always has one; a parameterless constructor would allow messageless connect faults.")]
+    Justification = "A message is mandatory so run-failure surfacing always has one; a parameterless constructor would allow messageless connect faults.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "See CA1032 justification.")]
 public sealed class BrowserConnectException : Exception
@@ -57,7 +57,7 @@ public sealed class BrowserConnectException : Exception
 /// interpreter closes the crashed page, opens a fresh one on the same session/context, and rebinds it. A crashed
 /// page's <c>CloseAsync</c> may also throw this same type, tolerated during reopen.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-    Justification = "A message is mandatory so run-failure surfacing (§10) always has one; a parameterless constructor would allow messageless crashes.")]
+    Justification = "A message is mandatory so run-failure surfacing always has one; a parameterless constructor would allow messageless crashes.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
     Justification = "See CA1032 justification.")]
 public sealed class BrowserPageCrashedException : BrowserException

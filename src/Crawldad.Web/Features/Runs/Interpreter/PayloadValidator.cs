@@ -13,7 +13,9 @@ internal sealed record PayloadIssue(string Path, string Code, string Message, in
 /// walker (which rejects them anywhere in the expression value space), so the two never disagree on what is a secret.</summary>
 internal static class SecretRefInputs
 {
-    /// <summary>The <c>secretRef</c>-typed input names, or an empty set when none are declared.</summary>
+    /// <summary>The <c>secretRef</c>-typed input names, or an empty set when none are declared. Total on an UNVALIDATED
+    /// inline payload — a non-object <c>inputs</c> block or declaration is simply skipped (it is not a secretRef and
+    /// TryGetProperty would throw on a non-object receiver); the structural pre-pass classifies the malformation.</summary>
     public static IReadOnlySet<string> Names(JsonElement payload)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -21,7 +23,8 @@ internal static class SecretRefInputs
         {
             foreach (var declared in inputs.EnumerateObject())
             {
-                if (declared.Value.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String
+                if (declared.Value.ValueKind == JsonValueKind.Object
+                    && declared.Value.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String
                     && string.Equals(type.GetString(), "secretRef", StringComparison.Ordinal))
                 {
                     names.Add(declared.Name);
@@ -52,20 +55,65 @@ internal static class NodeHeads
 /// run-time pre-pass); <see cref="Validate"/> adds the semantic pass, reusing the real parsers — never a second grammar.</summary>
 internal static class PayloadValidator
 {
-    /// <summary>Structural pre-pass: unknown heads + missing <c>maxIterations</c>, in DFS order. Assumes a <c>steps</c>
-    /// array of single-head node objects (the JSON Schema guarantees this at save time); collects issues instead of
-    /// throwing on the first. Used standalone by the run-time pre-pass and folded into <see cref="Validate"/>.</summary>
+    /// <summary>Structural pre-pass: config/steps shape + unknown heads + missing <c>maxIterations</c>, in DFS order. The
+    /// JSON Schema guarantees the shape at save time, but the run-time pre-pass runs on UNVALIDATED inline JSON, so every
+    /// enumeration is kind-guarded — a wrong-kinded step/block/node classifies as an issue, never a raw-accessor 500.
+    /// <c>vars</c>/<c>result</c> are shape-checked lazily at their evaluation, matching the run path's fault-at-eval rule.</summary>
     public static IReadOnlyList<PayloadIssue> ValidateStructure(JsonElement payload)
     {
+        // config is read (backend/retry/session/screenshot) BEFORE the backend connect, and steps is iterated right here,
+        // so both are shape-checked eagerly; vars/result are evaluated later and stay lazy so a run that faults first is
+        // not pre-empted by an eager check (the reference's own fault ordering).
         var issues = new List<PayloadIssue>();
+        if (!payload.TryGetProperty("config", out var config) || config.ValueKind != JsonValueKind.Object)
+        {
+            issues.Add(TopLevel("/config", "config must be an object", "config"));
+        }
+
+        // The inputs block declares input types; the interpreter ctor reads it for secretRef detection BEFORE the
+        // classified region, so its shape is validated eagerly here — a non-object block/declaration classifies as
+        // malformed_node rather than a ctor-time TryGetProperty throw (which no path can catch).
+        if (payload.TryGetProperty("inputs", out var inputs))
+        {
+            ValidateInputsStructure(inputs, issues);
+        }
+
+        if (!payload.TryGetProperty("steps", out var steps) || steps.ValueKind != JsonValueKind.Array)
+        {
+            issues.Add(TopLevel("/steps", "steps must be an array", "steps"));
+            return issues; // no steps array to descend into
+        }
+
         var index = 0;
-        foreach (var step in payload.GetProperty("steps").EnumerateArray())
+        foreach (var step in steps.EnumerateArray())
         {
             ValidateNodeStructure(step, index, $"/steps/{index}", issues);
             index++;
         }
 
         return issues;
+    }
+
+    private static PayloadIssue TopLevel(string path, string message, string kind) =>
+        new(path, InterpreterErrorCodes.MalformedNode, message, 0, kind);
+
+    // The inputs block must be an object of object-valued declarations (each `{ "type": ... }`). Mirrors the shape
+    // SecretRefInputs.Names now skips defensively, so a malformation surfaces as a classified issue, not a silent skip.
+    private static void ValidateInputsStructure(JsonElement inputs, List<PayloadIssue> issues)
+    {
+        if (inputs.ValueKind != JsonValueKind.Object)
+        {
+            issues.Add(TopLevel("/inputs", "inputs must be an object", "inputs"));
+            return;
+        }
+
+        foreach (var declared in inputs.EnumerateObject())
+        {
+            if (declared.Value.ValueKind != JsonValueKind.Object)
+            {
+                issues.Add(new PayloadIssue($"/inputs/{declared.Name}", InterpreterErrorCodes.MalformedNode, $"input declaration '{declared.Name}' must be an object", 0, "inputs"));
+            }
+        }
     }
 
     /// <summary>Full save-time validation: the structural pre-pass plus the semantic pass. The payload is assumed
@@ -81,7 +129,27 @@ internal static class PayloadValidator
 
     private static void ValidateNodeStructure(JsonElement node, int stepIndex, string path, List<PayloadIssue> issues)
     {
-        var head = node.EnumerateObject().First().Name;
+        if (node.ValueKind != JsonValueKind.Object)
+        {
+            issues.Add(new PayloadIssue(path, InterpreterErrorCodes.MalformedNode, "a node must be an object", stepIndex, ""));
+            return;
+        }
+
+        var head = "";
+        var hasHead = false;
+        foreach (var property in node.EnumerateObject())
+        {
+            head = property.Name;
+            hasHead = true;
+            break;
+        }
+
+        if (!hasHead)
+        {
+            issues.Add(new PayloadIssue(path, InterpreterErrorCodes.MalformedNode, "a node needs a single head key", stepIndex, ""));
+            return;
+        }
+
         if (!NodeHeads.All.Contains(head))
         {
             issues.Add(new PayloadIssue(path, InterpreterErrorCodes.UnknownNode, $"unknown node '{head}'", stepIndex, head));
@@ -94,9 +162,15 @@ internal static class PayloadValidator
         }
 
         var body = node.GetProperty(head);
+        if (body.ValueKind != JsonValueKind.Object)
+        {
+            issues.Add(new PayloadIssue($"{path}/{head}", InterpreterErrorCodes.MalformedNode, $"the '{head}' body must be an object", stepIndex, head));
+            return; // a non-object body has no fields/blocks to descend into.
+        }
+
         if (RequiresMaxIterations(head) && !body.TryGetProperty("maxIterations", out _))
         {
-            issues.Add(new PayloadIssue($"{path}/{head}", InterpreterErrorCodes.MissingMaxIterations, $"'{head}' requires a maxIterations cap (§6)", stepIndex, head));
+            issues.Add(new PayloadIssue($"{path}/{head}", InterpreterErrorCodes.MissingMaxIterations, $"'{head}' requires a maxIterations cap", stepIndex, head));
         }
 
         ValidateChildBlocksStructure(body, $"{path}/{head}", stepIndex, issues);
@@ -113,27 +187,53 @@ internal static class PayloadValidator
         ValidateBlockStructure(body, "trigger", path, stepIndex, issues);
         ValidateBlockStructure(body, "resume", path, stepIndex, issues); // a checkpoint's resume sub-program
         ValidateBlockStructure(body, "default", path, stepIndex, issues);
-        if (body.TryGetProperty("cases", out var cases))
+        if (!body.TryGetProperty("cases", out var cases))
         {
-            var caseIndex = 0;
-            foreach (var branch in cases.EnumerateArray())
+            return;
+        }
+
+        if (cases.ValueKind != JsonValueKind.Array)
+        {
+            issues.Add(new PayloadIssue($"{path}/cases", InterpreterErrorCodes.MalformedNode, "'cases' must be an array", stepIndex, "switch"));
+            return;
+        }
+
+        var caseIndex = 0;
+        foreach (var branch in cases.EnumerateArray())
+        {
+            if (branch.ValueKind == JsonValueKind.Object)
             {
                 ValidateBlockStructure(branch, "do", $"{path}/cases/{caseIndex}", stepIndex, issues);
-                caseIndex++;
             }
+            else
+            {
+                issues.Add(new PayloadIssue($"{path}/cases/{caseIndex}", InterpreterErrorCodes.MalformedNode, "a switch case must be an object", stepIndex, "switch"));
+            }
+
+            caseIndex++;
         }
     }
 
+    // `owner` (a node body or a switch case) is already known to be an object; a present block that is not an array is
+    // an issue rather than a raw EnumerateArray throw, and an absent one is simply not descended into.
     private static void ValidateBlockStructure(JsonElement owner, string name, string path, int stepIndex, List<PayloadIssue> issues)
     {
-        if (owner.TryGetProperty(name, out var block))
+        if (!owner.TryGetProperty(name, out var block))
         {
-            var index = 0;
-            foreach (var node in block.EnumerateArray())
-            {
-                ValidateNodeStructure(node, stepIndex, $"{path}/{name}/{index}", issues);
-                index++;
-            }
+            return;
+        }
+
+        if (block.ValueKind != JsonValueKind.Array)
+        {
+            issues.Add(new PayloadIssue($"{path}/{name}", InterpreterErrorCodes.MalformedNode, $"'{name}' must be an array", stepIndex, name));
+            return;
+        }
+
+        var index = 0;
+        foreach (var node in block.EnumerateArray())
+        {
+            ValidateNodeStructure(node, stepIndex, $"{path}/{name}/{index}", issues);
+            index++;
         }
     }
 }

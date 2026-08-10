@@ -26,7 +26,7 @@ internal sealed class BrowserbaseBackend(
     internal const string ConnectUrlMode = "connectUrl";
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types",
-        Justification = "The connect is a credential-scrubbing boundary (§12): the connectUrl carries a per-session signingKey JWT (live-verified 2026-08-08), so ANY fault (a PlaywrightException can echo the CDP URL) must become a secret-free BrowserConnectException. Cancellation and the already-scrubbed BrowserConnectException are excluded by the filter.")]
+        Justification = "The connect is a credential-scrubbing boundary: the connectUrl carries a per-session signingKey JWT (live-verified 2026-08-08), so ANY fault (a PlaywrightException can echo the CDP URL) must become a secret-free BrowserConnectException. Cancellation and the already-scrubbed BrowserConnectException are excluded by the filter.")]
     public async Task<IBrowserSession> ConnectAsync(BackendBinding binding, SessionPolicy policy, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(binding);

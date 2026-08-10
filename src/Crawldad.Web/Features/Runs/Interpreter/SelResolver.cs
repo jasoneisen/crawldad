@@ -184,17 +184,18 @@ internal sealed class SelResolver(RunScope scope)
             case "role":
             case "name":
             case "in":
-                return await CrawldadTemplate.Parse(value.GetString()!).RenderAsync(scope, ct);
+                return await CrawldadTemplate.Parse(NodeJson.RequireStringValue(value, $"selector '{name}'")).RenderAsync(scope, ct);
             case "base":
-                return value.GetString();
+                return NodeJson.RequireStringValue(value, "selector 'base'");
             case "nth":
-                return await CrawldadExpression.Parse(value.GetString()!).EvaluateAsync(scope, ct);
+                return await CrawldadExpression.Parse(NodeJson.RequireStringValue(value, "selector 'nth'")).EvaluateAsync(scope, ct);
             case "first":
-                return value.GetBoolean();
+                return NodeJson.RequireBoolValue(value, "selector 'first'");
             case "filter":
                 return new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    ["hasTextRegex"] = await CrawldadTemplate.Parse(value.GetProperty("hasTextRegex").GetString()!).RenderAsync(scope, ct),
+                    ["hasTextRegex"] = await CrawldadTemplate.Parse(
+                        NodeJson.RequireString(NodeJson.RequireObjectValue(value, "selector 'filter'"), "hasTextRegex")).RenderAsync(scope, ct),
                 };
             default:
                 throw new InterpreterException(InterpreterErrorCodes.MalformedNode, $"unknown selector key '{name}'");

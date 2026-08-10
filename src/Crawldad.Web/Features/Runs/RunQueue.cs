@@ -26,7 +26,7 @@ public sealed record QueuedRunRequest(
 /// cap is enqueued instead of rejected; when a slot frees, the oldest queued run is promoted. Exactly one terminal writer
 /// wins per queued run — promotion/cancel/timeout serialise via <see cref="TryClaimTerminalAsync"/>'s advisory lock + re-read-under-lock, so the losers commit nothing.</summary>
 [SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix",
-    Justification = "RunQueue models the run admission queue; 'Queue' is the CD-16 domain term, not a Queue<T>-derived collection.")]
+    Justification = "RunQueue models the run admission queue; 'Queue' is the domain term, not a Queue<T>-derived collection.")]
 public sealed class RunQueue(
     IDocumentStore store,
     IRunAdmissionGate gate,
@@ -146,7 +146,7 @@ public sealed class RunQueue(
     /// <c>queue_wait_exceeded</c> failure under the exclusive lock, or no-ops when it already left the queue.</summary>
     public Task<bool> TimeoutQueuedAsync(string tenantId, Guid runId, CancellationToken ct)
     {
-        var failure = new RunFailureDetail("terminal", QueueWaitExceededCode, "the run exceeded its maximum queue wait (CD-16)", new RunStepRef(0, "queue"));
+        var failure = new RunFailureDetail("terminal", QueueWaitExceededCode, "the run exceeded its maximum queue wait", new RunStepRef(0, "queue"));
         return TryClaimTerminalAsync(tenantId, runId, new RunFailed(failure, EmptyStats, clock.GetUtcNow()), p =>
         {
             p.Status = RunStatus.Failed;

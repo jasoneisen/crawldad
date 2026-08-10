@@ -72,7 +72,7 @@ public sealed class TenantRegistry
             // make that prefix ambiguous (tenant "a" + ref "b:c" vs tenant "a:b" + ref "c" resolve the same key). Reject at boot.
             if (tenant.Id.Contains(':', StringComparison.Ordinal))
             {
-                throw new InvalidOperationException($"tenant id '{tenant.Id}' must not contain ':' (it namespaces per-tenant secret-vault keys, CD-6)");
+                throw new InvalidOperationException($"tenant id '{tenant.Id}' must not contain ':' (it namespaces per-tenant secret-vault keys)");
             }
 
             if (string.IsNullOrWhiteSpace(tenant.Actor))

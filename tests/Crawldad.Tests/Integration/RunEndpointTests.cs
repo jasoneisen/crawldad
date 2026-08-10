@@ -294,4 +294,65 @@ public class RunEndpointTests(AppFixture fixture)
     [Fact]
     public async Task Non_object_inputs_is_a_400() =>
         await PostAsync(new JsonObject { ["payload"] = JsonNode.Parse(Runner.FragmentPayload()), ["inputs"] = 5 }, expectedStatus: 400);
+
+    [Fact]
+    public async Task Malformed_inline_node_field_is_a_terminal_failure_not_a_500()
+    {
+        // An inline payload skips schema validation, so a wrong-typed node field (a numeric goto.url) is caught only at
+        // run time — a classified terminal malformed_node run failure (HTTP 200 with a failure body), never an unhandled 500.
+        const string Payload =
+            """
+            { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
+              "steps": [ { "goto": { "url": 5 } } ],
+              "result": "null" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput())); // expectedStatus defaults to 200
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        var failure = root.GetProperty("failure");
+        failure.GetProperty("class").GetString().ShouldBe("terminal");
+        failure.GetProperty("code").GetString().ShouldBe("malformed_node");
+        failure.GetProperty("atStep").GetProperty("index").GetInt32().ShouldBe(0);
+        failure.GetProperty("atStep").GetProperty("kind").GetString().ShouldBe("goto");
+    }
+
+    [Fact]
+    public async Task Missing_config_is_a_terminal_failure_not_a_500()
+    {
+        // A schema-invalid inline payload (no config object) is caught by the run-time structural pre-pass as a classified
+        // terminal malformed_node — HTTP 200 with a failure body, never a raw GetProperty("config") 500.
+        var root = await PostAsync(Body("""{ "name": "t", "steps": [], "result": "null" }""", FakeBackendInput()));
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        root.GetProperty("failure").GetProperty("code").GetString().ShouldBe("malformed_node");
+    }
+
+    [Fact]
+    public async Task Malformed_inline_inputs_declaration_is_a_terminal_failure_not_a_500()
+    {
+        // The payload's `inputs` block is read for secretRef detection in the interpreter CONSTRUCTOR, which runs in the
+        // request thread on the synchronous path BEFORE RunAsync. A declaration that is a bare string (not a `{ type }`
+        // object) must classify as malformed_node — HTTP 200 with a failure body — never a raw ctor TryGetProperty 500.
+        const string Payload =
+            """
+            { "name": "t", "config": { "backend": "input.backend" },
+              "inputs": { "token": "a bare string, not a declaration object" },
+              "vars": {}, "steps": [], "result": "null" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput()));
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        root.GetProperty("failure").GetProperty("code").GetString().ShouldBe("malformed_node");
+    }
+
+    [Fact]
+    public async Task An_async_run_with_no_config_is_accepted_not_a_500() =>
+        // The deadline is read from the payload in the request thread on the async path, BEFORE the interpreter runs; a
+        // missing config must fall back to the default deadline (202 Accepted), never fault that read as a 500. The run
+        // then fails as malformed_node on the durable surface.
+        await PostAsync(
+            new JsonObject { ["payload"] = JsonNode.Parse("""{ "name": "t", "steps": [], "result": "null" }"""), ["inputs"] = FakeBackendInput(), ["async"] = true },
+            expectedStatus: 202);
 }
