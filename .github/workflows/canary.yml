@@ -63,15 +63,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Surface a misconfigured canary (no link) as a warning rather than a silent forever-skip. Without a link the
-      # LiveCanaryFact self-skips, so the job still passes safely — but the maintainer should know it is not watching.
+      # A canary with no link self-skips and watches nothing, so a missing link must not stay silently green:
+      # scheduled runs warn through the grace deadline below, then FAIL; a manual dispatch with no link fails
+      # immediately, since the operator is present to supply one.
       - name: Check configuration
         run: |
-          if [ -z "${CRAWLDAD_CANARY_LINK}" ]; then
-            echo "::warning::CRAWLDAD_CANARY_LINK is not set (no dispatch input, no repo variable) — the live canary will SELF-SKIP and watch nothing. Set the CRAWLDAD_CANARY_LINK repo variable or pass the 'link' dispatch input."
-          else
+          if [ -n "${CRAWLDAD_CANARY_LINK}" ]; then
             echo "Live canary target configured."
+            exit 0
           fi
+          GRACE_ENDS="2026-08-17"
+          MSG="CRAWLDAD_CANARY_LINK is not set (no dispatch input, no repo variable) — the live canary will SELF-SKIP and watch nothing. Set the CRAWLDAD_CANARY_LINK repo variable or pass the 'link' dispatch input."
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] || [ "$(date -u +%F)" '>' "${GRACE_ENDS}" ]; then
+            echo "::error::${MSG}"
+            exit 1
+          fi
+          echo "::warning::${MSG} Scheduled runs FAIL after ${GRACE_ENDS}."
 
       - name: Set up .NET (from global.json)
         uses: actions/setup-dotnet@v4
