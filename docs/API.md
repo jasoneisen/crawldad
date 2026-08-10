@@ -109,6 +109,10 @@ input's value:
 { "adapter": "browserless", "options": { /* provider passthrough */ }, "credentialRef": "vault:my-token" }
 ```
 
+A self-hosted CDP tunnel — local Chromium exposed through `ngrok`/`cloudflared` — is a `browserbase` binding in
+`connectUrl` mode (the resolved credential is the whole `wss://` URL). The [tunnel-backend
+guide](TUNNEL_BACKEND.md) walks that solo-dev on-ramp end to end.
+
 ### 2.2 Nodes (the action set)
 
 Each step is `{ "<head>": { … } }`. The schema is the exhaustive reference; the vocabulary:

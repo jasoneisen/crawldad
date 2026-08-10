@@ -34,3 +34,4 @@ Curated, schema-valid payloads (each validated in CI against the schema). Commen
 - [Payload language spec](docs/PAYLOAD_SPEC.md): the DSL semantics behind the schema — action set, selectors, control flow, and the expression language with its enumerated builtins.
 - [Architecture](docs/ARCHITECTURE.md): the system architecture (C4 diagrams + run lifecycle) and the Azure infrastructure reference.
 - [Threat model](docs/THREAT_MODEL.md): credential scrubbing, credentials-by-reference (`secretRef`), tenant isolation, and PII handling.
+- [Tunnel backend on-ramp](docs/TUNNEL_BACKEND.md): the solo-dev free-tier path — expose local Chromium's CDP port through an `ngrok`/`cloudflared` tunnel and hand Crawldad the `wss://` URL as a `browserbase`/`connectUrl` backend binding; covers the exact backend input, connect failure modes, and the connect retry/backoff behavior.

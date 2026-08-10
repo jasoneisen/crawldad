@@ -5,8 +5,8 @@ using Crawldad.Web.Infrastructure.Security;
 namespace Crawldad.Tests.Unit;
 
 /// <summary>Negative-space tests for the <see cref="CredentialScrubber"/> primitive: the known-param rule across
-/// name/case/encoding variants and wss URLs, the exact live-secret rule, the no-false-positive guarantee on ordinary
-/// text (so the acceptance goldens are untouched), and idempotence.</summary>
+/// name/case/encoding variants and wss URLs (Browserless, Browserbase, and ngrok/cloudflared tunnel shapes), the exact
+/// live-secret rule, the no-false-positive guarantee on ordinary text (so the acceptance goldens are untouched), and idempotence.</summary>
 public class CredentialScrubberTests
 {
     private const string _redacted = CredentialScrubber.Redaction;
@@ -88,6 +88,37 @@ public class CredentialScrubberTests
         scrubbed.ShouldNotContain("bb_live_INJSON");
     }
 
+    // ----- tunnel connect URLs (ngrok / cloudflared) -------------------------
+
+    [Theory]
+    [InlineData("wss://d34db33f.ngrok-free.app")]              // ngrok free tunnel
+    [InlineData("wss://random-forest-1234.trycloudflare.com")] // cloudflared quick tunnel
+    public void Redacts_a_token_query_on_a_tunnel_host_even_when_unregistered(string host)
+    {
+        // Defence-in-depth: a tunnel CDP URL carrying ?token=… is redacted by the known-param rule with NO run secret
+        // registered — scheme/host/path survive, only the token value is gone. Synthetic host + token.
+        var scrubbed = Scrubber().Scrub($"{host}/devtools/browser/f4ke-id?token=tok_FAKE_tunnel_forTESTINGonly");
+
+        scrubbed.ShouldBe($"{host}/devtools/browser/f4ke-id?token={_redacted}");
+        scrubbed.ShouldNotContain("tok_FAKE_tunnel_forTESTINGonly");
+    }
+
+    [Theory]
+    [InlineData("wss://d34db33f.ngrok-free.app/devtools/browser/f4ke-brows3r-id-forTESTINGonly")]
+    [InlineData("wss://random-forest-1234.trycloudflare.com/devtools/browser/f4ke-brows3r-id-forTESTINGonly")]
+    public void Redacts_a_whole_tunnel_connect_url_registered_as_a_run_secret(string endpoint)
+    {
+        // connectUrl mode registers the WHOLE tunnel URL as a run secret; the /devtools/browser/<id> path is itself a
+        // bearer token, so the entire URL (host + path, no recognised query param) vanishes wherever it surfaces.
+        var scrubber = Scrubber(endpoint);
+
+        scrubber.Scrub($"connecting to {endpoint} now").ShouldBe($"connecting to {_redacted} now");
+        // The same URL echoed inside a JSON body and a provider-exception line is redacted just as thoroughly.
+        scrubber.Scrub($$"""{"connectUrl":"{{endpoint}}"}""").ShouldBe($$"""{"connectUrl":"{{_redacted}}"}""");
+        scrubber.Scrub($"PlaywrightException: connect ECONNREFUSED {endpoint}")
+            .ShouldBe($"PlaywrightException: connect ECONNREFUSED {_redacted}");
+    }
+
     // ----- no false positives (goldens must be untouched) --------------------
 
     [Theory]
@@ -95,6 +126,8 @@ public class CredentialScrubberTests
     [InlineData("apiKeys are configured per tenant")]   // "apiKey" as a plain word
     [InlineData("token=")]                               // a bare param with no value
     [InlineData("https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&capID=24ENF-00001")]
+    [InlineData("open a tunnel: ngrok http 9222 → d34db33f.ngrok-free.app")]  // bare tunnel host, no param, not registered
+    [InlineData("cloudflared prints https://random-forest-1234.trycloudflare.com")] // ditto — no over-redaction
     public void Leaves_ordinary_text_unchanged(string text)
     {
         var scrubbed = Scrubber().Scrub(text);
@@ -172,6 +205,7 @@ public class CredentialScrubberTests
     [Theory]
     [InlineData("wss://h/x?apiKey=bb_live_abc&sessionId=ses_1")]
     [InlineData("wss://connect.usw2.browserbase.com/?signingKey=eyJhbGci.eyJz.s1g")] // live Browserbase shape
+    [InlineData("wss://d34db33f.ngrok-free.app/devtools/browser/f4ke-id?token=tok_FAKE")] // tunnel shape
     [InlineData("token=tok_abc123&next=1")]
     public void Param_scrub_is_idempotent(string input)
     {

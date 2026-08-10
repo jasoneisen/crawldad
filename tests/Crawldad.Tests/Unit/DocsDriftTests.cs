@@ -18,6 +18,8 @@ public class DocsDriftTests
 
     private static string ApiReference => Path.Combine(_repoRoot, "docs", "API.md");
 
+    private static string TunnelGuide => Path.Combine(_repoRoot, "docs", "TUNNEL_BACKEND.md");
+
     private static string ExamplesDir => Path.Combine(_repoRoot, "docs", "examples");
 
     private static string LlmsTxt => Path.Combine(_repoRoot, "llms.txt");
@@ -63,6 +65,35 @@ public class DocsDriftTests
         }
 
         payloadBlocks.ShouldBeGreaterThan(0); // the reference must embed at least one complete, authorable payload
+    }
+
+    [Fact]
+    public void Every_payload_block_in_the_tunnel_guide_passes_the_save_time_gate()
+    {
+        // The tunnel on-ramp guide lives outside API.md, so scan it the same way: every strict ```json block must be
+        // well-formed JSON, and any complete payload (a top-level `crawldad` key) is held to the full save-time gate —
+        // keeping the guide's authorable example honest under the claims-must-match-code mandate.
+        var payloadBlocks = 0;
+        foreach (var block in JsonBlocks(File.ReadAllText(TunnelGuide)))
+        {
+            using var document = JsonDocument.Parse(block);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("crawldad", out _))
+            {
+                payloadBlocks++;
+                var problem = PayloadValidation.Validate(document.RootElement);
+                problem.ShouldBeNull(Describe("a TUNNEL_BACKEND.md payload block", problem));
+            }
+        }
+
+        payloadBlocks.ShouldBeGreaterThan(0); // the guide must embed at least one complete, authorable payload
+    }
+
+    [Fact]
+    public void The_tunnel_guide_is_committed_and_linked_from_the_llms_index()
+    {
+        File.Exists(TunnelGuide).ShouldBeTrue();
+        File.ReadAllText(LlmsTxt).ShouldContain("docs/TUNNEL_BACKEND.md");
     }
 
     [Fact]
