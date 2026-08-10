@@ -5,20 +5,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Web.Infrastructure.Browser.Real;
 
-/// <summary>
-/// The <c>"browserless"</c> adapter (§9.1): connects <b>natively</b> (preferred over CDP) via
-/// <c>chromium.connect</c> to <c>wss://production-{region}.browserless.io/chromium/playwright?token=…</c>. The region
-/// comes from <c>backendOptions["region"]</c> (default <c>sfo</c>); the account <c>token</c> is resolved by reference
-/// (§12) and carried in the query; any other <c>backendOptions</c> (e.g. <c>blockAds</c>, <c>proxy</c>) are appended as
-/// query params Browserless understands. The connect is wrapped so that <b>no</b> connect URL or token can escape in an
-/// exception message — a failure is a secret-free terminal <see cref="BrowserConnectException"/>.
-/// </summary>
-/// <param name="provider">The shared Playwright driver.</param>
-/// <param name="secrets">Resolves the account token by reference at connect time.</param>
-/// <param name="secretScope">The per-run secret registry the resolved token is registered into for exact-match scrubbing (§12).</param>
-/// <param name="cache">The cross-run asset cache backing the route cache.</param>
-/// <param name="throttle">The global request throttle.</param>
-/// <param name="endpointTemplate">The ws endpoint template with a <c>{region}</c> placeholder (overridable for tests).</param>
+/// <summary>The <c>"browserless"</c> adapter: connects natively via <c>chromium.connect</c> to a per-region
+/// <c>wss://…?token=…</c> endpoint, the token resolved by reference. The connect is a credential-scrubbing boundary:
+/// no connect URL or token can escape an exception message — any fault becomes a secret-free <see cref="BrowserConnectException"/>.</summary>
 internal sealed class BrowserlessBackend(
     IPlaywrightProvider provider,
     ISecretStore secrets,
@@ -27,7 +16,7 @@ internal sealed class BrowserlessBackend(
     IThrottleGate throttle,
     string endpointTemplate) : IBrowserBackend
 {
-    /// <summary>The production ws endpoint template; the region substitutes into <c>{region}</c> (§9.1).</summary>
+    /// <summary>The production ws endpoint template; the region substitutes into <c>{region}</c>.</summary>
     internal const string DefaultEndpointTemplate = "wss://production-{region}.browserless.io/chromium/playwright";
 
     /// <summary>The region used when <c>backendOptions["region"]</c> is absent.</summary>
@@ -47,7 +36,7 @@ internal sealed class BrowserlessBackend(
         {
             ct.ThrowIfCancellationRequested();
             var token = await ResolveTokenAsync(binding, ct);
-            secretScope.Register(token); // register before connect so a failure's logs/events scrub the token too (§12)
+            secretScope.Register(token); // register before connect so a failure's logs/events scrub the token too
             var endpoint = BuildEndpoint(endpointTemplate, region, token, binding.Options);
             var playwright = await provider.GetAsync(ct);
             browser = await playwright.Chromium.ConnectAsync(endpoint);
@@ -70,12 +59,7 @@ internal sealed class BrowserlessBackend(
     }
 
     /// <summary>Builds the native connect URL: the region substituted into the template, the token as the first query
-    /// param, and every other (non-null, non-<c>region</c>) backend option appended as a query param (§9.1 passthrough).</summary>
-    /// <param name="template">The endpoint template with a <c>{region}</c> placeholder.</param>
-    /// <param name="region">The datacenter region.</param>
-    /// <param name="token">The resolved account token.</param>
-    /// <param name="options">The backend options passed through as query params.</param>
-    /// <returns>The full <c>wss://…?token=…&amp;…</c> connect URL.</returns>
+    /// param, and every other (non-null, non-<c>region</c>) backend option appended as a query param.</summary>
     internal static string BuildEndpoint(string template, string region, string token, IReadOnlyDictionary<string, object?>? options)
     {
         var baseUrl = template.Replace("{region}", region, StringComparison.Ordinal);

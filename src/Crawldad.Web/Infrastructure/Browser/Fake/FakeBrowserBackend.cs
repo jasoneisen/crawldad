@@ -1,11 +1,8 @@
 namespace Crawldad.Web.Infrastructure.Browser.Fake;
 
-/// <summary>
-/// The record/replay browser backend (§ Deliverable 2, §9 testing seam). Driven entirely by a fixture directory's
-/// <c>manifest.json</c> — no Chromium, no network — so the whole interpreter runs deterministically in CI. Registered
-/// under the adapter id <c>"fake"</c>; <see cref="BackendBinding.Options"/><c>["fixture"]</c> names the fixture
-/// directory under the configured fixtures root. Phase 4 adds real adapters beside it behind the same seam.
-/// </summary>
+/// <summary>The record/replay browser backend: driven entirely by a fixture directory's <c>manifest.json</c> — no
+/// Chromium, no network — so the whole interpreter runs deterministically in CI. Registered under the adapter id
+/// <c>"fake"</c>; <see cref="BackendBinding.Options"/><c>["fixture"]</c> names the fixture directory.</summary>
 internal sealed class FakeBrowserBackend(string fixturesRoot) : IBrowserBackend
 {
     /// <summary>The most recently connected session — a white-box hook for tests to inspect the final DOM.</summary>
@@ -15,9 +12,9 @@ internal sealed class FakeBrowserBackend(string fixturesRoot) : IBrowserBackend
     {
         ArgumentNullException.ThrowIfNull(binding);
 
-        // The record/replay fake ignores the §8.1 policy: it does no launching, no context options, and no request
-        // interception (there is no network). The interpreter still reads policy.DefaultTimeoutMs itself for the fake
-        // path, and the fake models no per-page timeouts, so there is nothing here to honour.
+        // The fake ignores the policy: no launching, no context options, no request interception (there is no
+        // network). The interpreter itself reads policy.DefaultTimeoutMs for the fake path, and the fake models no
+        // per-page timeouts, so there is nothing here to honour.
         var fixtureName = binding.Options?.GetValueOrDefault("fixture") as string;
         if (fixtureName is null)
         {
@@ -31,22 +28,18 @@ internal sealed class FakeBrowserBackend(string fixturesRoot) : IBrowserBackend
     }
 }
 
-/// <summary>
-/// One connected fake session (§9). Owns nothing external, so disposal is a no-op; it exists so the interpreter's
-/// teardown path (<c>await using</c>) is exercised identically to a real backend. It also holds the per-transition
-/// scripted-fault attempt counters (§ Deliverable 3): keyed on the session (not the page), they persist across a
-/// <see cref="NewPageAsync"/> reopen — which is what makes the pageCrashed-then-succeed scenario work — and reset only
-/// when a fresh session is connected (a new run).
-/// </summary>
+/// <summary>One connected fake session. Disposal is a no-op (nothing external is owned), but exists so the
+/// interpreter's teardown path runs identically to a real backend. Scripted-fault attempt counters are keyed on the
+/// session, not the page, so they persist across a <see cref="NewPageAsync"/> reopen and reset only on a new session.</summary>
 internal sealed class FakeBrowserSession(FakeManifest manifest) : IBrowserSession
 {
     private readonly Dictionary<FakeTransition, int> _injectAttempts = new();
     private readonly List<FakePageHandle> _pages = [];
 
-    /// <summary>The fake's region tag — a constant, since the fake serves fixtures with no real backend region (§9.1).</summary>
+    /// <summary>The fake's region tag — a constant, since the fake serves fixtures with no real backend region.</summary>
     public string Region => "fake";
 
-    /// <summary>Always 0 — the fake does no request interception, so there are no route-cache hits to report (§10).</summary>
+    /// <summary>Always 0 — the fake does no request interception, so there are no route-cache hits to report.</summary>
     public int CacheHits => 0;
 
     /// <summary>The manifest driving this session's pages.</summary>
@@ -59,7 +52,7 @@ internal sealed class FakeBrowserSession(FakeManifest manifest) : IBrowserSessio
     internal FakePageHandle? LastPage { get; private set; }
 
     /// <summary>Whether this session was torn down (<see cref="DisposeAsync"/>). A real adapter's dispose closes the remote
-    /// backend session, so the cancellation gate asserts this to prove a cancelled run left <b>no orphaned session</b> (§11).</summary>
+    /// backend session, so the cancellation gate asserts this to prove a cancelled run left <b>no orphaned session</b>.</summary>
     internal bool Disposed { get; private set; }
 
     public Task<IPageHandle> NewPageAsync(CancellationToken ct)

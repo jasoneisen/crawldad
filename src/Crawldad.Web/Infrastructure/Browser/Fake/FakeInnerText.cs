@@ -3,22 +3,9 @@ using AngleSharp.Dom;
 
 namespace Crawldad.Web.Infrastructure.Browser.Fake;
 
-/// <summary>
-/// A layout-free approximation of Chromium's <c>innerText</c> for the record/replay fake (the "innerText trap",
-/// § Phase 2 WP3). AngleSharp does no layout and has no rendered text, so the fake previously returned raw
-/// <c>TextContent</c> — which concatenates <c>&lt;br&gt;</c>-separated lines with <b>no separator</b>, unlike a real
-/// browser. That is a fidelity bug for the processing-status region, whose payload does
-/// <c>split(innerText(lineBlock), '\n')</c>: under raw TextContent the two lines fuse into one and the
-/// <c>lines[1]</c> access throws. This renderer reproduces what Chromium's innerText yields for the captured markup:
-/// <list type="bullet">
-///   <item><c>&lt;br&gt;</c> becomes a newline.</item>
-///   <item>A block-level element boundary becomes a newline (collapsed — leading/trailing/duplicate blank lines drop).</item>
-///   <item>Inline ASCII whitespace runs collapse to a single space and each line is trimmed.</item>
-/// </list>
-/// It is deliberately <b>not</b> a full CSS layout: no <c>white-space:pre</c>, no <c>display</c> overrides, no
-/// table-cell tab separators, no non-ASCII-whitespace nuance. That is sufficient for the synthesized fixtures and is
-/// re-gated against real Chromium in Phase 4 (fake ≡ real). See the per-fixture FIXTURE_NOTES for the reasoning.
-/// </summary>
+/// <summary>A layout-free approximation of Chromium's <c>innerText</c>: AngleSharp has no rendered text, and raw
+/// <c>TextContent</c> concatenates <c>&lt;br&gt;</c>-separated lines with no separator, breaking line-split payloads.
+/// Not a full CSS layout — no <c>white-space:pre</c>, no <c>display</c> overrides, no table-cell tabs.</summary>
 internal static class FakeInnerText
 {
     // Block-level element names whose boundaries introduce a line break (the subset the captured DOM uses; a real

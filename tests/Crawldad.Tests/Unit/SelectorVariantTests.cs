@@ -5,14 +5,9 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The structured-<c>Sel</c> role/text/xpath variants (§5.2, #9) on the record/replay fake: <c>GetByRole</c> (with the
-/// accessible-name option), <c>GetByText</c> (innermost, normalised substring), and the <c>xpath=</c> engine — driven at
-/// the seam and through the <see cref="SelResolver"/> (the structured map and the node-JSON forms), across count/extract,
-/// click, fill, multi-match, and no-match. The record/replay fake models the same semantics the real backend gets from
-/// Playwright, so <see cref="Integration.RealChromiumSelectorParityTests"/> can assert <c>fake ≡ real</c> over the same
-/// <c>selector-variants</c> page.
-/// </summary>
+/// <summary>The structured-<c>Sel</c> role/text/xpath variants on the record/replay fake: <c>GetByRole</c> (accessible-name),
+/// <c>GetByText</c> (innermost, normalised substring), and the <c>xpath=</c> engine — driven at the seam and through
+/// <see cref="SelResolver"/>. The fake models the same semantics as Playwright, so <see cref="Integration.RealChromiumSelectorParityTests"/> can assert <c>fake ≡ real</c>.</summary>
 public class SelectorVariantTests
 {
     private static readonly CancellationToken _ct = CancellationToken.None;
@@ -122,16 +117,14 @@ public class SelectorVariantTests
         (await page.Locator("xpath=//button").CountAsync(_ct)).ShouldBe(2);
         (await page.Locator("xpath=//a[@id='openRecord']").TextContentAsync(_ct)).ShouldBe("Open Record");
         (await page.Locator("xpath=//li").CountAsync(_ct)).ShouldBe(3);
-        (await page.Locator("xpath=//table").CountAsync(_ct)).ShouldBe(0); // no-match
+        (await page.Locator("xpath=//table").CountAsync(_ct)).ShouldBe(0);
     }
 
-    // ----- nth (seam, #37) ---------------------------------------------------
+    // ----- nth (seam) ----------------------------------------------------------
 
-    // #37 parity: .Nth is a lazy 0-based narrowing on the fake — an in-range index narrows to that one element, an index
-    // PAST the end narrows to no match, and a NEGATIVE index yields no match (the fake models 0-based nth only). The real
-    // backend agrees for the in-range/past-end domain but DIVERGES on a negative (Playwright's Nth(-1) is the last
-    // element) — see RealChromiumSelectorParityTests — which is exactly why the interpreter rejects a negative nth (as a
-    // classified index_out_of_range) before it can reach either backend.
+    // .Nth is a lazy 0-based narrowing on the fake: in-range narrows to that element, past-the-end and negative both yield
+    // no match (0-based only). The real backend diverges on negative (Playwright's Nth(-1) is the last element) — see
+    // RealChromiumSelectorParityTests — which is why the interpreter rejects a negative nth before reaching either backend.
     [Fact]
     public async Task Nth_is_a_zero_based_narrowing_yielding_no_match_past_the_end_or_negative()
     {

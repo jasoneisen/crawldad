@@ -3,30 +3,23 @@ using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Web.Features.Runs;
 
-/// <summary>
-/// The event-sink chokepoint (§12, WP3): scrubs a trace event's credential-prone strings just before it is appended to
-/// the run's Marten stream, so <b>nothing credential-bearing is ever persisted</b>. Centralised here (rather than at each
-/// <c>Append</c> call site) via the single <see cref="CredentialScrubber"/> — the <c>RunTimeline</c>/summary projections
-/// (Phase 5) derive purely from these already-scrubbed events, so they inherit the guarantee by construction and need no
-/// scrubbing of their own.
-/// </summary>
+/// <summary>The event-sink chokepoint: scrubs a trace event's credential-prone strings just before it is appended to the
+/// run's Marten stream, so nothing credential-bearing is ever persisted. Centralised via the single
+/// <see cref="CredentialScrubber"/> — the RunTimeline/summary projections derive purely from these already-scrubbed events.</summary>
 internal static class RunEventScrubber
 {
     /// <summary>Returns a scrubbed copy of a trace event (events with no credential-prone field pass through unchanged).</summary>
-    /// <param name="traceEvent">The event about to be appended (<c>RunStarted</c>/<c>LogEmitted</c>/<c>RunAttemptFailed</c>/…).</param>
-    /// <param name="scrubber">The credential scrubber.</param>
-    /// <returns>The event with its credential-prone strings scrubbed.</returns>
     public static object Scrub(object traceEvent, CredentialScrubber scrubber) => traceEvent switch
     {
-        // RunStarted records only the payload name + input key NAMES (values are never persisted, §12), but a caller
-        // could name either with credential material — scrub both defensively.
+        // RunStarted records only the payload name + input key NAMES (values are never persisted), but a caller could
+        // name either with credential material — scrub both defensively.
         RunStarted started => started with
         {
             PayloadName = scrubber.Scrub(started.PayloadName),
             InputKeys = [.. started.InputKeys.Select(scrubber.Scrub)],
         },
 
-        // RunQueued (CD-16) is a run's opening event when it queues at the cap; it records the same payload name + input key
+        // RunQueued is a run's opening event when it queues at the cap; it records the same payload name + input key
         // NAMES as RunStarted, so scrub both defensively for the same reason.
         RunQueued queued => queued with
         {
@@ -37,21 +30,21 @@ internal static class RunEventScrubber
         // A log node can interpolate an input/extracted value into its ${…} message — the primary in-event leak vector.
         LogEmitted log => log with { Message = scrubber.Scrub(log.Message) },
 
-        // The WP3 step-trace events (§13): scrub every credential-prone free-text field defensively. A page can navigate
-        // to a URL bearing a credential param (Navigated), a selector template could interpolate a value (Clicked), and
-        // an extracted key / value-ref, a blob ref, a failure slug, or a region are all scrubbed so no sink can leak.
+        // Scrub every credential-prone free-text field defensively: a page can navigate to a URL bearing a credential
+        // param (Navigated), a selector template could interpolate a value (Clicked), and an extracted key / value-ref,
+        // a blob ref, a failure slug, or a region are all scrubbed so no sink can leak.
         Navigated navigated => navigated with { Url = scrubber.Scrub(navigated.Url) },
         Clicked clicked => clicked with { SelectorText = scrubber.Scrub(clicked.SelectorText) },
 
-        // Filled (CD-6) carries `secret:<refName>` — a reference name, safe by construction — but scrub defensively so even a
-        // ref name that happened to collide with a registered secret cannot surface. The resolved secret is never in this event.
+        // Filled carries `secret:<refName>` — a reference name, safe by construction — but scrub defensively so even a
+        // ref name that collides with a registered secret cannot surface. The resolved secret is never in this event.
         Filled filled => filled with { Target = scrubber.Scrub(filled.Target) },
         Extracted extracted => extracted with { Key = scrubber.Scrub(extracted.Key), ValueRef = scrubber.Scrub(extracted.ValueRef) },
         Downloaded downloaded => downloaded with { BlobRef = scrubber.Scrub(downloaded.BlobRef) },
 
-        // Screenshotted (#8) carries a content-addressed ref (credential-free hash) + the author's optional `name` label — the
-        // ref scrubbed defensively like Downloaded.BlobRef, the name scrubbed like any author free text (it can interpolate a
-        // value), null passing through. The image is never in the event (only the ref), so pixels cannot leak here (§12).
+        // Screenshotted carries a content-addressed ref (credential-free hash) + the author's optional `name` label — the
+        // ref scrubbed defensively like Downloaded.BlobRef, the name scrubbed like any author free text, null passing
+        // through. The image is never in the event (only the ref), so pixels cannot leak here.
         Screenshotted shot => shot with
         {
             ScreenshotRef = scrubber.Scrub(shot.ScreenshotRef),
@@ -65,10 +58,7 @@ internal static class RunEventScrubber
         _ => traceEvent,
     };
 
-    /// <summary>Returns a copy of a run failure with its message scrubbed (shared by the <c>RunFailed</c> event and the HTTP response, §10).</summary>
-    /// <param name="failure">The typed failure whose message could interpolate a value via a <c>fail</c> template.</param>
-    /// <param name="scrubber">The credential scrubber.</param>
-    /// <returns>The failure with a scrubbed message.</returns>
+    /// <summary>Returns a copy of a run failure with its message scrubbed (shared by the <c>RunFailed</c> event and the HTTP response).</summary>
     public static RunFailureDetail ScrubFailure(RunFailureDetail failure, CredentialScrubber scrubber) =>
         failure with { Message = scrubber.Scrub(failure.Message) };
 }

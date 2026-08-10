@@ -4,10 +4,8 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The <see cref="PlaywrightMap"/> option translations (§9). Pure — every enum arm is asserted here so the real
-/// wrappers need only exercise the common path.
-/// </summary>
+/// <summary>The <see cref="PlaywrightMap"/> option translations. Pure — every enum arm is asserted here so the
+/// real wrappers need only exercise the common path.</summary>
 public class PlaywrightMapTests
 {
     [Fact]

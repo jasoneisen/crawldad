@@ -6,9 +6,9 @@ using Crawldad.Web.Features.Runs;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>A background-executor host pinned to a per-tenant concurrent-run cap of 1 (CD-3, docs/PRODUCT.md §Pv.3), with a
-/// re-armable gate so a test can hold one run mid-execution while it probes admission of the next. Built lazily (its schema
-/// migrates on first use) and disposed with the collection.</summary>
+/// <summary>A background-executor host pinned to a per-tenant concurrent-run cap of 1, with a re-armable gate so a
+/// test can hold one run mid-execution while it probes admission of the next. Built lazily (its schema migrates on
+/// first use) and disposed with the collection.</summary>
 public sealed class ConcurrentRunsFixture : IAsyncLifetime
 {
     private IAlbaHost? _host;
@@ -38,15 +38,9 @@ public sealed class ConcurrentRunsCollection : ICollectionFixture<ConcurrentRuns
     public const string Name = "concurrent-runs";
 }
 
-/// <summary>
-/// The CD-3/CD-16 billing-critical limit end-to-end (cap 1): the per-tenant concurrent-run cap at <c>POST /runs</c> admission,
-/// now <b>queue, don't reject</b> (docs/PRODUCT.md §Pv.3). With the cap at 1 and one run held mid-execution, a second start is
-/// <b>accepted 202 <c>status:"queued"</c> with position 1</b> (not a 429) and is visible as queued via <c>GET /runs/{id}</c>;
-/// once the first run frees its slot at terminal, the queued run is <b>auto-promoted</b> and runs to completion — proving the
-/// async slot is held from admission to finalisation, that the at-cap run waits rather than fails, and that a freed slot
-/// promotes the tenant's oldest queued run. (The former 429-at-cap assertion is intentionally gone — that is the CD-16
-/// contract change; the only 429 now is <c>queue_depth_exceeded</c>, covered by <c>SlotQueueTests</c>.)
-/// </summary>
+/// <summary>The per-tenant concurrent-run cap (1) at <c>POST /runs</c> admission queues rather than rejects: with
+/// one run held mid-execution, a second start is accepted 202 <c>status:"queued"</c> position 1 (not 429), then
+/// auto-promotes once the first run frees its slot. The cap-exceeded 429 is covered separately by <c>SlotQueueTests</c>.</summary>
 [Collection(ConcurrentRunsCollection.Name)]
 public class ConcurrentRunsCapTests(ConcurrentRunsFixture fixture)
 {
@@ -84,7 +78,7 @@ public class ConcurrentRunsCapTests(ConcurrentRunsFixture fixture)
         // Run 1 is admitted (202) and blocks mid-execution — the tenant's one slot is now occupied.
         var firstRunId = await StartBlockedAsync(host);
 
-        // Run 2 hits the cap at admission — it is QUEUED (202), not rejected: accepted with a runId, status "queued", position 1.
+        // Run 2 hits the cap at admission — queued (202), not rejected.
         var accepted = await host.Scenario(x =>
         {
             x.Post.Json(Body()).ToUrl("/runs");

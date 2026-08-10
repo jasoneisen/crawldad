@@ -1,11 +1,8 @@
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>
-/// A recursive-descent parser for the expression grammar (§7.1), turning a token list into an
-/// <see cref="ExpressionNode"/> tree. Pure and static — it takes no scope, so parsing is a validation pass with no
-/// side effects. Builtin names and arities are checked here (the static safety boundary: <c>unknown_function</c> /
-/// <c>wrong_arity</c>), and nesting is capped at <see cref="MaxDepth"/> to reject pathological input.
-/// </summary>
+/// <summary>A recursive-descent parser for the expression grammar, turning a token list into an
+/// <see cref="ExpressionNode"/> tree. Pure and static — a validation pass with no side effects. Builtin names/arities
+/// are checked here (<c>unknown_function</c>/<c>wrong_arity</c>); nesting is capped at <see cref="MaxDepth"/>.</summary>
 internal sealed class Parser
 {
     /// <summary>Maximum nesting of parenthesised/collection/unary sub-expressions before a terminal parse failure.</summary>
@@ -18,7 +15,6 @@ internal sealed class Parser
     public Parser(List<Token> tokens) => _tokens = tokens;
 
     /// <summary>Parses a complete expression and asserts the whole input was consumed.</summary>
-    /// <returns>The root node of the parsed tree.</returns>
     public ExpressionNode ParseProgram()
     {
         var node = ParseExpression();

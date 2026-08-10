@@ -6,12 +6,9 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// Screenshot-on-failure (§13): on a step failure the interpreter captures the page to blob storage and links the ref from
-/// <c>StepFailed</c> — unless disabled via <c>config.screenshotOnFailure</c>, there is no page (a setup failure), or the
-/// capture itself fails (a crashed page — tolerated, so it never masks the run's own failure). The event stores only the
-/// ref, never the image (§12).
-/// </summary>
+/// <summary>Screenshot-on-failure: on a step failure the interpreter captures the page to blob storage and links the ref
+/// from <c>StepFailed</c> — unless disabled via <c>config.screenshotOnFailure</c>, there is no page (a setup failure), or
+/// the capture itself fails (a crashed page — tolerated, so it never masks the run's own failure). The event stores only the ref, never the image.</summary>
 public class RunScreenshotTests
 {
     private const string _fail =
@@ -39,7 +36,7 @@ public class RunScreenshotTests
         stepFailed.Error.ShouldBe("boom");
         stepFailed.ScreenshotRef.ShouldNotBeNull();
 
-        // The ref is a content-addressed key (credential-free, §12), and the store holds the captured PNG bytes.
+        // The ref is a content-addressed key (credential-free), and the store holds the captured PNG bytes.
         stepFailed.ScreenshotRef.ShouldStartWith("screenshots/");
         screenshots.Blobs.Keys.ShouldContain(stepFailed.ScreenshotRef);
         screenshots.Blobs[stepFailed.ScreenshotRef][..8].ShouldBe([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // PNG signature

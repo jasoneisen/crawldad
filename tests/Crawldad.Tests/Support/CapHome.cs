@@ -19,10 +19,8 @@ internal static class CapHome
         """ { "waitForRequest": { "urlPrefix": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx", "method": "POST",""" +
         """ "trigger": [ { "click": { "selector": "#ctl00_PlaceHolderMain_btnNewSearch" } } ] } }""";
 
-    /// <summary>Bind the grid rows to <c>rows</c>.</summary>
     public const string LocateRows =
         """{ "locate": { "var": "rows", "selector": "#ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList tr" } }""";
 
-    /// <summary>The cancellation token the synchronous fake tests thread through.</summary>
     public static readonly CancellationToken Ct = CancellationToken.None;
 }

@@ -3,21 +3,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Web.Infrastructure.Browser.Real;
 
-/// <summary>
-/// The <c>"local"</c> adapter (§9): launches a local headless Chromium with the §8.1 launch args and opens a context
-/// with the §8.1 context options, then hands back a <see cref="PlaywrightBrowserSession"/>. Credential-free — the
-/// dev/test backend, and the one the Phase 4 fixture-site parity gate (WP2) drives.
-/// <para>
-/// One browser is launched lazily and shared across runs (mirroring <c>PlaywrightFactory</c>'s cached
-/// <c>IBrowser</c>); each run gets its own <b>context</b> for isolation (§12), and the session closes only that
-/// context. The browser is disposed with the adapter (a DI singleton disposed by the host). Launch args are therefore
-/// honoured at first launch; since every run against this dev backend uses the same
-/// <c>--disable-web-security</c> arg this is faithful, and WP2 relies on it.
-/// </para>
-/// </summary>
-/// <param name="provider">The shared Playwright driver.</param>
-/// <param name="cache">The cross-run asset cache backing the route cache.</param>
-/// <param name="throttle">The global request throttle.</param>
+/// <summary>The <c>"local"</c> adapter: launches a headless Chromium and hands back a <see cref="PlaywrightBrowserSession"/>.
+/// Credential-free dev/test backend. The browser is launched once, lazily, and shared across runs; each run gets its
+/// own context for isolation, so launch args only take effect on the very first launch.</summary>
 internal sealed class LocalChromiumBackend(IPlaywrightProvider provider, IAssetCache cache, IThrottleGate throttle)
     : IBrowserBackend, IAsyncDisposable
 {

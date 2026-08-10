@@ -7,11 +7,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The revision resolver (<see cref="PayloadRevisions"/>, §14.1): folds a payload stream into every revision's script.
-/// Exercises all four event types (a rename/archive carries the prior script forward), the head revision, the
-/// out-of-range guards, and the unknown-payload null.
-/// </summary>
+/// <summary>The revision resolver (<see cref="PayloadRevisions"/>) folds a payload stream into every revision's
+/// script. Exercises all four event types (rename/archive carry the prior script forward), the head revision,
+/// out-of-range guards, and the unknown-payload null.</summary>
 [Collection(IntegrationCollection.Name)]
 public class PayloadRevisionsTests(AppFixture fixture)
 {

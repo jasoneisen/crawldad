@@ -2,11 +2,9 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Crawldad.Web.Infrastructure.Browser.Fake;
 
-/// <summary>
-/// A configuration fault in the record/replay fake: a missing fixture directory, absent <c>manifest.json</c>, or a
-/// malformed manifest. Distinct from <see cref="BrowserTimeoutException"/> (a scripted timeout) — this is a setup
-/// error, classified terminal by the interpreter (an engine error, not a retryable page condition).
-/// </summary>
+/// <summary>A configuration fault in the record/replay fake: a missing fixture directory, absent manifest.json, or a
+/// malformed manifest. Distinct from a scripted <see cref="BrowserTimeoutException"/> — this is a setup error,
+/// classified terminal by the interpreter (not a retryable page condition).</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
     Justification = "A message is mandatory so the fault is always self-describing; a parameterless constructor would allow messageless config faults.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",

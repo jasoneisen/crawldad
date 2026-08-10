@@ -1,17 +1,8 @@
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>
-/// The §7.2 binding surface — <c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c> — the only builtins that
-/// introduce a scoped variable. Each takes the fixed <c>fn(source, v, body)</c> form: the source list, a bare binding
-/// identifier <c>v</c>, and a body evaluated once per element in a <see cref="BindingScope"/> (so <c>v</c> shadows outer
-/// names for the body only, §8.2). Bodies may read the DOM (content-aware predicates are legal) and nest — the §7.4
-/// flagship <c>filter(map(keys(parents), k, toInt(k)), n, n &lt; indent)</c> composes because each layer wraps the
-/// current scope. Iteration is bounded by the (already-finite) input list, so evaluation always terminates.
-///
-/// <para>The list argument <b>null-propagates</b> (null → null, §7.1). Empty-list results follow C# LINQ: <c>any</c>
-/// → false, <c>all</c> → true (vacuous), <c>filter</c>/<c>map</c>/<c>sortBy</c> → empty. <c>any</c>/<c>all</c>
-/// short-circuit.</para>
-/// </summary>
+/// <summary>The binding surface — <c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c> — each shaped
+/// <c>fn(source, v, body)</c>: body evaluates per element in a <see cref="BindingScope"/> and may read the DOM. A null
+/// list propagates to null; empty list follows LINQ (<c>any</c>→false, <c>all</c>→true); both short-circuit.</summary>
 internal static partial class BuiltinRegistry
 {
     private static IEnumerable<BindingBuiltin> BindingBuiltins() =>

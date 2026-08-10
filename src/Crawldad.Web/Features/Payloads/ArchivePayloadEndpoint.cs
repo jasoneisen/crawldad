@@ -7,27 +7,17 @@ using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Payloads;
 
-/// <summary>
-/// <c>POST /payloads/{id}/archive</c> (§14.1): archives a managed payload — a terminal lifecycle change that advances the
-/// head revision (script hash unchanged) and blocks further revise/rename/archive and new pinned runs. An unknown payload
-/// is a <c>404</c>; an already-archived payload is a <c>400</c>. The event's actor is stamped from the authenticated
-/// tenant, never the request body (§12).
-/// </summary>
+/// <summary><c>POST /payloads/{id}/archive</c>: a terminal lifecycle change that advances the head revision (script hash
+/// unchanged) and blocks further revise/rename/archive and new pinned runs. <c>404</c> when unknown, <c>400</c> when
+/// already archived. The event's actor is stamped from the authenticated tenant, never the request body.</summary>
 public static class ArchivePayloadEndpoint
 {
-    /// <summary>Handles <c>POST /payloads/{id}/archive</c>.</summary>
-    /// <param name="id">The payload to archive.</param>
-    /// <param name="session">The request-scoped Marten session.</param>
-    /// <param name="tenant">The authenticated tenant — its actor identity is stamped on the event (§12).</param>
-    /// <param name="clock">The time seam for the event timestamp.</param>
-    /// <param name="ct">Cancels the save.</param>
-    /// <returns><c>200</c> with the archived <see cref="PayloadResponse"/>, <c>404</c> when unknown, or <c>400</c> when already archived.</returns>
     [WolverinePost("/payloads/{id}/archive")]
     public static async Task<IResult> Handle(
         Guid id,
         IDocumentSession session,
         // [FromServices]: this POST endpoint has no request body, so without the marker Wolverine would treat the first
-        // complex parameter (the tenant context) as the body to deserialize. The marker keeps it a resolved service (CD-1).
+        // complex parameter (the tenant context) as the body to deserialize. The marker keeps it a resolved service.
         [FromServices] TenantContext tenant,
         TimeProvider clock,
         CancellationToken ct)

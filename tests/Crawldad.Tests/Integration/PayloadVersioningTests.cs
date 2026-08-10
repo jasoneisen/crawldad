@@ -9,11 +9,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The managed-payload versioning surface (§14.1): revise/rename/archive mutations, the list/get/revision/diff queries,
-/// and the credential-scrubbing invariant that the stored script — the payload's persisted artifact — never carries a
-/// credential (§12). Revision == stream version (every mutation advances it; only a revise changes the script hash).
-/// </summary>
+/// <summary>The managed-payload versioning surface: revise/rename/archive mutations, the list/get/revision/diff
+/// queries, and the invariant that the stored script never carries a credential. Revision == stream version
+/// (every mutation advances it; only a revise changes the script hash).</summary>
 [Collection(IntegrationCollection.Name)]
 public class PayloadVersioningTests(AppFixture fixture)
 {
@@ -262,7 +260,7 @@ public class PayloadVersioningTests(AppFixture fixture)
         await StatusGet($"/payloads/{id}/diff/1/99", 404);
     }
 
-    // ----- scrubbing (§12) ---------------------------------------------------
+    // ----- scrubbing ---------------------------------------------------
 
     [Fact]
     public async Task A_credential_in_a_drafted_script_never_lands_in_any_stored_event_or_response()
@@ -290,8 +288,8 @@ public class PayloadVersioningTests(AppFixture fixture)
         const string Secret = "LEAKCANARY_pl_9876543210";
         var id = await DraftAsync(_v1);
 
-        // Revise IN the leaky script (its URL carries token=<secret>) with a note that also carries a token= param — the
-        // revise path runs the SAME scrub-then-validate gate as a draft (§12).
+        // Revise with the leaky script (URL carries token=<secret>) and a note that also carries a token= param —
+        // revise runs the same scrub-then-validate gate as draft.
         await ReadPost($"/payloads/{id}/revise", new JsonObject { ["payload"] = JsonNode.Parse(_leaky), ["note"] = "rotated token=" + Secret }, 200);
 
         // The stored PayloadRevised event redacts both the script and the note at the persistence boundary.

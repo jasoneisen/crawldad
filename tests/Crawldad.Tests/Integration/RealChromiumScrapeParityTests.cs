@@ -8,16 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 4 core gate (scrape side): drives the FULL <c>ScrapeEnforcementRecord</c> payload (Appendix B.2,
-/// <c>scrape-full.json</c> — byte-identical to the fake acceptance suite's) through <c>POST /runs</c> against
-/// <b>real headless Chromium</b> served by the local fixture site (the <c>"local"</c> adapter), and asserts the shaped
-/// <c>result</c> is <b>byte-identical to the same P3 golden</b> the record/replay fake produces — proving
-/// <c>fake ≡ real</c>. The theory mirrors <see cref="ScrapeRecordAcceptanceTests"/> exactly (same corpus, same goldens,
-/// same warning/log and terminal assertions) with the ONLY change being <c>backend.adapter</c> (<c>fake</c> → <c>local</c>).
-/// Both terminals run for parity (record-09 guard redirect, record-10 unknown heading); no fixture needs fault
-/// injection here. <b>Zero live third-party traffic</b> — the fixture site answers every request from local files.
-/// </summary>
+/// <summary>Drives the full <c>ScrapeEnforcementRecord</c> payload through <c>POST /runs</c> against real headless
+/// Chromium (the <c>"local"</c> adapter) and asserts byte-identical results to <see cref="ScrapeRecordAcceptanceTests"/>'s
+/// goldens — proving <c>fake ≡ real</c> with only <c>backend.adapter</c> changed. Zero live third-party traffic.</summary>
 [Collection(RealChromiumParityCollection.Name)]
 public class RealChromiumScrapeParityTests(ParityAppFixture fixture)
 {

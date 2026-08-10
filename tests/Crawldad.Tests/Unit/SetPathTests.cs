@@ -2,11 +2,9 @@ using Crawldad.Web.Features.Runs.Interpreter;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The <c>set.path</c> grammar parser (§7.4): dotted literal segments and <c>[${Expr}]</c> computed segments,
-/// composable. Rendering/upsert/type-error behaviour is covered through the interpreter (<see cref="InterpreterNodesTests"/>);
-/// these pin the parse itself, including the closing-bracket scan that skips single-quoted strings.
-/// </summary>
+/// <summary>The <c>set.path</c> grammar parser: dotted literal segments and <c>[${Expr}]</c> computed segments, composable.
+/// Rendering/upsert/type-error behaviour is covered through the interpreter (<see cref="InterpreterNodesTests"/>); these pin
+/// the parse itself, including the closing-bracket scan that skips single-quoted strings.</summary>
 public class SetPathTests
 {
     [Fact]
@@ -36,7 +34,7 @@ public class SetPathTests
     [Fact]
     public void A_quoted_string_inside_the_brackets_does_not_end_the_segment()
     {
-        // The `']'`-bearing key expression from B.2 must not have its closing bracket found inside the string literal.
+        // A `']'`-bearing key expression must not have its closing bracket found inside the string literal.
         SetPath.Parse("[${endsWith(h,':') ? substring(h,0,length(h)-1) : h}]")
             .ShouldHaveSingleItem().ShouldBeOfType<ComputedSegment>();
     }

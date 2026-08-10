@@ -10,14 +10,9 @@ using Xunit.Abstractions;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The durable <see cref="AzureBlobStore"/> (CD-2, the Azure deployment target) run against the <b>Azurite emulator</b> — the
-/// same <see cref="BlobStoreContract"/> matrix the filesystem adapter runs, now against Azure Blob's real API surface, with
-/// <b>zero live third-party traffic</b> (a loopback emulator only). The <see cref="AzuriteFixture"/> reaches Azurite via
-/// <c>CRAWLDAD_AZURITE_CONNECTION</c> (the CI service) or by launching the cached Azurite container locally; when neither is
-/// reachable the tests no-op (the emulator is optional), so this never blocks the hermetic gate — the adapter is excluded from
-/// the coverage gate and proven here where Azurite is available.
-/// </summary>
+/// <summary>The durable <see cref="AzureBlobStore"/> against the <b>Azurite emulator</b> — the same
+/// <see cref="BlobStoreContract"/> matrix the filesystem adapter runs, with zero live third-party traffic. Azurite
+/// is excluded from the coverage gate; when unreachable the tests no-op instead of blocking the build.</summary>
 [Collection(AzuriteCollection.Name)]
 public class AzuriteBlobStoreTests(AzuriteFixture fixture, ITestOutputHelper output)
 {
@@ -71,12 +66,9 @@ public class AzuriteBlobStoreTests(AzuriteFixture fixture, ITestOutputHelper out
     }
 }
 
-/// <summary>
-/// Establishes an Azurite blob endpoint for the suite: a configured connection string (the CI service) or the cached Azurite
-/// container launched locally with its published port probed across candidate hosts (the devcontainer reaches the docker host
-/// via its bridge gateway). Any failure leaves <see cref="ConnectionString"/> null with a <see cref="SkipReason"/> — the suite
-/// then no-ops rather than failing, so a missing emulator never breaks the build.
-/// </summary>
+/// <summary>Establishes an Azurite blob endpoint: a configured connection string (CI) or a locally launched cached
+/// container, with its published port probed across candidate hosts. Any failure leaves
+/// <see cref="ConnectionString"/> null with a <see cref="SkipReason"/>, so a missing emulator never breaks the build.</summary>
 public sealed class AzuriteFixture : IAsyncLifetime
 {
     /// <summary>The environment variable a CI job / operator sets to a ready Azurite blob connection string (the service path).</summary>
@@ -102,7 +94,7 @@ public sealed class AzuriteFixture : IAsyncLifetime
         {
             ConnectionString = await EstablishAsync();
         }
-        catch (Exception ex) // the emulator is optional — any failure degrades to a clean skip, never a build break
+        catch (Exception ex)
         {
             ConnectionString = null;
             SkipReason = ex.Message;
@@ -180,7 +172,7 @@ public sealed class AzuriteFixture : IAsyncLifetime
                 await client.GetBlobContainerClient("crawldad-probe").CreateIfNotExistsAsync(cancellationToken: cts.Token);
                 return true;
             }
-            catch (Exception) // not up yet / not reachable on this host — retry, then give up
+            catch (Exception)
             {
                 await Task.Delay(500);
             }

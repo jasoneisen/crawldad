@@ -2,11 +2,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>
-/// The free-identifier walk (§12) that backs save-time defined-before-use: every AST node shape contributes exactly
+/// <summary>The free-identifier walk that backs save-time defined-before-use: every AST node shape contributes exactly
 /// the bare variable names it reads, function names never appear, and binding builtins exclude their bound variable
-/// (including under shadowing). Templates union the identifiers of their <c>${…}</c> interpolations.
-/// </summary>
+/// (including under shadowing). Templates union the identifiers of their <c>${…}</c> interpolations.</summary>
 public class FreeIdentifiersTests
 {
     private static IReadOnlyList<string> Free(string source) =>
@@ -48,7 +46,7 @@ public class FreeIdentifiersTests
         FreeTmpl("a${x}b${y}c").ShouldBe(["x", "y"]);      // literal + interpolation segments interleaved
     }
 
-    // ----- CD-6: the input.<key> walk backing the secretRef guardrail -----
+    // ----- the input.<key> walk backing the secretRef guardrail -----
 
     private static IReadOnlyList<string> Members(string source) =>
         [.. CrawldadExpression.Parse(source).InputMemberReferences().OrderBy(s => s, StringComparer.Ordinal)];

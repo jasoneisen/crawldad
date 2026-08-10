@@ -5,13 +5,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The CD-3 mid-run resource limits (§12), each a terminal failure with its own code when a run outruns a server-side cap
-/// the payload cannot raise: max steps, max total downloaded bytes (enforced as the bytes flow), max event count, and the
-/// per-evaluation expression fuel budget. Also proves the mid-run counters reset per execution segment across a checkpoint
-/// resume (§11), so a resumed run enforces the cap against its own segment, not the whole run. The concurrent-runs cap
-/// (limit 5) is admission-time, not mid-run, and is covered by <c>RunAdmissionGateTests</c> + <c>ConcurrentRunsCapTests</c>.
-/// </summary>
+/// <summary>The mid-run resource limits, each a terminal failure with its own code when a run outruns a server-side
+/// cap the payload cannot raise: max steps, max downloaded bytes, max event count, and the per-evaluation expression
+/// fuel budget. Mid-run counters reset per segment across a checkpoint resume; the concurrent-runs cap is admission-time.</summary>
 public class ResourceLimitsTests
 {
     private const string _capHomeUrl = "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement";
@@ -160,7 +156,7 @@ public class ResourceLimitsTests
         outcome.Result!.Value.GetInt64().ShouldBe(40);
     }
 
-    // ----- mid-run counters reset per segment across a checkpoint resume (§11) -----
+    // ----- mid-run counters reset per segment across a checkpoint resume -----
 
     [Fact]
     public async Task Mid_run_step_counter_resets_on_checkpoint_resume()

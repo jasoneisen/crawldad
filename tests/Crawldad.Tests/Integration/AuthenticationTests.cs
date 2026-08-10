@@ -9,23 +9,17 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The authenticated-tenant boundary (CD-1, §12): every route requires a valid per-tenant API key, presented as
-/// <c>Authorization: Bearer</c> or <c>X-Api-Key</c>. The headline gate is <b>enumerated</b> — it discovers the app's routes
-/// from the live endpoint table and asserts each rejects an unauthenticated request, so a future route added without auth
-/// FAILS this test by default rather than escaping a hand-maintained list. The one intentional exception is the anonymous
-/// liveness probe (<c>/health</c>), asserted reachable without a key.
-/// </summary>
+/// <summary>Every route requires a valid per-tenant API key (<c>Authorization: Bearer</c> or <c>X-Api-Key</c>). The
+/// gate is enumerated from the live endpoint table, so a future route added without auth fails this test by default
+/// instead of escaping a hand-maintained list. The one exception is the anonymous <c>/health</c> liveness probe.</summary>
 [Collection(IntegrationCollection.Name)]
 public class AuthenticationTests(AppFixture fixture)
 {
     private IAlbaHost Host => fixture.Host;
 
-    // The routes that are intentionally anonymous. A new anonymous route must be added here deliberately — otherwise the
-    // enumeration below fails, which is the point (no route escapes the tenant gate by accident). Besides the /health
-    // liveness probe, the #20/#21 docs surface is anonymous by design: the payload JSON Schema, the llms.txt discovery index,
-    // and the #21 OpenAPI envelope description are public, tenant-independent product artifacts (no tenant data), only useful
-    // when reachable without a key — the same deliberate opt-out as /health, decided in SchemaEndpoint / LlmsEndpoint / OpenApiEndpoint.
+    // Intentionally anonymous routes. A new one must be added here deliberately, or the enumeration below fails — the
+    // point being no route escapes the tenant gate by accident. Besides /health, the docs surface (schema, llms.txt,
+    // OpenAPI) is anonymous by design: public, tenant-independent artifacts with no tenant data.
     private static readonly HashSet<string> _anonymousRoutes = new(StringComparer.Ordinal)
     {
         "/health",
@@ -120,8 +114,8 @@ public class AuthenticationTests(AppFixture fixture)
         return result.Context.Response.StatusCode;
     }
 
-    // Builds a routable probe path: each parameter is filled with a value that satisfies its route constraint (an int
-    // constraint → "1", otherwise a GUID) so routing matches the endpoint and the authorization layer is what answers.
+    // Fills each route parameter with a value satisfying its constraint (int constraint → "1", else a GUID) so
+    // routing matches and the authorization layer is what answers.
     private static string BuildProbePath(RoutePattern pattern)
     {
         var builder = new StringBuilder();

@@ -3,19 +3,12 @@ using Crawldad.Contracts.Payloads;
 
 namespace Crawldad.Web.Features.Payloads;
 
-/// <summary>
-/// A minimal structural diff between two payload scripts (§14.1), for the revision-diff endpoint. Walks the two JSON
-/// documents in parallel and emits one entry per <b>deepest</b> changed location (an unchanged subtree yields nothing):
-/// an object key present on one side only is added/removed; array tails beyond the shared length are added/removed; a
-/// leaf whose value or JSON kind differs is changed. Paths are JSON Pointers. Payload keys are simple identifiers (the
-/// schema forbids <c>/</c>/<c>~</c> in the head vocabulary and expression identifiers), so tokens need no escaping.
-/// Values are cloned so they outlive the parsed source documents.
-/// </summary>
+/// <summary>A minimal structural diff between two payload scripts: walks the JSON in parallel and emits one entry per
+/// <b>deepest</b> changed location (an unchanged subtree yields nothing). Paths are JSON Pointers; payload keys are
+/// simple identifiers so tokens need no escaping. Values are cloned so they outlive the parsed source documents.</summary>
 internal static class PayloadDiff
 {
     /// <summary>Computes the structural changes turning <paramref name="from"/> into <paramref name="to"/>.</summary>
-    /// <param name="from">The base revision's script.</param>
-    /// <param name="to">The compared revision's script.</param>
     /// <returns>The changes (empty when the two documents are identical).</returns>
     public static IReadOnlyList<PayloadDiffEntry> Compute(JsonElement from, JsonElement to)
     {

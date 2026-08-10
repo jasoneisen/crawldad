@@ -4,11 +4,9 @@ using Microsoft.AspNetCore.Hosting;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// Boots the host in the Production environment to cover the non-development branch of the pipeline (the
-/// ProblemDetails exception handler + HSTS, and the skipped dev-only schema apply). Uses its own schema and shares
-/// the integration collection so it never races the dev fixture on the same Postgres.
-/// </summary>
+/// <summary>Boots the host in Production to cover the non-development pipeline branch (ProblemDetails handler,
+/// HSTS, skipped dev-only schema apply). Uses its own schema but shares the integration collection so it never
+/// races the dev fixture on the same Postgres.</summary>
 [Collection(IntegrationCollection.Name)]
 public class ProductionHostTests
 {

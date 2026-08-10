@@ -1,17 +1,11 @@
 namespace Crawldad.Web.Infrastructure.Storage;
 
-/// <summary>
-/// The in-memory download sink (§9.3 testing seam), registered under the sink kind <c>"fake"</c> and driven directly by
-/// the interpreter — no blob store, no network. It tracks its calls so a test can assert the content-addressed
-/// idempotency contract by construction: a re-download of already-present content must short-circuit on
-/// <see cref="ExistsAsync"/> and <b>never</b> re-enter <see cref="StoreAsync"/> (assert <see cref="StoreCalls"/> stays
-/// put). Construct it with <paramref name="failStore"/> to model a sink that rejects the handling (the reference's
-/// <c>handleDownload</c> returning <c>false</c>), driving <c>dl.stored == false</c> and the payload's warn branch.
-/// </summary>
-/// <param name="failStore">When true, <see cref="StoreAsync"/> drains the stream but returns <see langword="false"/> and stores nothing.</param>
+/// <summary>The in-memory download sink (sink kind <c>"fake"</c>), driven directly by the interpreter — no blob
+/// store, no network. Tracks calls so a test can assert idempotency: a re-download of present content must
+/// short-circuit on <see cref="ExistsAsync"/> and never re-enter <see cref="StoreAsync"/>.</summary>
 internal sealed class FakeDownloadSink(bool failStore = false) : IDownloadSink
 {
-    // Blobs are held under (tenant, contentId) so the fake proves the seam's tenant partitioning (CD-1): the same content
+    // Blobs are held under (tenant, contentId) so the fake proves the seam's tenant partitioning: the same content
     // id under two tenants is two distinct entries, and one tenant's Exists probe never matches another's stored blob.
     private readonly HashSet<(string Tenant, Guid ContentId)> _stored = [];
 

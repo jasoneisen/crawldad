@@ -4,11 +4,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The logging-pipeline decorator (§12, WP3): <see cref="ScrubbingLoggerFactory"/>/<see cref="ScrubbingLogger"/> route
-/// every rendered message through the <see cref="CredentialScrubber"/> while delegating enablement, scopes, and factory
-/// lifecycle to the inner pipeline — so the central chokepoint scrubs without altering logging behaviour.
-/// </summary>
+/// <summary>The logging-pipeline decorator: <see cref="ScrubbingLoggerFactory"/>/<see cref="ScrubbingLogger"/> route every
+/// rendered message through the <see cref="CredentialScrubber"/> while delegating enablement, scopes, and factory lifecycle
+/// to the inner pipeline — the central chokepoint scrubs without altering logging behaviour.</summary>
 public class ScrubbingLoggerTests
 {
     private const string _redacted = CredentialScrubber.Redaction;
@@ -101,7 +99,6 @@ public class ScrubbingLoggerTests
         {
             public void Dispose()
             {
-                // Nothing to release.
             }
         }
     }

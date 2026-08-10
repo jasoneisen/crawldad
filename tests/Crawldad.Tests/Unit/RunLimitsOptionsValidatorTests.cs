@@ -2,11 +2,9 @@ using Crawldad.Web.Features.Runs;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The boot-time guard for the global resource-limit knobs (CD-3/CD-16 NIT-4): a nonsensical <c>Crawldad:Limits</c> value must
+/// <summary>The boot-time guard for the global resource-limit knobs: a nonsensical <c>Crawldad:Limits</c> value must
 /// fail the host loudly at startup rather than surface as a run that can never be admitted or a queue that rejects everything.
-/// Proves the defaults pass and each knob's floor is enforced, with every failure collected (not just the first).
-/// </summary>
+/// Proves the defaults pass and each knob's floor is enforced, with every failure collected (not just the first).</summary>
 public class RunLimitsOptionsValidatorTests
 {
     private static readonly RunLimitsOptionsValidator _validator = new();
@@ -20,7 +18,7 @@ public class RunLimitsOptionsValidatorTests
         _validator.Validate(name: null, new RunLimitsOptions { MaxQueueWaitMs = 0 }).Succeeded.ShouldBeTrue();
 
     [Fact]
-    public void Accepts_an_immediate_sync_upgrade() => // CD-15: 0 upgrades every sync run immediately (async-only), a valid posture
+    public void Accepts_an_immediate_sync_upgrade() => // 0 upgrades every sync run immediately (async-only), a valid posture
         _validator.Validate(name: null, new RunLimitsOptions { SyncUpgradeThresholdMs = 0 }).Succeeded.ShouldBeTrue();
 
     [Fact]

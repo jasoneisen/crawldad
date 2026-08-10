@@ -8,16 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 3 MVP acceptance gate: for a corpus of golden enforcement records, drives the FULL
-/// <c>ScrapeEnforcementRecord</c> payload (Appendix B.2, <c>scrape-full.json</c>) through <c>POST /runs</c> against the
-/// record/replay fake and asserts the shaped <c>result</c> is <b>byte-identical</b> to a hand-derived golden
-/// (<c>RecordScrapedV1</c> shape). The corpus spans the branch variety the plan names: 3/4/5-<c>&lt;br&gt;</c>
-/// addresses, 0/1/many owners, violations present/absent, related-record trees, single/multi-page attachments, an
-/// attachment-cap warning, empty-region edges, and two terminal cases (a CapDetail-guard redirect and an unknown owner
-/// heading) that fail terminally and are NOT retried. Goldens are hand-derived from the C# reference
-/// (<c>LJCMGClient.cs:177-725</c>); see each fixture's FIXTURE_NOTES.md. No Chromium, no live traffic.
-/// </summary>
+/// <summary>For a corpus of golden enforcement records, drives the full <c>ScrapeEnforcementRecord</c> payload
+/// (<c>scrape-full.json</c>) through <c>POST /runs</c> against the record/replay fake and asserts the result is
+/// byte-identical to hand-derived goldens. No Chromium, no live traffic.</summary>
 [Collection(IntegrationCollection.Name)]
 public class ScrapeRecordAcceptanceTests(AppFixture fixture)
 {

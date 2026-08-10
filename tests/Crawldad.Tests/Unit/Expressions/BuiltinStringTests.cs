@@ -2,8 +2,8 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>The §7.2 string surface added in Phase 2 (Appendix C): ordinal semantics, primary-argument
-/// null-propagation, and the reference's out-of-range throws reproduced as terminal failures.</summary>
+/// <summary>The string surface: ordinal semantics, primary-argument null-propagation, and the reference's
+/// out-of-range throws reproduced as terminal failures.</summary>
 public class BuiltinStringTests
 {
     [Theory]

@@ -4,10 +4,8 @@ using Crawldad.Web.Features.Payloads;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The structural revision diff (<see cref="PayloadDiff"/>, §14.1): every change kind (added/removed/changed), object and
-/// array recursion, kind-mismatch, and unchanged subtrees producing nothing — exercised with one crafted pair.
-/// </summary>
+/// <summary>The structural revision diff (<see cref="PayloadDiff"/>): every change kind (added/removed/changed),
+/// object and array recursion, kind-mismatch, and unchanged subtrees producing nothing — exercised with one crafted pair.</summary>
 public class PayloadDiffTests
 {
     private static IReadOnlyList<PayloadDiffEntry> Diff(string from, string to)

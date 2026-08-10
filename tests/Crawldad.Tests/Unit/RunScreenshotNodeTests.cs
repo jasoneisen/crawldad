@@ -4,13 +4,9 @@ using Crawldad.Web.Features.Runs;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The explicit <c>screenshot</c> node (#8): the author-authored analogue of screenshot-on-failure, flowing through the
-/// SAME <c>IScreenshotStore</c> seam (§13) — a full-page capture stored under the tenant's partition, the
-/// <c>Screenshotted</c> trace event carrying only the content-addressed ref + PNG byte size + optional author label, never
-/// the image (§12). It counts as one step and one event; inert on the synchronous path (no observer + no store), so the §10
-/// goldens are unchanged. Driven through the white-box <see cref="Runner"/> against the record/replay fake.
-/// </summary>
+/// <summary>The explicit <c>screenshot</c> node: the author-authored analogue of screenshot-on-failure, flowing through
+/// the same <c>IScreenshotStore</c> seam — the <c>Screenshotted</c> event carries only the content-addressed ref + byte
+/// size + optional label, never the image. Inert on the synchronous path. Driven via <see cref="Runner"/> against the fake.</summary>
 public class RunScreenshotNodeTests
 {
     // Navigate a real page first (so a page is bound), then screenshot it. `{{screenshotBody}}` is the only interpolation —
@@ -26,7 +22,7 @@ public class RunScreenshotNodeTests
     [Fact]
     public async Task A_screenshot_node_captures_the_page_and_records_a_ref_with_metadata()
     {
-        // The name is a Tmpl interpolating an input — proving expression support consistent with sibling nodes.
+        // The name is a Tmpl expression, interpolating an input like sibling nodes.
         var (outcome, observer, screenshots) = await Runner.RunWithObserverAsync(
             Payload("""{ "name": "after-${input.tag}" }"""),
             """{ "backend": { "adapter": "fake", "options": { "fixture": "caphome-search" } }, "tag": "load" }""");
@@ -34,8 +30,8 @@ public class RunScreenshotNodeTests
         outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
 
         var shot = observer.Events.OfType<Screenshotted>().ShouldHaveSingleItem();
-        shot.Name.ShouldBe("after-load");                   // the name Tmpl rendered, input interpolated
-        shot.ScreenshotRef.ShouldStartWith("screenshots/"); // content-addressed, credential-free (§12)
+        shot.Name.ShouldBe("after-load");
+        shot.ScreenshotRef.ShouldStartWith("screenshots/"); // content-addressed, credential-free
 
         // The store holds the captured PNG bytes at the ref, and the event's Size is that byte count (metadata only).
         var bytes = screenshots.Blobs[shot.ScreenshotRef];
@@ -58,7 +54,7 @@ public class RunScreenshotNodeTests
     [Fact]
     public async Task The_synchronous_path_captures_nothing()
     {
-        // No observer + no screenshot store ⇒ the node is inert (no capture, no store, no event), so the §10 sync goldens
+        // No observer + no screenshot store ⇒ the node is inert (no capture, no store, no event), so the sync goldens
         // are byte-identical. The run still succeeds; nothing accrues for the endpoint to append.
         var (outcome, _) = await Runner.RunWithFakeAsync(Payload("""{ "name": "unused" }"""));
 

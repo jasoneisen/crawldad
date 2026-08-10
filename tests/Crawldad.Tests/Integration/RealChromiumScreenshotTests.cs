@@ -6,13 +6,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The real-Chromium screenshot-on-failure gate (§13): drives a failing async run through the executor saga against real
-/// headless Chromium (the parity <c>local</c> backend, served entirely from the fixture corpus — no live traffic), so the
-/// product <see cref="Crawldad.Web.Infrastructure.Browser.Real.PlaywrightPageHandle"/> captures a <b>genuine</b> PNG via
-/// Playwright's screenshot API. The <c>StepFailed</c> event links the content-addressed ref; the deletable blob store holds
-/// the real image bytes (§12). This covers the real screenshot path the fake cannot.
-/// </summary>
+/// <summary>Drives a failing async run through the executor saga against real headless Chromium (the parity
+/// <c>local</c> backend, fixture corpus only — no live traffic) so the product's Playwright page handle captures a
+/// genuine PNG; the <c>StepFailed</c> event links the content-addressed blob ref. Covers the real path the fake cannot.</summary>
 [Collection(RealChromiumParityCollection.Name)]
 public class RealChromiumScreenshotTests(ParityAppFixture fixture)
 {
@@ -66,7 +62,7 @@ public class RealChromiumScreenshotTests(ParityAppFixture fixture)
     }
 
     [Fact]
-    public async Task An_explicit_screenshot_node_captures_a_real_page_png_through_the_saga() // #8
+    public async Task An_explicit_screenshot_node_captures_a_real_page_png_through_the_saga()
     {
         var host = fixture.Host;
 

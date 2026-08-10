@@ -6,22 +6,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Infrastructure.Storage.Azure;
 
-/// <summary>
-/// The durable Azure Blob storage adapter (CD-2, §9.3/§12/§13) — the Azure-native seam for the Azure deployment target
-/// (docs/PRODUCT.md). It implements all three storage seams over a single container, partitioning by a
-/// <c>{tenant}/{downloads|screenshots}/…</c> blob-name prefix so per-tenant isolation (CD-1) is preserved exactly as the
-/// filesystem adapter's directory layout is: one tenant can neither read, overwrite, nor probe another's blob, because every
-/// operation resolves a tenant-prefixed name. The engine-facing content id / screenshot ref stay tenant-independent (the wire
-/// result and immutable trace are byte-identical). Uploads are content-addressed and idempotent, mirroring the filesystem
-/// adapter; the container is created lazily on first use.
-/// <para>
-/// <b>Coverage:</b> this adapter is exercised against the <b>Azurite emulator</b> — the opt-in <c>AzuriteBlobStoreTests</c>
-/// locally and the Azurite service in CI — with zero live third-party traffic. It is excluded from the hermetic
-/// line/branch/method gate, which by design runs with no external storage dependency; the filesystem adapter carries the
-/// seam's fully-covered implementation. Construction performs no I/O, so the DI wiring that selects it (<c>StorageModule</c>)
-/// is covered without an emulator.
-/// </para>
-/// </summary>
+/// <summary>The durable Azure Blob storage adapter: implements all three storage seams over one container,
+/// partitioning by a <c>{tenant}/{downloads|screenshots}/…</c> blob-name prefix so one tenant can neither read,
+/// overwrite, nor probe another's blob. Uploads are content-addressed and idempotent; the container is created lazily.</summary>
 [ExcludeFromCodeCoverage(Justification =
     "Exercised against the Azurite emulator (opt-in AzuriteBlobStoreTests + the CI Azurite service), never live storage. " +
     "Excluded from the hermetic 100% gate, which runs with zero external storage dependencies; the FileSystemBlobStore " +

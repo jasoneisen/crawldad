@@ -8,12 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// Run pinning + drift (§14.1/§14.2, Deliverables 3-4): a run executes either an inline payload or a pinned managed
-/// payload revision, and reports drift (pinned-vs-head). The two demo revisions differ ONLY in their <c>result</c>
-/// (<c>'v1'</c> vs <c>'v2'</c>) so pinning is proven by observably different output: after the head moves, pinning
-/// revision 1 still runs the rev-1 script, pinning the head runs rev 2.
-/// </summary>
+/// <summary>Run pinning + drift: a run executes either an inline payload or a pinned managed payload revision, and
+/// reports drift (pinned-vs-head). The two demo revisions differ ONLY in <c>result</c> (<c>'v1'</c> vs <c>'v2'</c>)
+/// so pinning is proven by observably different output as the head moves.</summary>
 [Collection(IntegrationCollection.Name)]
 public class RunPinningTests(AppFixture fixture)
 {

@@ -5,11 +5,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The retention janitor (CD-2, §12/§13): <see cref="RetentionJanitor.SweepOnceAsync"/> deletes blobs past their category's
-/// TTL (a ≤ 0 TTL retains that category), counting deletions; the periodic driver sweeps repeatedly and stops cleanly on host
-/// shutdown, and is a no-op when retention is disabled.
-/// </summary>
+/// <summary>The retention janitor: <see cref="RetentionJanitor.SweepOnceAsync"/> deletes blobs past their category's
+/// TTL (a ≤ 0 TTL retains that category), counting deletions; the periodic driver sweeps repeatedly and stops cleanly
+/// on host shutdown, and is a no-op when retention is disabled.</summary>
 public class RetentionJanitorTests
 {
     private static readonly DateTimeOffset _now = new(2026, 8, 8, 12, 0, 0, TimeSpan.Zero);

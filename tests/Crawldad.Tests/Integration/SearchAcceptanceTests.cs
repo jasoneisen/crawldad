@@ -5,23 +5,14 @@ using Crawldad.Tests.Support;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 3 MVP acceptance gate, search side: an enumerable golden corpus of <b>M = 6</b> distinct searches driven
-/// through <c>POST /runs</c> with the FULL Appendix B.1 <c>SearchEnforcementRecords</c> payload (<c>search-full.json</c>)
-/// against the record/replay fake. Each search's shaped <c>result</c> (<c>newLinks</c>/<c>crawledToEnd</c>/<c>pages</c>)
-/// is asserted <b>byte-identical</b> to a golden hand-derived from the C# reference — the <c>HistoricalCrawler</c>
-/// callback (:85-104) plus the <c>LJCMGClient</c> do/while (:121-167). The corpus spans the variety the plan (§Phase 3)
-/// names: single-page (no pagination link), multi-page full crawl, known-URL early stop with <c>priorCrawlComplete</c>
-/// true, the <c>!crawledToEnd</c> nuance with it false, and empty results — plus a cross-page duplicate that exercises
-/// the <c>distinct(...)</c> de-dup. Three fixtures are reused (caphome-multipage's three goldens, caphome-empty);
-/// caphome-search's rich single-page grid is reused for the single-page case; caphome-dedup is new. No Chromium, no live
-/// traffic — the fake reads only local fixture files (see <c>tests/Crawldad.Tests/ACCEPTANCE.md</c>).
-/// </summary>
+/// <summary>The search-side acceptance gate: an enumerable golden corpus of M = 6 distinct searches driven through
+/// <c>POST /runs</c> with the full <c>SearchEnforcementRecords</c> payload (<c>search-full.json</c>) against the
+/// record/replay fake, each asserted byte-identical to a golden hand-derived from the C# reference. No Chromium, no live traffic.</summary>
 [Collection(IntegrationCollection.Name)]
 public class SearchAcceptanceTests(AppFixture fixture)
 {
     // Page 2, row 3 of caphome-multipage — a mid-page known url. Cases (c)/(d) share it and differ ONLY in
-    // priorCrawlComplete, isolating the callback's `return !crawledToEnd` branch (HistoricalCrawler:95).
+    // priorCrawlComplete, isolating the callback's `return !crawledToEnd` branch.
     private const string _knownMidPage2 = "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=p2-3";
     private const string _sharedDedupUrl = "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=shared";
 
@@ -32,13 +23,13 @@ public class SearchAcceptanceTests(AppFixture fixture)
     [Theory]
     // (a) single-page results, NO pagination link — reuses caphome-search's rich-edge grid through the full payload.
     [InlineData("caphome-search", "golden-full", null, false, 2)]
-    // (b) multi-page full crawl — crawledToEnd flips true on the last page (:87).
+    // (b) multi-page full crawl — crawledToEnd flips true on the last page.
     [InlineData("caphome-multipage", "golden-a-full", null, false, 4)]
     // (c) known-URL early stop, priorCrawlComplete=true — break at the known url (return !crawledToEnd=false); page 3 unvisited.
     [InlineData("caphome-multipage", "golden-b-early-stop", _knownMidPage2, true, 3)]
     // (d) known-URL, priorCrawlComplete=false — THE !crawledToEnd nuance: continue past the known url through to the end.
     [InlineData("caphome-multipage", "golden-c-continue", _knownMidPage2, false, 4)]
-    // (e) empty results — crawledToEnd already true (last page, :87), no pages pushed (break before the push).
+    // (e) empty results — crawledToEnd already true (last page), no pages pushed (break before the push).
     [InlineData("caphome-empty", "golden", null, false, 2)]
     // (f) cross-page duplicate url — distinct(newLinks) collapses the repeat while pages keeps both raw rows.
     [InlineData("caphome-dedup", "golden", null, false, 3)]
@@ -52,7 +43,7 @@ public class SearchAcceptanceTests(AppFixture fixture)
     }
 
     // (a) The single-page grid's row-3 has no <a>: attr(...,'href') null-propagates, coalesce(...,'') supplies '', and
-    // the naive concat yields scheme://host only (:130) — the whole per-cell edge set flows through the full result shape.
+    // the naive concat yields scheme://host only — the whole per-cell edge set flows through the full result shape.
     [Fact]
     public async Task Single_page_missing_anchor_row_resolves_to_scheme_host_only()
     {
@@ -66,7 +57,7 @@ public class SearchAcceptanceTests(AppFixture fixture)
     }
 
     // (c) knownUrls=[_knownMidPage2] + priorCrawlComplete=TRUE ⇒ hitKnown with crawledToEnd already true ⇒ break
-    // (return !crawledToEnd = false, :95). page-1 urls + page-2 urls BEFORE the known one; the known url is NOT added,
+    // (return !crawledToEnd = false). page-1 urls + page-2 urls BEFORE the known one; the known url is NOT added,
     // the rest of page 2 is skipped, and page 3 is NEVER visited.
     [Fact]
     public async Task Early_stop_when_prior_crawl_complete_does_not_visit_page_three()
@@ -93,7 +84,7 @@ public class SearchAcceptanceTests(AppFixture fixture)
         stats.GetProperty("requests").GetInt32().ShouldBe(4);
     }
 
-    // (e) empty page: Results.Count==0 ⇒ return false (:89), but crawledToEnd was already set true (:87, last page). So
+    // (e) empty page: Results.Count==0 ⇒ return false, but crawledToEnd was already set true (last page). So
     // newLinks empty, crawledToEnd TRUE, pages empty (the payload breaks before pushing the empty page). No downloads.
     [Fact]
     public async Task Empty_results_stop_with_crawled_to_end_true_and_no_pages()
@@ -106,7 +97,7 @@ public class SearchAcceptanceTests(AppFixture fixture)
         stats.GetProperty("downloads").GetInt32().ShouldBe(0);
     }
 
-    // (f) The shared record appears on BOTH pages: distinct(newLinks) (:901, = HashSet<string> newLinks) keeps it ONCE,
+    // (f) The shared record appears on BOTH pages: distinct(newLinks) keeps it ONCE,
     // but pages is NOT de-duplicated — the shared row is present in both per-page arrays. This is the de-dup collapse the
     // "no duplicate url" goldens (caphome-search/-multipage) cannot show, where distinct(...) is the identity.
     [Fact]

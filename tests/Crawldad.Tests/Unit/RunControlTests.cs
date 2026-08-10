@@ -2,10 +2,9 @@ using Crawldad.Web.Features.Runs;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The in-process run stop-signal (<see cref="RunControl"/>, §11): the executor claims a run exactly once, a cancel/deadline
-/// stops it (first reason wins), and only a deadline forcibly cancels the bound source — a user cancel stays cooperative.
-/// </summary>
+/// <summary>The in-process run stop-signal (<see cref="RunControl"/>): the executor claims a run exactly once, a
+/// cancel/deadline stops it (first reason wins), and only a deadline forcibly cancels the bound source — a user
+/// cancel stays cooperative.</summary>
 public class RunControlTests
 {
     [Fact]
@@ -67,7 +66,7 @@ public class RunControlTests
     {
         var control = new RunControl();
         using var forcible = new CancellationTokenSource();
-        control.UseForcibleCancellation(forcible, forEveryReason: true); // CD-15: an auto-upgraded run's observer-less interpreter
+        control.UseForcibleCancellation(forcible, forEveryReason: true); // an auto-upgraded run's observer-less interpreter
 
         control.Stop(RunStopReason.Cancelled);
 

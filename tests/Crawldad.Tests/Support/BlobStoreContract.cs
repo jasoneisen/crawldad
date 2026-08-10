@@ -3,13 +3,9 @@ using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>
-/// The storage-seam contract every durable blob adapter (CD-2) must satisfy — one matrix, run against each implementation
-/// (the filesystem adapter in the hermetic suite, the Azure adapter against Azurite) rather than a parallel copy per adapter.
-/// It asserts the three invariants the seams promise: content-addressed idempotency (§9.3), tenant partitioning (CD-1/§12),
-/// and the retention enumerate/delete lifecycle (§12/§13). Each assertion uses fresh, unique tenants so the same container
-/// can be reused across adapters/runs without cross-contamination.
-/// </summary>
+/// <summary>The storage-seam contract every durable blob adapter must satisfy: one matrix run against each implementation
+/// (filesystem in the hermetic suite, Azure against Azurite). Asserts content-addressed idempotency, tenant partitioning,
+/// and the retention enumerate/delete lifecycle, using fresh unique tenants per assertion to avoid cross-contamination.</summary>
 internal static class BlobStoreContract
 {
     private static string NewTenant() => "t-" + Guid.NewGuid().ToString("N");
@@ -24,13 +20,13 @@ internal static class BlobStoreContract
         var contentId = Guid.NewGuid();
         var item = new StoredDownload(contentId, $"{contentId}.pdf", bytes.Length, "sha-metadata");
 
-        (await sink.ExistsAsync(tenantA, contentId, CancellationToken.None)).ShouldBeFalse(); // not present before store
+        (await sink.ExistsAsync(tenantA, contentId, CancellationToken.None)).ShouldBeFalse();
 
         (await sink.StoreAsync(tenantA, item, new MemoryStream(bytes), CancellationToken.None)).ShouldBeTrue();
         (await sink.ExistsAsync(tenantA, contentId, CancellationToken.None)).ShouldBeTrue();  // A sees its own blob
         (await sink.ExistsAsync(tenantB, contentId, CancellationToken.None)).ShouldBeFalse(); // B cannot probe it by content id
 
-        // Idempotent: a re-store of the same content id leaves exactly one blob under A (content addressing, §9.3).
+        // Idempotent: a re-store of the same content id leaves exactly one blob under A.
         (await sink.StoreAsync(tenantA, item, new MemoryStream(bytes), CancellationToken.None)).ShouldBeTrue();
         (await CollectAsync(retention, BlobKind.Download, tenantA)).Count.ShouldBe(1);
         (await CollectAsync(retention, BlobKind.Download, tenantB)).ShouldBeEmpty();
@@ -44,7 +40,7 @@ internal static class BlobStoreContract
         var png = Encoding.UTF8.GetBytes("png-" + Guid.NewGuid());
 
         var reference = await store.SaveAsync(tenantA, png, CancellationToken.None);
-        reference.ShouldStartWith("screenshots/"); // the ref stays tenant-independent (wire/trace byte-identical)
+        reference.ShouldStartWith("screenshots/"); // tenant-independent ref
         reference.ShouldEndWith(".png");
 
         (await store.SaveAsync(tenantA, png, CancellationToken.None)).ShouldBe(reference); // idempotent: same content ⇒ same ref

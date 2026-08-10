@@ -4,12 +4,9 @@ using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// Pins the engine-native content identity (§9.3) to a golden vector, byte-for-byte with the reference
-/// <c>AttachmentHashing</c>. The expected GUID is hand-derived from the SHA-256's first 16 bytes under
-/// <c>new Guid(byte[16])</c>'s mixed-endian layout — bytes 0-3 / 4-5 / 6-7 little-endian, bytes 8-15 in order —
-/// independent of the engine's own <c>new Guid(...)</c>, so it is a real pin, not a re-run of the same code.
-/// </summary>
+/// <summary>Pins the engine-native content identity to a golden vector, byte-for-byte with <c>AttachmentHashing</c>:
+/// the GUID is hand-derived from SHA-256's first 16 bytes under <c>Guid(byte[16])</c>'s mixed-endian layout (bytes
+/// 0-3/4-5/6-7 little-endian, 8-15 in order) — independent of the engine's own code, so it is a real pin.</summary>
 public class AttachmentContentIdTests
 {
     // The SAME 30 bytes as Fixtures/download-sample/sample.bin ("Crawldad sample attachment v1\n").
@@ -20,7 +17,6 @@ public class AttachmentContentIdTests
     {
         var hash = SHA256.HashData(_sampleBytes);
 
-        // Pinned: full hash, and the GUID its first 16 bytes yield under the Guid(byte[16]) byte order.
         Convert.ToHexStringLower(hash).ShouldBe("e22edc18626ec6f58ec1648aa28b2f48fc168b6ce9defa3b40344b1eb22f789e");
         AttachmentContentId.FromHash(hash).ToString().ShouldBe("18dc2ee2-6e62-f5c6-8ec1-648aa28b2f48");
     }
@@ -28,7 +24,7 @@ public class AttachmentContentIdTests
     [Fact]
     public void Content_id_equals_the_reference_new_guid_construction()
     {
-        // AttachmentHashing.AttachmentIdFromHash = new Guid(sha256Hash.AsSpan(0,16).ToArray()); the span ctor is identical.
+        // Mirrors production's AttachmentHashing.AttachmentIdFromHash construction.
         var hash = SHA256.HashData(Encoding.ASCII.GetBytes("a different payload entirely"));
         AttachmentContentId.FromHash(hash).ShouldBe(new Guid(hash.AsSpan(0, 16).ToArray()));
     }

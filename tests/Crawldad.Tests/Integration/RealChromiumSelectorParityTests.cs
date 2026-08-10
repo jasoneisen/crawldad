@@ -4,14 +4,9 @@ using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// #9 fake≡real parity for the structured-<c>Sel</c> role/text/xpath variants (§5.2). Drives the SAME
-/// <c>selector-variants/page.html</c> the record/replay fake serves (<see cref="Unit.SelectorVariantTests"/>) through
-/// <b>real headless Chromium</b> over the loopback fixture origin, and asserts <c>GetByRole</c> (with the accessible-name
-/// option), <c>GetByText</c>, and the <c>xpath=</c> engine resolve identically — across count/extract, click, fill,
-/// multi-match, and no-match. The fake models Playwright's semantics; here Playwright itself is the oracle. <b>Zero live
-/// third-party traffic</b> — every request is answered from the loopback site.
-/// </summary>
+/// <summary>Fake≡real parity for the structured <c>Sel</c> role/text/xpath variants: drives the same page the fake
+/// serves (<see cref="Unit.SelectorVariantTests"/>) through real headless Chromium, asserting <c>GetByRole</c>,
+/// <c>GetByText</c>, and <c>xpath=</c> resolve identically — Playwright itself is the oracle. Zero live traffic.</summary>
 [Collection(RealChromiumCollection.Name)]
 public sealed class RealChromiumSelectorParityTests(RealChromiumFixture fixture)
 {
@@ -87,15 +82,15 @@ public sealed class RealChromiumSelectorParityTests(RealChromiumFixture fixture)
         var page = await OpenAsync(site);
         var li = page.Locator("li"); // the same three <li> (Alpha / Bravo / Charlie) the fake serves
 
-        // Accepted 0-based domain — identical to the fake (SelectorVariantTests): in-range narrows to one, past-the-end
-        // to none. This is the domain #37 lets through to a backend, and it is fake≡real.
+        // Accepted 0-based domain, identical to the fake: in-range narrows to one, past-the-end to none — the domain
+        // the interpreter lets through to a backend, and it is fake≡real.
         (await li.Nth(0).TextContentAsync(_ct)).ShouldBe("Alpha item");
         (await li.Nth(2).TextContentAsync(_ct)).ShouldBe("Charlie item");
         (await li.Nth(3).CountAsync(_ct)).ShouldBe(0);
 
-        // DIVERGENCE — the empirical basis for rejecting a negative nth (#37): Playwright's Nth(-1) is the LAST element,
-        // whereas the fake yields no match for a negative index. A negative nth therefore cannot mean the same thing on
-        // both backends, so the interpreter classifies it (index_out_of_range) before it reaches either.
+        // DIVERGENCE — empirical basis for rejecting a negative nth: Playwright's Nth(-1) is the LAST element, while
+        // the fake yields no match for a negative index. A negative nth can't mean the same thing on both backends,
+        // so the interpreter classifies it (index_out_of_range) before it reaches either.
         (await li.Nth(-1).CountAsync(_ct)).ShouldBe(1);
         (await li.Nth(-1).TextContentAsync(_ct)).ShouldBe("Charlie item");
     }

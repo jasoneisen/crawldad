@@ -4,11 +4,9 @@ using Crawldad.Web.Features.Runs.Interpreter;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// Payload parse-hardening (§ Deliverable 4): unknown head keys and missing <c>maxIterations</c> — even deep inside a
-/// nested block — are rejected at parse time, before any step executes, so a malformed payload fails with no side
-/// effects (zero steps).
-/// </summary>
+/// <summary>Payload parse-hardening: unknown head keys and missing <c>maxIterations</c> — even deep inside a
+/// nested block — are rejected at parse time, before any step executes, so a malformed payload fails with no
+/// side effects (zero steps).</summary>
 public class PayloadValidationTests
 {
     private static string Payload(string steps) =>

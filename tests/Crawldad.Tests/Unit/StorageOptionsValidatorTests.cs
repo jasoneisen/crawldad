@@ -3,10 +3,8 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The boot-time storage-options guard (CD-2): a valid configuration passes, and each misconfiguration that would break a
-/// sweep or leave a durable provider mis-targeted fails startup with a specific, aggregated message.
-/// </summary>
+/// <summary>The boot-time storage-options guard: a valid configuration passes, and each misconfiguration that would break a
+/// sweep or leave a durable provider mis-targeted fails startup with a specific, aggregated message.</summary>
 public class StorageOptionsValidatorTests
 {
     private static readonly StorageOptionsValidator _validator = new();

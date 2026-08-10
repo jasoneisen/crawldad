@@ -10,17 +10,13 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 5 WP3 observability gates (§13/§11): the <c>RunTimeline</c> projection + <c>GET /runs/{id}/timeline</c>, the
-/// SSE stream (<c>GET /runs/{id}/events</c>) with durable-backfill + Last-Event-ID reconnect + live tail, and
-/// <c>POST /runs/{id}/replay</c>. Every run drives the real <c>POST /runs</c> path + executor saga against the record/replay
-/// fake on the shared durable host — no Chromium, no live traffic. SSE is read over the raw TestServer client (Alba's
-/// scenario API is request/response only).
-/// </summary>
+/// <summary>Observability: the <c>RunTimeline</c> projection + <c>GET /runs/{id}/timeline</c>, the SSE stream
+/// (<c>GET /runs/{id}/events</c> — durable-backfill, Last-Event-ID reconnect, live tail), and <c>POST /runs/{id}/replay</c>.
+/// Drives the real <c>POST /runs</c> path against the fake; SSE uses the raw TestServer client (Alba's scenario API is request/response only).</summary>
 [Collection(DurableCollection.Name)]
 public class RunObservabilityTests(DurableFixture fixture)
 {
-    // A tiny async run: navigate + bind a var, so its trace is a small, known set of step events (§13).
+    // A tiny async run: navigate + bind a var, so its trace is a small, known set of step events.
     private const string _demoPayload =
         """
         { "crawldad": "1", "name": "obs.demo", "config": { "backend": "input.backend" }, "vars": {},
@@ -32,7 +28,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         """;
 
     // Binds a known subject value into the run's data model three ways — a set, a push, and a checkpoint cursor — and
-    // shapes it into the result. The §12 PII-discipline probe: the value reaches the result body (the deletable
+    // shapes it into the result. The PII-discipline probe: the value reaches the result body (the deletable
     // RunProgress) but must never land in an immutable trace event, which carry refs/shape/metadata only.
     private const string _piiPayload =
         """
@@ -86,7 +82,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         return runId;
     }
 
-    // ----- RunTimeline projection + endpoint (§13) ---------------------------
+    // ----- RunTimeline projection + endpoint ---------------------------
 
     [Fact]
     public async Task Timeline_renders_the_step_list_region_extracts_and_redacted_input_keys()
@@ -103,12 +99,12 @@ public class RunObservabilityTests(DurableFixture fixture)
         var timeline = await result.ReadAsJsonAsync<JsonElement>();
 
         timeline.GetProperty("status").GetString().ShouldBe("succeeded");
-        timeline.GetProperty("region").GetString().ShouldBe("fake"); // surfaced here, not on RunResponse (§13)
+        timeline.GetProperty("region").GetString().ShouldBe("fake"); // surfaced here, not on RunResponse
         timeline.GetProperty("scriptHash").GetString().ShouldNotBeNullOrWhiteSpace();
         timeline.GetProperty("payloadId").ValueKind.ShouldBe(JsonValueKind.Null); // an inline run
         timeline.GetProperty("durationMs").GetInt64().ShouldBeGreaterThanOrEqualTo(0);
 
-        // The redacted input key NAMES only (never values, §12).
+        // The redacted input key NAMES only (never values).
         timeline.GetProperty("inputKeys").EnumerateArray().Select(k => k.GetString()).ShouldContain("backend");
 
         // The ordered top-level steps (goto then set), each with a duration.
@@ -122,7 +118,7 @@ public class RunObservabilityTests(DurableFixture fixture)
     }
 
     [Fact]
-    public async Task Timeline_surfaces_an_explicit_screenshot_capture() // #8: the durable saga → RunTimeline projection → endpoint, with the fake store
+    public async Task Timeline_surfaces_an_explicit_screenshot_capture() // the durable saga → RunTimeline projection → endpoint, with the fake store
     {
         var host = await fixture.EnsureAsync();
         fixture.Gate.Arm(gate: null);
@@ -152,7 +148,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         });
         var timeline = await result.ReadAsJsonAsync<JsonElement>();
 
-        // The timeline surfaces the capture as an artifact (ref + label + byte size), never the image (§12).
+        // The timeline surfaces the capture as an artifact (ref + label + byte size), never the image.
         var shot = timeline.GetProperty("screenshots").EnumerateArray().ToList().ShouldHaveSingleItem();
         var storedRef = shot.GetProperty("screenshotRef").GetString();
         storedRef.ShouldStartWith("screenshots/");
@@ -179,7 +175,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         fixture.Gate.Arm(gate: null);
 
-        // A run that navigates then fails — the executor captures a (fake) screenshot on the failing step (§13).
+        // A run that navigates then fails — the executor captures a (fake) screenshot on the failing step.
         var body = new JsonObject
         {
             ["payload"] = JsonNode.Parse(
@@ -207,13 +203,13 @@ public class RunObservabilityTests(DurableFixture fixture)
         failure.GetProperty("screenshotRef").GetString().ShouldStartWith("screenshots/");
     }
 
-    // ----- §12 metadata-only trace discipline (the PII re-assertion) ----------
+    // ----- metadata-only trace discipline (the PII re-assertion) ----------
 
     [Fact]
     public async Task The_trace_stream_holds_no_raw_extracted_or_input_value_only_metadata_refs()
     {
         // A distinctive, NON-credential subject value: the scrubber never touches it (no apiKey=/token= param, not a
-        // registered run secret), so its ABSENCE from the trace proves the §12 metadata-only discipline itself — not an
+        // registered run secret), so its ABSENCE from the trace proves the metadata-only discipline itself — not an
         // after-the-fact redaction. It stands in for the bulk PII a scraped record carries.
         const string Pii = "PII_SUBJECT_Jane_Q_Doe_dob_1970-01-01_ref_ABCDEF";
         var host = await fixture.EnsureAsync();
@@ -237,7 +233,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         terminal.GetProperty("status").GetString().ShouldBe("succeeded");
         terminal.GetProperty("result").GetProperty("subject").GetString().ShouldBe(Pii);
 
-        // (a) Every event in the immutable §13 trace: NONE carries the raw value. set/push emit Extracted shape refs only,
+        // (a) Every event in the immutable trace: NONE carries the raw value. set/push emit Extracted shape refs only,
         // the checkpoint marker is metadata-only (name + sequence), and no terminal event carries the result body.
         var store = host.Services.GetRequiredService<IDocumentStore>();
         await using var session = store.LightweightSession(TestTenants.PrimaryId);
@@ -264,7 +260,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         timeline.GetProperty("extracted").EnumerateArray().Select(e => e.GetProperty("key").GetString()).ShouldContain("subject");
     }
 
-    // ----- SSE: backfill + reconnect + live tail (§11) -----------------------
+    // ----- SSE: backfill + reconnect + live tail -----------------------
 
     [Fact]
     public async Task Events_for_an_unknown_run_is_404()
@@ -363,7 +359,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         (await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(30))).GetProperty("status").GetString().ShouldBe("succeeded");
     }
 
-    // ----- replay (§13) ------------------------------------------------------
+    // ----- replay ------------------------------------------------------
 
     [Fact]
     public async Task Replay_re_executes_a_pinned_runs_revision_with_resupplied_inputs()
@@ -371,7 +367,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         fixture.Gate.Arm(gate: null);
 
-        // Draft a managed payload, run it pinned, then replay that run — the replay pins the SAME revision (§14.2).
+        // Draft a managed payload, run it pinned, then replay that run — the replay pins the SAME revision.
         var draft = await host.Scenario(x =>
         {
             x.Post.Json(new JsonObject { ["payload"] = JsonNode.Parse(_demoPayload) }).ToUrl("/payloads");
@@ -397,7 +393,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         replayRoot.GetProperty("status").GetString().ShouldBe("succeeded");
         replayRoot.GetProperty("runId").GetGuid().ShouldNotBe(pinnedRunId); // a NEW run
 
-        // The replay pinned the original run's revision (drift-comparable, §13).
+        // The replay pinned the original run's revision (drift-comparable).
         var drift = await host.Scenario(x =>
         {
             x.Get.Url($"/runs/{replayRoot.GetProperty("runId").GetGuid()}/drift");
@@ -437,7 +433,7 @@ public class RunObservabilityTests(DurableFixture fixture)
         var host = await fixture.EnsureAsync();
         fixture.Gate.Arm(gate: null);
 
-        // An inline run's script was never stored as a managed revision — it cannot be replayed (§13).
+        // An inline run's script was never stored as a managed revision — it cannot be replayed.
         var inlineRun = await host.Scenario(x =>
         {
             x.Post.Json(DemoBody(async: false)).ToUrl("/runs");

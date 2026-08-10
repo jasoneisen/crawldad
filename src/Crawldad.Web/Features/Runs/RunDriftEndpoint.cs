@@ -6,19 +6,12 @@ using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Runs;
 
-/// <summary>
-/// <c>GET /runs/{id}/drift</c> (§14.1/§13): reports a run's pinned payload revision against the payload's current head, so
-/// a historical run that pinned an older revision is flagged as drifted once the payload moves on. Drift = the pinned
-/// revision is no longer the head revision (§14.1). Both revisions' script hashes are reported for diagnosis (equal hashes
-/// under a revision mismatch = a metadata-only head move). An inline run has no pinned payload and never drifts.
-/// </summary>
+/// <summary><c>GET /runs/{id}/drift</c>: reports a run's pinned payload revision against the payload's current head, so a
+/// historical run that pinned an older revision is flagged as drifted once the payload moves on. Both revisions' script
+/// hashes are reported (equal hashes under a mismatch = a metadata-only head move). An inline run never drifts.</summary>
 public static class RunDriftEndpoint
 {
     /// <summary>Handles <c>GET /runs/{id}/drift</c>.</summary>
-    /// <param name="id">The run to report drift for.</param>
-    /// <param name="session">The Marten session.</param>
-    /// <param name="ct">Cancels the query.</param>
-    /// <returns><c>200</c> with the <see cref="RunDriftResponse"/>, or <c>404</c> when the run is unknown.</returns>
     [WolverineGet("/runs/{id}/drift")]
     public static async Task<IResult> Handle(Guid id, IDocumentSession session, CancellationToken ct)
     {

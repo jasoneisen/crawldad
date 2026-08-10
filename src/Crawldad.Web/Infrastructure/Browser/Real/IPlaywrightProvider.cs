@@ -3,12 +3,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Web.Infrastructure.Browser.Real;
 
-/// <summary>
-/// Owns the one shared <see cref="IPlaywright"/> driver for the process. <see cref="Playwright.CreateAsync"/> spins up
-/// the bundled Node driver, so it is created once, lazily, and shared by every real adapter (local/browserless/
-/// browserbase) — the browsers/contexts opened on it stay per-run and isolated (§12). Registered as a DI singleton and
-/// disposed with the host.
-/// </summary>
+/// <summary>Owns the one shared <see cref="IPlaywright"/> driver for the process, created once and lazily shared by
+/// every real adapter. Browsers/contexts opened on it stay per-run and isolated. Registered as a DI singleton,
+/// disposed with the host.</summary>
 internal interface IPlaywrightProvider
 {
     /// <summary>Returns the shared driver, creating it on first use.</summary>

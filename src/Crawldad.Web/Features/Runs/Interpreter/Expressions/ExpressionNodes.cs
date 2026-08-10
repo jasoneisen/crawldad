@@ -1,24 +1,13 @@
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>The environment threaded through evaluation: the read-only <see cref="IEvalScope"/>, the run's cancellation
-/// token, and the per-evaluation <see cref="Fuel"/> counter. A small struct so every node's <c>EvaluateAsync</c> takes one
-/// argument; the <see cref="Fuel"/> is a shared reference (a mutable counter), so it accumulates across the whole tree even
-/// though the struct is copied — and <c>ctx with { Scope = … }</c> in the binding builtins carries it forward unchanged.</summary>
-/// <param name="Scope">The flat run scope reads resolve against.</param>
-/// <param name="Fuel">The shared per-evaluation step counter (CD-3/§12).</param>
-/// <param name="Ct">Cancels an in-flight DOM read.</param>
+/// <summary>The environment threaded through evaluation: the read-only <see cref="IEvalScope"/>, the cancellation
+/// token, and the per-evaluation <see cref="Fuel"/> counter. <see cref="Fuel"/> is a shared mutable reference, so it
+/// accumulates across the whole tree even though this struct is copied (e.g. by <c>ctx with { Scope = … }</c>).</summary>
 internal readonly record struct EvalContext(IEvalScope Scope, ExpressionFuel Fuel, CancellationToken Ct);
 
-/// <summary>
-/// The per-evaluation fuel counter (CD-3/§12): one instance is created for each top-level
-/// <see cref="CrawldadExpression.EvaluateAsync"/> and shared (by reference) through the whole tree via
-/// <see cref="EvalContext"/>. Every node evaluation spends one unit at the <see cref="ExpressionNode.EvaluateAsync"/>
-/// chokepoint; overspending is a terminal <see cref="ExpressionErrorCodes.ExpressionBudgetExceeded"/>. A cheap increment
-/// (no allocation per spend) that bounds a breadth-heavy but non-recursive expression — a binding builtin over a large
-/// list — which the parse-time depth cap cannot. The budget is per evaluation, so it never accumulates across a run's many
-/// expressions (that is what max-steps and the wall-clock deadline bound); a fresh counter starts each expression.
-/// </summary>
-/// <param name="budget">The maximum node evaluations this expression may spend.</param>
+/// <summary>The per-evaluation fuel counter: one instance per top-level <see cref="CrawldadExpression.EvaluateAsync"/>,
+/// shared by reference through the whole tree. Bounds a breadth-heavy but non-recursive expression (e.g. a binding
+/// builtin over a large list) that the parse-time depth cap can't catch; resets fresh each expression, unlike max-steps.</summary>
 internal sealed class ExpressionFuel(int budget)
 {
     private int _spent;
@@ -36,17 +25,13 @@ internal sealed class ExpressionFuel(int budget)
     }
 }
 
-/// <summary>
-/// One node of a parsed expression tree (§7.1). Evaluation is async because leaf DOM reads are; pure/arithmetic
-/// nodes complete synchronously. A node captures no scope — the same parsed tree is safely reusable across runs.
-/// </summary>
+/// <summary>One node of a parsed expression tree. Evaluation is async because leaf DOM reads are; pure/arithmetic
+/// nodes complete synchronously. A node captures no scope — the same parsed tree is safely reusable across runs.</summary>
 internal abstract class ExpressionNode
 {
-    /// <summary>Evaluates this node against <paramref name="ctx"/>, producing a value-model value or a terminal failure.
-    /// The single fuel chokepoint (CD-3/§12): it spends one budget unit, then dispatches to the node's
-    /// <see cref="EvaluateCoreAsync"/> — so every node evaluation (including a builtin's argument and a binding builtin's
-    /// per-element body) is metered by construction, no per-node discipline required.</summary>
-    /// <param name="ctx">The scope + cancellation token + fuel.</param>
+    /// <summary>Evaluates this node against <paramref name="ctx"/>. The single fuel chokepoint: spends one budget
+    /// unit, then dispatches to <see cref="EvaluateCoreAsync"/> — so every node evaluation (including a builtin's
+    /// argument and a binding builtin's per-element body) is metered by construction.</summary>
     public ValueTask<object?> EvaluateAsync(EvalContext ctx)
     {
         ctx.Fuel.Spend();
@@ -55,29 +40,16 @@ internal abstract class ExpressionNode
 
     /// <summary>Evaluates this node's own logic (children recurse back through <see cref="EvaluateAsync"/>, so they too are
     /// fuel-metered). Overridden per node kind.</summary>
-    /// <param name="ctx">The scope + cancellation token + fuel.</param>
     protected abstract ValueTask<object?> EvaluateCoreAsync(EvalContext ctx);
 
-    /// <summary>
-    /// Collects the <b>free</b> variable identifiers this subtree reads — the bare names it resolves through scope,
-    /// minus any bound by an enclosing binding builtin (<c>filter</c>/<c>map</c>/…). Backs save-time defined-before-use
-    /// validation (§12); a pure static walk, no evaluation. Builtin function names are not identifiers (resolved at
-    /// parse), so they never appear here.
-    /// </summary>
-    /// <param name="into">Accumulates the free identifier names.</param>
-    /// <param name="bound">Names currently bound by enclosing binding builtins (excluded from <paramref name="into"/>).</param>
+    /// <summary>Collects the free variable identifiers this subtree reads (minus any bound by an enclosing binding
+    /// builtin like <c>filter</c>/<c>map</c>). Backs save-time defined-before-use validation. Builtin function names
+    /// never appear (resolved at parse, not identifiers).</summary>
     public abstract void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound);
 
-    /// <summary>
-    /// Collects the top-level <c>input</c> keys this subtree reads via a direct <c>input.&lt;key&gt;</c> member access or
-    /// <c>input["key"]</c> string index — the static half of the CD-6 structural guarantee: a <c>secretRef</c> input may be
-    /// consumed <b>only</b> by <c>fill.secret</c>, so the semantic walker rejects any expression/template that names one.
-    /// Only the free <c>input</c> identifier is inspected (a binding builtin that shadows <c>input</c> suppresses detection in
-    /// its body); a bare <c>input</c> used whole is not a keyed reference (secretRef inputs are absent from the run scope, so
-    /// it cannot surface one). A pure static walk, no evaluation.
-    /// </summary>
-    /// <param name="into">Accumulates the referenced <c>input</c> key names.</param>
-    /// <param name="bound">Names currently bound by enclosing binding builtins (a bound <c>input</c> is not the run input).</param>
+    /// <summary>Collects the top-level <c>input</c> keys this subtree reads via <c>input.&lt;key&gt;</c>/<c>input["key"]</c>
+    /// access — the static half of guaranteeing a <c>secretRef</c> input is consumed only by <c>fill.secret</c>. A binding
+    /// builtin shadowing <c>input</c> suppresses detection in its body; a pure static walk.</summary>
     public abstract void CollectInputMembers(ISet<string> into, ISet<string> bound);
 
     // True when this node is the free `input` identifier (the run-input root, not a binding-shadowed alias).
@@ -88,7 +60,7 @@ internal abstract class ExpressionNode
 /// <summary>A constant: number (<see cref="long"/>/<see cref="double"/>), string, bool, or null.</summary>
 internal sealed class LiteralNode(object? value) : ExpressionNode
 {
-    /// <summary>The constant value — read by <see cref="IndexNode"/> to recognise a string-literal <c>input["key"]</c> index (CD-6).</summary>
+    /// <summary>The constant value — read by <see cref="IndexNode"/> to recognise a string-literal <c>input["key"]</c> index.</summary>
     public object? Value { get; } = value;
 
     protected override ValueTask<object?> EvaluateCoreAsync(EvalContext ctx) => new(Value);
@@ -193,7 +165,7 @@ internal sealed class ObjectNode(IReadOnlyList<KeyValuePair<string, ExpressionNo
     }
 }
 
-/// <summary>Logical negation <c>!x</c>: operand must be bool (§7.1).</summary>
+/// <summary>Logical negation <c>!x</c>: operand must be bool.</summary>
 internal sealed class NotNode(ExpressionNode operand) : ExpressionNode
 {
     protected override async ValueTask<object?> EvaluateCoreAsync(EvalContext ctx) =>
@@ -329,10 +301,10 @@ internal sealed class TernaryNode(ExpressionNode condition, ExpressionNode ifTru
 /// <summary>Member access <c>a.b</c>: map → value (absent key → null), null → null (models C# <c>?.</c>), else <c>type_error</c>.</summary>
 internal sealed class MemberNode(ExpressionNode target, string name) : ExpressionNode
 {
-    /// <summary>The target subtree the member is read from — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> (CD-6).</summary>
+    /// <summary>The target subtree the member is read from — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/>.</summary>
     public ExpressionNode Target { get; } = target;
 
-    /// <summary>The member key — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> (CD-6).</summary>
+    /// <summary>The member key — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/>.</summary>
     public string Name { get; } = name;
 
     protected override async ValueTask<object?> EvaluateCoreAsync(EvalContext ctx)
@@ -350,7 +322,7 @@ internal sealed class MemberNode(ExpressionNode target, string name) : Expressio
     public override void CollectFreeIdentifiers(ISet<string> into, ISet<string> bound) =>
         Target.CollectFreeIdentifiers(into, bound);
 
-    // `input.<name>` names a top-level input key — the CD-6 secretRef guardrail's detection point.
+    // `input.<name>` names a top-level input key — the secretRef guardrail's detection point.
     public override void CollectInputMembers(ISet<string> into, ISet<string> bound)
     {
         if (IsFreeInput(Target, bound))
@@ -362,17 +334,15 @@ internal sealed class MemberNode(ExpressionNode target, string name) : Expressio
     }
 }
 
-/// <summary>
-/// Index access <c>a[i]</c>: array with an integer index (out of range, or on null → terminal
+/// <summary>Index access <c>a[i]</c>: array with an integer index (out of range, or on null → terminal
 /// <c>index_out_of_range</c>, reproducing C# <c>IndexOutOfRangeException</c>); map with a string index → value or
-/// null; anything else → <c>type_error</c> (§7.2).
-/// </summary>
+/// null; anything else → <c>type_error</c>.</summary>
 internal sealed class IndexNode(ExpressionNode target, ExpressionNode index) : ExpressionNode
 {
-    /// <summary>The indexed target subtree — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> (CD-6).</summary>
+    /// <summary>The indexed target subtree — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/>.</summary>
     public ExpressionNode Target { get; } = target;
 
-    /// <summary>The index subtree — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> to recognise a string-literal key (CD-6).</summary>
+    /// <summary>The index subtree — read by <see cref="CrawldadExpression.TryGetInputMemberReference"/> to recognise a string-literal key.</summary>
     public ExpressionNode Index { get; } = index;
 
     protected override async ValueTask<object?> EvaluateCoreAsync(EvalContext ctx)
@@ -456,16 +426,9 @@ internal sealed class CallNode(BuiltinInvoker invoke, IReadOnlyList<ExpressionNo
     }
 }
 
-/// <summary>
-/// A binding builtin invocation (<c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c>, §7.2). Distinct from
-/// <see cref="CallNode"/> because its middle argument is a <em>binding identifier</em>, not a value: the parser has
-/// already validated the <c>(source, binding, body)</c> shape and captured the binding name, so this node runs the
-/// pre-bound <see cref="BindingBuiltinInvoker"/> over the source list, the binding name, and the body node.
-/// </summary>
-/// <param name="invoke">The binding builtin's evaluator.</param>
-/// <param name="source">The node producing the list to iterate.</param>
-/// <param name="binding">The per-element variable name introduced for <paramref name="body"/>.</param>
-/// <param name="body">The predicate / projection / key node evaluated once per element in a <see cref="BindingScope"/>.</param>
+/// <summary>A binding builtin invocation (<c>filter</c>/<c>map</c>/<c>any</c>/<c>all</c>/<c>sortBy</c>). Distinct from
+/// <see cref="CallNode"/> because its middle argument is a binding identifier, not a value — already validated and
+/// extracted by the parser, so this node just runs the pre-bound <see cref="BindingBuiltinInvoker"/>.</summary>
 internal sealed class BindingCallNode(
     BindingBuiltinInvoker invoke, ExpressionNode source, string binding, ExpressionNode body) : ExpressionNode
 {

@@ -7,23 +7,11 @@ using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Payloads;
 
-/// <summary>
-/// <c>POST /payloads/{id}/rename</c> (§14.1): changes a managed payload's logical name (metadata only — the script hash is
-/// unchanged, but the head revision advances). An unknown payload is a <c>404</c>; an archived payload is a <c>400</c>; an
-/// empty name is a <c>400</c> ProblemDetails via <see cref="RenamePayloadRequestValidator"/>. The event's actor is stamped
-/// from the authenticated tenant, never the request body (§12).
-/// </summary>
+/// <summary><c>POST /payloads/{id}/rename</c>: changes a managed payload's logical name (metadata only — script hash
+/// unchanged, head revision advances). <c>404</c> when unknown, <c>400</c> when archived or the name is empty. The
+/// event's actor is stamped from the authenticated tenant, never the request body.</summary>
 public static class RenamePayloadEndpoint
 {
-    /// <summary>Handles <c>POST /payloads/{id}/rename</c>.</summary>
-    /// <param name="id">The payload to rename.</param>
-    /// <param name="request">The new name.</param>
-    /// <param name="session">The request-scoped Marten session.</param>
-    /// <param name="scrubber">Redacts credential material from the persisted name (§12).</param>
-    /// <param name="tenant">The authenticated tenant — its actor identity is stamped on the event (§12).</param>
-    /// <param name="clock">The time seam for the event timestamp.</param>
-    /// <param name="ct">Cancels the save.</param>
-    /// <returns><c>200</c> with the new head <see cref="PayloadResponse"/>, <c>404</c> when unknown, or <c>400</c> when archived.</returns>
     [WolverinePost("/payloads/{id}/rename")]
     public static async Task<IResult> Handle(
         Guid id,

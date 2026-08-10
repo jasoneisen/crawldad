@@ -5,11 +5,9 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The record/replay <see cref="FakeBrowserBackend"/> and its lazy AngleSharp locators: navigation, transitions,
-/// lazy re-query, fill/clear mutation, textContent/entity/concatenation semantics, GetByTitle, Filter, and the
-/// wait/request primitives — all against the shipped caphome-search fixture.
-/// </summary>
+/// <summary>The record/replay <see cref="FakeBrowserBackend"/> and its lazy AngleSharp locators: navigation,
+/// transitions, lazy re-query, fill/clear mutation, textContent/entity/concatenation semantics, GetByTitle, Filter,
+/// and the wait/request primitives — all against the shipped caphome-search fixture.</summary>
 public class FakeBackendTests
 {
     private static async Task<FakePageHandle> ResultsPageAsync()
@@ -94,7 +92,7 @@ public class FakeBackendTests
     {
         var rows = (await ResultsPageAsync()).Locator(CapHome.GridRows);
 
-        // data row 2 (index 4): "200 Oak &amp; Pine Ave" ⇒ decoded; "Owner&#39;s ..." ⇒ apostrophe
+        // data row 2 (index 4): named (&amp;) and numeric HTML entities both decode correctly
         (await rows.Nth(4).Locator("td:nth-child(5)").TextContentAsync(CapHome.Ct)).ShouldBe("200 Oak & Pine Ave");
         (await rows.Nth(4).Locator("td:nth-child(7)").TextContentAsync(CapHome.Ct)).ShouldBe("Owner's response pending");
 
@@ -176,10 +174,9 @@ public class FakeBackendTests
     [Fact]
     public async Task Chained_child_locator_scopes_to_strict_descendants_not_the_base_itself()
     {
-        // Playwright's chained Locator scopes to the base's STRICT DESCENDANTS; AngleSharp's querySelectorAll leaks the
-        // leftmost compound onto the base/ancestors (the querySelectorAll gotcha). The owner block is itself a <table>
-        // read via `table tr td`, so without the ':scope' anchoring the leftmost `table` would match the base table and
-        // read its own wrapper row. This pins the fix that keeps the owner-region reads faithful to the reference.
+        // Playwright's chained Locator scopes to STRICT DESCENDANTS; AngleSharp's querySelectorAll leaks the leftmost
+        // compound onto the base/ancestors. The owner block is itself a <table> read via `table tr td`, so without
+        // ':scope' anchoring, the leftmost `table` would match the base table itself and read its own wrapper row.
         var backend = new FakeBrowserBackend(Runner.FixturesRoot);
         await using var session = await backend.ConnectAsync(Runner.FakeBinding("record-01-full-suburban"), SessionPolicy.Default, CapHome.Ct);
         var page = await session.NewPageAsync(CapHome.Ct);
@@ -297,7 +294,7 @@ public class FakeBackendTests
     {
         var backend = new FakeBrowserBackend(Runner.FixturesRoot);
         var session = await backend.ConnectAsync(Runner.FakeBinding("caphome-search"), SessionPolicy.Default, CapHome.Ct);
-        session.Region.ShouldBe("fake"); // constant region tag; no route cache ⇒ no hits (§9.1/§10)
+        session.Region.ShouldBe("fake"); // constant region tag; no route cache ⇒ no hits
         session.CacheHits.ShouldBe(0);
         await Should.NotThrowAsync(async () => await session.DisposeAsync());
     }

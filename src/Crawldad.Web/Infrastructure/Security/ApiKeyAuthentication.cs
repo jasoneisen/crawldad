@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Infrastructure.Security;
 
-/// <summary>Well-known names for the machine-to-machine API-key scheme (CD-1). Deliberately the simplest credible mechanism
+/// <summary>Well-known names for the machine-to-machine API-key scheme. Deliberately the simplest credible mechanism
 /// for a hosted API product: a per-tenant key, no ASP.NET Identity / OIDC ceremony (a real IdP is a later ticket).</summary>
 public static class CrawldadAuthentication
 {
@@ -20,7 +20,7 @@ public static class CrawldadAuthentication
 
 /// <summary>The claim types the authenticated principal carries. The tenant claim is what Wolverine's HTTP tenant detection
 /// reads to scope every request-opened Marten session (<c>IsClaimTypeNamed</c>); the actor claim is stamped onto payload
-/// mutation events — always from the principal, never a request body (§12).</summary>
+/// mutation events — always from the principal, never a request body.</summary>
 internal static class CrawldadClaims
 {
     /// <summary>The Marten tenant partition id.</summary>
@@ -34,13 +34,9 @@ internal static class CrawldadClaims
 /// configured <see cref="TenantRegistry"/>; the type exists so the scheme plugs into ASP.NET's authentication builder.</summary>
 public sealed class ApiKeyOptions : AuthenticationSchemeOptions;
 
-/// <summary>
-/// The API-key authentication handler (CD-1): reads the key from <c>Authorization: Bearer &lt;key&gt;</c> or
-/// <c>X-Api-Key: &lt;key&gt;</c>, validates it against the <see cref="TenantRegistry"/> (fixed-time hash compare), and on
-/// success issues a principal carrying the tenant + actor claims. A missing key is <see cref="AuthenticateResult.NoResult"/>
-/// and an unknown key is a <see cref="AuthenticateResult.Fail(string)"/> — both surface as <c>401</c> through the
-/// authorization layer (every route requires an authenticated tenant, §12). The key itself is never logged.
-/// </summary>
+/// <summary>The API-key authentication handler: validates the presented key against the <see cref="TenantRegistry"/>
+/// (fixed-time hash compare) and issues a principal carrying the tenant + actor claims. A missing or unknown key
+/// surfaces as <c>401</c>; the key itself is never logged.</summary>
 internal sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyOptions>
 {
     private const string _bearerPrefix = "Bearer ";

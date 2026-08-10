@@ -2,15 +2,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Web.Infrastructure.Browser.Real;
 
-/// <summary>
-/// A thin wrapper over a Playwright <see cref="IPage"/> (§ Deliverable 1) mapping the seam's navigation, waits, network
-/// synchronisation, style injection, download, and locator/frame factories 1:1 onto Playwright, with every call guarded
-/// by <see cref="PlaywrightFaults"/> so a Playwright timeout/crash surfaces on the §8.3 taxonomy. The
-/// <c>waitForRequest</c> primitive arms the wait before running the trigger (Playwright's <c>RunAndWaitForRequestAsync</c>),
-/// so a request the trigger provokes is never missed; a request that never fires is a retryable timeout, exactly like
-/// the fake.
-/// </summary>
-/// <param name="page">The wrapped Playwright page.</param>
+/// <summary>A thin wrapper over a Playwright <see cref="IPage"/>, mapping the seam's navigation, waits, network sync,
+/// and locator/frame factories onto Playwright. <c>waitForRequest</c> arms the wait before running the trigger, so a
+/// provoked request is never missed; a request that never fires is a retryable timeout, matching the fake.</summary>
 internal sealed class PlaywrightPageHandle(IPage page) : IPageHandle
 {
     public string Url => page.Url;

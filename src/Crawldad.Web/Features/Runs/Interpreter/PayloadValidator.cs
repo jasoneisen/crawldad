@@ -3,24 +3,17 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Web.Features.Runs.Interpreter;
 
-/// <summary>One validation problem found in a payload (§12): a JSON-Pointer <see cref="Path"/> into the document, a
-/// stable <see cref="Code"/>, and a human message. <see cref="StepIndex"/>/<see cref="StepKind"/> pinpoint the
-/// enclosing top-level step and offending node head so the run-time pre-pass can surface a §10 <c>failure.atStep</c>.</summary>
-/// <param name="Path">JSON Pointer to the offending location (e.g. <c>/steps/6/loop/do/3</c>).</param>
-/// <param name="Code">Stable slug (structural: <c>unknown_node</c>/<c>missing_max_iterations</c>; semantic:
-/// <c>undefined_reference</c> or an expression parse code).</param>
-/// <param name="Message">Human-readable description.</param>
-/// <param name="StepIndex">The enclosing top-level step index.</param>
-/// <param name="StepKind">The offending node's head key.</param>
+/// <summary>One validation problem found in a payload: a JSON-Pointer <see cref="Path"/> into the document, a stable
+/// <see cref="Code"/>, and a human message. <see cref="StepIndex"/>/<see cref="StepKind"/> pinpoint the enclosing
+/// top-level step and offending node head so the run-time pre-pass can surface <c>failure.atStep</c>.</summary>
 internal sealed record PayloadIssue(string Path, string Code, string Message, int StepIndex, string StepKind);
 
-/// <summary>The declared <c>secretRef</c> inputs of a payload (§4/CD-6): the single parse of the <c>inputs</c> block shared
+/// <summary>The declared <c>secretRef</c> inputs of a payload: the single parse of the <c>inputs</c> block shared
 /// by the interpreter (which excludes them from the eval scope and resolves them at <c>fill.secret</c>) and the semantic
 /// walker (which rejects them anywhere in the expression value space), so the two never disagree on what is a secret.</summary>
 internal static class SecretRefInputs
 {
     /// <summary>The <c>secretRef</c>-typed input names, or an empty set when none are declared.</summary>
-    /// <param name="payload">The payload document.</param>
     public static IReadOnlySet<string> Names(JsonElement payload)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -40,13 +33,12 @@ internal static class SecretRefInputs
     }
 }
 
-/// <summary>The canonical set of recognised node head keys (§5/§6) — the single source of truth shared by the
-/// interpreter's dispatch, the structural validator, and (by construction) <c>schema/crawldad-1.schema.json</c>. A head
-/// outside this set is <c>unknown_node</c>. Run-time validation uses this set, so any executable head missing from it
-/// would be rejected by the existing node tests.</summary>
+/// <summary>The canonical set of recognised node head keys — the single source of truth shared by the interpreter's
+/// dispatch, the structural validator, and (by construction) <c>schema/crawldad-1.schema.json</c>. A head outside
+/// this set is <c>unknown_node</c>; any executable head missing from it would be rejected by the node tests.</summary>
 internal static class NodeHeads
 {
-    /// <summary>The 25 recognised heads (P1+P2+WP1 dispatch table, the P5 <c>checkpoint</c>, and the #8 <c>screenshot</c>).</summary>
+    /// <summary>The recognised node heads.</summary>
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
         "comment", "goto", "waitForLoadState", "waitForRequest", "waitFor", "frame", "addStyleTag",
@@ -55,23 +47,14 @@ internal static class NodeHeads
     };
 }
 
-/// <summary>
-/// The one payload validator (§12, Deliverable 3), shared by save-time and run-time so the two never diverge.
-/// <see cref="ValidateStructure"/> is the extracted execution-time <c>ValidateProgram</c>: it rejects unknown head keys
-/// and loops/forEaches missing the mandatory <c>maxIterations</c> cap — robust to any input (the run-time pre-pass
-/// calls it before connect and throws on the first issue). <see cref="Validate"/> adds the save-time semantic pass —
-/// defined-before-use of every var/frame/input and a parse+arity check of every expression/template/path, reusing the
-/// real <see cref="CrawldadExpression"/>/<see cref="CrawldadTemplate"/>/<see cref="SetPath"/> parsers (never a second
-/// grammar). <see cref="Validate"/> assumes the payload already passed the JSON Schema, so required fields are present.
-/// </summary>
+/// <summary>The one payload validator, shared by save-time and run-time so the two never diverge.
+/// <see cref="ValidateStructure"/> rejects unknown heads and missing <c>maxIterations</c> (used standalone by the
+/// run-time pre-pass); <see cref="Validate"/> adds the semantic pass, reusing the real parsers — never a second grammar.</summary>
 internal static class PayloadValidator
 {
-    /// <summary>Structural pre-pass: unknown heads + missing <c>maxIterations</c>, in DFS order. Mirrors the original
-    /// execution-time <c>ValidateProgram</c> exactly (assumes a <c>steps</c> array of single-head node objects, as the
-    /// run path always had and the JSON Schema guarantees at save time), only collecting issues instead of throwing on
-    /// the first. Used by the run-time pre-pass (which throws on <c>issues[0]</c>) and folded into <see cref="Validate"/>.</summary>
-    /// <param name="payload">The payload document.</param>
-    /// <returns>The structural issues in document order (empty when the structure is sound).</returns>
+    /// <summary>Structural pre-pass: unknown heads + missing <c>maxIterations</c>, in DFS order. Assumes a <c>steps</c>
+    /// array of single-head node objects (the JSON Schema guarantees this at save time); collects issues instead of
+    /// throwing on the first. Used standalone by the run-time pre-pass and folded into <see cref="Validate"/>.</summary>
     public static IReadOnlyList<PayloadIssue> ValidateStructure(JsonElement payload)
     {
         var issues = new List<PayloadIssue>();
@@ -87,8 +70,6 @@ internal static class PayloadValidator
 
     /// <summary>Full save-time validation: the structural pre-pass plus the semantic pass. The payload is assumed
     /// schema-valid (all required fields present, correctly typed).</summary>
-    /// <param name="payload">The schema-valid payload document.</param>
-    /// <returns>All issues (structural first, then semantic), empty when the payload is valid.</returns>
     public static IReadOnlyList<PayloadIssue> Validate(JsonElement payload)
     {
         var issues = new List<PayloadIssue>(ValidateStructure(payload));
@@ -109,7 +90,7 @@ internal static class PayloadValidator
 
         if (string.Equals(head, "comment", StringComparison.Ordinal))
         {
-            return; // §6: comment is a no-op annotation, exempt and with a bare-string body.
+            return; // comment is a no-op annotation, exempt and with a bare-string body.
         }
 
         var body = node.GetProperty(head);
@@ -130,7 +111,7 @@ internal static class PayloadValidator
         ValidateBlockStructure(body, "else", path, stepIndex, issues);
         ValidateBlockStructure(body, "do", path, stepIndex, issues);
         ValidateBlockStructure(body, "trigger", path, stepIndex, issues);
-        ValidateBlockStructure(body, "resume", path, stepIndex, issues); // §11: a checkpoint's resume sub-program
+        ValidateBlockStructure(body, "resume", path, stepIndex, issues); // a checkpoint's resume sub-program
         ValidateBlockStructure(body, "default", path, stepIndex, issues);
         if (body.TryGetProperty("cases", out var cases))
         {

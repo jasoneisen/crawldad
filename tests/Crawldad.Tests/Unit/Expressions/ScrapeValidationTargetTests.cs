@@ -2,15 +2,12 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>
-/// The exact expressions from the scrape payload (Appendix B.2) that this work package must serve — each parsed and
-/// evaluated against a faked scope/DOM. These are the fidelity targets: the related-records indent query, the
-/// address/processing split chains, the attachment filename composition, the trailing-colon strip, and the
-/// related-record link resolution.
-/// </summary>
+/// <summary>The exact expressions from the scrape payload that this suite must serve — each parsed and evaluated
+/// against a faked scope/DOM. These are the fidelity targets: the related-records indent query, the
+/// address/processing split chains, the attachment filename composition, the trailing-colon strip, and the related-record link resolution.</summary>
 public class ScrapeValidationTargetTests
 {
-    // ----- related records: greatest indent strictly less than current (:625-697, §7.4) -------------------------
+    // ----- related records: greatest indent strictly less than current -----------------------------------------
 
     [Fact]
     public async Task Parent_resolution_selects_the_greatest_lesser_indent()
@@ -19,7 +16,6 @@ public class ScrapeValidationTargetTests
             .With("parents", Val.Map(("0", "ROOT"), ("12", "MID"), ("24", "LEAF")))
             .With("indent", 15L);
 
-        // cand = filter(map(keys(parents), k, toInt(k)), n, n < indent)
         var cand = await Xp.EvalAsync("filter(map(keys(parents), k, toInt(k)), n, n < indent)", scope);
         scope.With("cand", cand);
 
@@ -39,7 +35,7 @@ public class ScrapeValidationTargetTests
         (await Xp.EvalAsync("count(cand) > 0 ? get(parents, string(max(cand))) : ''", scope)).ShouldBe("");
     }
 
-    // ----- location address: split innerHTML on <br>, then on <span> (:229-268) --------------------------------
+    // ----- location address: split innerHTML on <br>, then on <span> ---------------------------------------------
 
     [Fact]
     public async Task Address_line_count_and_city_state_zip_extraction()
@@ -51,7 +47,7 @@ public class ScrapeValidationTargetTests
         (await Xp.EvalAsync("split(split(trim(html),'<br>')[1], '<span')[0]", scope)).ShouldBe("Springfield, IL 62701");
     }
 
-    // ----- processing status: chained split/replace (:489-493) -------------------------------------------------
+    // ----- processing status: chained split/replace ---------------------------------------------------------------
 
     [Fact]
     public async Task Processing_status_due_and_marked_on_chains()
@@ -65,7 +61,7 @@ public class ScrapeValidationTargetTests
         (await Xp.EvalAsync("trim(split(split(lines[1],' on ')[1], ' by ')[1])", scope)).ShouldBe("Jane");
     }
 
-    // ----- known-URL early-termination scan (:81-105) ----------------------------------------------------------
+    // ----- known-URL early-termination scan -------------------------------------------------------------------
 
     [Theory]
     [InlineData("u2", true)]
@@ -80,7 +76,7 @@ public class ScrapeValidationTargetTests
         (await Xp.EvalAsync("any(input.knownUrls, u, u == pageResults[j].url)", scope)).ShouldBe(expected);
     }
 
-    // ----- attachment internalFilename composition (:576) ------------------------------------------------------
+    // ----- attachment internalFilename composition ----------------------------------------------------------------
 
     [Theory]
     [InlineData("report.final.pdf", "cid-abc.pdf")]
@@ -96,7 +92,7 @@ public class ScrapeValidationTargetTests
         (await Xp.EvalAsync(Source, scope)).ShouldBe(expected);
     }
 
-    // ----- additional-comment heading: trailing-colon strip = h[..^1] (:507) -----------------------------------
+    // ----- additional-comment heading: trailing-colon strip = h[..^1] --------------------------------------------
 
     [Theory]
     [InlineData("Category:", "Category")]
@@ -107,7 +103,7 @@ public class ScrapeValidationTargetTests
         (await Xp.EvalAsync("endsWith(h,':') ? substring(h,0,length(h)-1) : h", scope)).ShouldBe(expected);
     }
 
-    // ----- newLinks de-duplication (HistoricalCrawler:79) ------------------------------------------------------
+    // ----- newLinks de-duplication ---------------------------------------------------------------------------------
 
     [Fact]
     public async Task Distinct_newLinks_preserves_first_occurrence_order()
@@ -117,7 +113,7 @@ public class ScrapeValidationTargetTests
         result.ShouldBe(["a", "b", "c"]);
     }
 
-    // ----- related-record link resolution (:672) — fake attr, pinned C# Uri result ------------------------------
+    // ----- related-record link resolution — fake attr, pinned C# Uri result ---------------------------------------
 
     [Fact]
     public async Task Related_record_link_resolves_against_the_record_base()
@@ -140,7 +136,7 @@ public class ScrapeValidationTargetTests
             .ShouldBe("https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=99");
     }
 
-    // ----- terminal: split-then-index out of range reproduces the C# Split(...)[i] throw (:438/:489) -----------
+    // ----- terminal: split-then-index out of range reproduces the C# Split(...)[i] throw ----------------------
 
     [Fact]
     public async Task Split_then_out_of_range_index_is_terminal()

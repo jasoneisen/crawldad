@@ -3,12 +3,9 @@ using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Web.Features.Runs.Interpreter;
 
-/// <summary>
-/// The one flat, mutable run scope (§8.2): <c>input.*</c> (read-only map), declared <c>vars</c>, and everything
+/// <summary>The one flat, mutable run scope: <c>input.*</c> (read-only map), declared <c>vars</c>, and everything
 /// <c>set</c>/<c>push</c> create — plus the live page. Implements <see cref="IEvalScope"/> and <see cref="IDomAccess"/>
-/// so expressions read variables and query the DOM through it (never mutate — mutation is structural, §6). Loop
-/// variables <see cref="Shadow"/> outer names for the loop body and unshadow on exit.
-/// </summary>
+/// (expressions never mutate — mutation is structural). Loop variables <see cref="Shadow"/> outer names and unshadow on exit.</summary>
 internal sealed class RunScope : IEvalScope, IDomAccess
 {
     private readonly Dictionary<string, object?> _vars = new(StringComparer.Ordinal);
@@ -22,12 +19,12 @@ internal sealed class RunScope : IEvalScope, IDomAccess
         ExpressionStepBudget = expressionStepBudget;
     }
 
-    /// <summary>The per-evaluation expression fuel budget (CD-3/§12) every expression this run evaluates is metered against
-    /// — the server-configured knob threaded from <see cref="RunLimits"/>, overriding the interface default so a payload
+    /// <summary>The per-evaluation expression fuel budget every expression this run evaluates is metered against —
+    /// the server-configured knob threaded from <see cref="RunLimits"/>, overriding the interface default so a payload
     /// can never widen it.</summary>
     public int ExpressionStepBudget { get; }
 
-    /// <summary>The current page. Bound after the backend connects (§8.1 order); reads before <see cref="Bind"/> throw.</summary>
+    /// <summary>The current page. Bound after the backend connects; reads before <see cref="Bind"/> throw.</summary>
     internal IPageHandle PageHandle =>
         _page ?? throw new InvalidOperationException("the page is not bound yet (no backend connected)");
 
@@ -35,11 +32,10 @@ internal sealed class RunScope : IEvalScope, IDomAccess
     internal SelResolver Sel => _sel;
 
     /// <summary>The current variable bindings (including <c>input</c>), for snapshotting the accumulated state at a
-    /// checkpoint (§11). A read-only view — mutation stays structural (<see cref="Set"/>/<see cref="Push"/>).</summary>
+    /// checkpoint. A read-only view — mutation stays structural (<see cref="Set"/>/<see cref="Push"/>).</summary>
     internal IReadOnlyDictionary<string, object?> Vars => _vars;
 
     /// <summary>Binds the live page once the backend has connected.</summary>
-    /// <param name="page">The connected page.</param>
     internal void Bind(IPageHandle page) => _page = page;
 
     // ----- IEvalScope --------------------------------------------------------
@@ -53,14 +49,9 @@ internal sealed class RunScope : IEvalScope, IDomAccess
     // ----- mutation (structural nodes only) ----------------------------------
 
     /// <summary>Binds or rebinds a variable in the run scope (backs <c>set</c> and <c>vars</c>).</summary>
-    /// <param name="name">The variable name.</param>
-    /// <param name="value">The value to bind.</param>
     public void Set(string name, object? value) => _vars[name] = value;
 
     /// <summary>Appends to an array variable (backs <c>push</c>). Undefined or non-array target is terminal.</summary>
-    /// <param name="into">The target variable name.</param>
-    /// <param name="value">The value to append.</param>
-    /// <exception cref="InterpreterException">When <paramref name="into"/> is unbound or not an array.</exception>
     public void Push(string into, object? value)
     {
         if (!_vars.TryGetValue(into, out var target) || target is not List<object?> list)
@@ -72,12 +63,8 @@ internal sealed class RunScope : IEvalScope, IDomAccess
         list.Add(value);
     }
 
-    /// <summary>
-    /// Shadows <paramref name="bindings"/> (loop variables) for the duration of the returned scope, restoring the
-    /// prior bindings on dispose (§8.2). Each iteration <see cref="Set"/>s the loop var inside this shadow.
-    /// </summary>
-    /// <param name="bindings">The names (and initial values) to shadow.</param>
-    /// <returns>A scope whose disposal unshadows.</returns>
+    /// <summary>Shadows <paramref name="bindings"/> (loop variables) for the duration of the returned scope, restoring
+    /// the prior bindings on dispose. Each iteration <see cref="Set"/>s the loop var inside this shadow.</summary>
     public IDisposable Shadow(params (string Name, object? Value)[] bindings)
     {
         var saved = new (string Name, bool Had, object? Old)[bindings.Length];
@@ -91,7 +78,7 @@ internal sealed class RunScope : IEvalScope, IDomAccess
         return new ShadowScope(this, saved);
     }
 
-    // ----- IDomAccess (§7.2 read-only page access) ---------------------------
+    // ----- IDomAccess (read-only page access) ---------------------------
 
     public async ValueTask<long> CountAsync(object target, string? relativeCss, CancellationToken ct) =>
         await _sel.ResolveTarget(target, relativeCss).CountAsync(ct);
@@ -111,7 +98,7 @@ internal sealed class RunScope : IEvalScope, IDomAccess
     public async ValueTask<string?> AttrAsync(object target, string? relativeCss, string name, CancellationToken ct) =>
         await _sel.ResolveTarget(target, relativeCss).GetAttributeAsync(name, ct);
 
-    // innerText/innerHTML are non-null at the seam, so null-propagate here when nothing matches (§7.1).
+    // innerText/innerHTML are non-null at the seam, so null-propagate here when nothing matches.
     private async ValueTask<string?> NullablyAsync(
         object target, string? relativeCss, Func<ILocatorHandle, CancellationToken, Task<string>> read, CancellationToken ct)
     {

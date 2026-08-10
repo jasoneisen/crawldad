@@ -2,12 +2,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>
-/// The Phase-2 safety gate: "no expression can be authored that loops, recurses, calls fs, or evals." These are the
-/// negative tests — the static parser rejections (unknown builtins, wrong arity, non-identifier binding slots, absent
-/// function-definition syntax), the runtime termination guarantees (iteration is bounded by the input list; nesting is
-/// depth-capped), and the regex time/size guards — that keep the §7 boundary exactly LJCMG-sized.
-/// </summary>
+/// <summary>The safety gate: "no expression can be authored that loops, recurses, calls fs, or evals." These are the
+/// negative tests — static parser rejections (unknown builtins, wrong arity, non-identifier binding slots, absent
+/// function-definition syntax), runtime termination guarantees (bounded iteration, depth-capped nesting), and the regex time/size guards.</summary>
 public class SafetyBoundaryTests
 {
     [Theory]
@@ -70,7 +67,7 @@ public class SafetyBoundaryTests
 
     [Theory]
     // The grammar has no function-definition, lambda, or assignment form — every such attempt fails to parse, so no
-    // expression can define a recursive/user function or mutate state (mutation is the structural set/push, §6/§8.2).
+    // expression can define a recursive/user function or mutate state (mutation is the structural set/push).
     [InlineData("n => n + 1", ExpressionErrorCodes.SyntaxError)]     // no lambda arrow ('=' demands '==')
     [InlineData("x = 5", ExpressionErrorCodes.SyntaxError)]          // no assignment
     [InlineData("def add(a, b)", ExpressionErrorCodes.SyntaxError)]  // 'def' is just an identifier; 'add' is trailing

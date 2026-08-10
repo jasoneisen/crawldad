@@ -5,11 +5,9 @@ using Crawldad.Tests.Support;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The <c>download</c> action end-to-end through <c>POST /runs</c> against the fake backend + the DI-registered
-/// in-memory sink (the <c>KeyedDownloadSinkRegistry</c> "fake" path): a storageTarget input resolves to the sink, the
-/// bytes hash to the pinned <c>contentId</c>, and <c>stats.downloads</c> counts the completed downloads.
-/// </summary>
+/// <summary>The <c>download</c> action end-to-end through <c>POST /runs</c> against the fake backend and the
+/// DI-registered in-memory sink: a storageTarget input resolves to the sink, the bytes hash to the pinned
+/// <c>contentId</c>, and <c>stats.downloads</c> counts the completed downloads.</summary>
 [Collection(IntegrationCollection.Name)]
 public class DownloadEndpointTests(AppFixture fixture)
 {

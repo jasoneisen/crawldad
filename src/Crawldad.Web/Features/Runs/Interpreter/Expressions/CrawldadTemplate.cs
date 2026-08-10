@@ -2,13 +2,9 @@ using System.Text;
 
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
-/// <summary>
-/// A parsed <c>Tmpl</c> field (§4): a string with <c>${Expr}</c> interpolations. Rendering concatenates the literal
-/// runs with each interpolation's value converted under <c>string(x)</c> rules — so a null interpolation contributes
-/// <c>""</c> (§7.1). A template with no <c>${}</c> is a pure literal and renders with no evaluation cost. Parsing is
-/// pure/static: each interpolation body is parsed with <see cref="CrawldadExpression.Parse"/>, so a bad builtin or
-/// arity inside <c>${…}</c> is rejected at parse time, same as a bare <c>Expr</c>.
-/// </summary>
+/// <summary>A <c>Tmpl</c> field: a string with <c>${Expr}</c> interpolations, rendered by concatenating literal runs
+/// with each interpolation's <c>string(x)</c>-converted value (null → <c>""</c>). A template with no <c>${}</c> is a
+/// pure literal; a bad builtin or arity inside <c>${…}</c> is rejected at parse time.</summary>
 public sealed class CrawldadTemplate
 {
     private readonly string? _constant;
@@ -18,13 +14,9 @@ public sealed class CrawldadTemplate
 
     private CrawldadTemplate(IReadOnlyList<Segment> segments) => _segments = segments;
 
-    /// <summary>
-    /// Parses <paramref name="source"/> into a renderable template. Interpolations honour nested braces and
-    /// single-quoted strings, so <c>${ {a:1}['a'] }</c> and <c>${ '}' }</c> parse correctly.
-    /// </summary>
-    /// <param name="source">The template source (literal text with optional <c>${Expr}</c> spans).</param>
-    /// <returns>The parsed template.</returns>
-    /// <exception cref="ExpressionParseException">On an unterminated <c>${…}</c> or a malformed interpolation expression.</exception>
+    /// <summary>Parses <paramref name="source"/> into a renderable template. Interpolations honour nested braces and
+    /// single-quoted strings, so <c>${ {a:1}['a'] }</c> and <c>${ '}' }</c> parse correctly. An unterminated
+    /// <c>${…}</c> or malformed expression raises <see cref="ExpressionParseException"/>.</summary>
     public static CrawldadTemplate Parse(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -72,20 +64,14 @@ public sealed class CrawldadTemplate
     }
 
     /// <summary>Renders the template against <paramref name="scope"/>, evaluating each interpolation and concatenating.</summary>
-    /// <param name="scope">The read-only run scope + DOM access.</param>
-    /// <param name="ct">Cancels in-flight DOM reads.</param>
-    /// <returns>The rendered string.</returns>
     public ValueTask<string> RenderAsync(IEvalScope scope, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(scope);
         return _segments is null ? new ValueTask<string>(_constant!) : RenderSegmentsAsync(scope, ct);
     }
 
-    /// <summary>
-    /// The <b>free</b> variable identifiers read across this template's <c>${…}</c> interpolations (a literal template
-    /// reads none). Backs save-time defined-before-use validation (§12); a pure static walk, no rendering.
-    /// </summary>
-    /// <returns>The distinct free identifier names.</returns>
+    /// <summary>The free variable identifiers read across this template's <c>${…}</c> interpolations (a literal
+    /// template reads none). Backs save-time defined-before-use validation; a pure static walk.</summary>
     public IReadOnlySet<string> FreeIdentifiers()
     {
         var into = new HashSet<string>(StringComparer.Ordinal);
@@ -103,12 +89,9 @@ public sealed class CrawldadTemplate
         return into;
     }
 
-    /// <summary>
-    /// The top-level <c>input</c> keys this template reads through its <c>${…}</c> interpolations via a direct
-    /// <c>input.&lt;key&gt;</c> / <c>input["key"]</c> access (CD-6): backs the semantic walker's rejection of a
-    /// <c>secretRef</c> input anywhere in the expression value space. A pure static walk.
-    /// </summary>
-    /// <returns>The distinct referenced <c>input</c> key names.</returns>
+    /// <summary>The top-level <c>input</c> keys this template reads through its <c>${…}</c> interpolations, via a
+    /// direct <c>input.&lt;key&gt;</c>/<c>input["key"]</c> access. Backs the semantic walker's rejection of a
+    /// <c>secretRef</c> input anywhere in the expression value space.</summary>
     public IReadOnlySet<string> InputMemberReferences()
     {
         var into = new HashSet<string>(StringComparer.Ordinal);

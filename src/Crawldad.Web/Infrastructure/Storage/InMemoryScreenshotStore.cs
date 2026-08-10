@@ -3,16 +3,12 @@ using System.Security.Cryptography;
 
 namespace Crawldad.Web.Infrastructure.Storage;
 
-/// <summary>
-/// The default in-process <see cref="IScreenshotStore"/> (§13): holds failure screenshots in memory keyed by a
+/// <summary>The default in-process <see cref="IScreenshotStore"/>: holds failure screenshots in memory keyed by a
 /// content-addressed ref (<c>screenshots/{sha256}.png</c>), so an identical capture is stored once and the ref is a
-/// credential-free hash. This is the seam's default implementation — the analogue of the in-memory download sink — with a
-/// real deletable blob store slotting in behind <see cref="IScreenshotStore"/> unchanged. It tracks its blobs so a test can
-/// assert a screenshot was captured on failure and that no stored key/byte carries a credential (§12 leak invariant).
-/// </summary>
+/// credential-free hash. A real deletable blob store slots in behind <see cref="IScreenshotStore"/> unchanged.</summary>
 internal sealed class InMemoryScreenshotStore : IScreenshotStore
 {
-    // Physical key is "{tenant}/{ref}" so the fake proves the seam's tenant partitioning (CD-1): the same screenshot bytes
+    // Physical key is "{tenant}/{ref}" so the fake proves the seam's tenant partitioning: the same screenshot bytes
     // under two tenants are two distinct blobs, and one tenant's capture is invisible under another's partition.
     private readonly ConcurrentDictionary<string, byte[]> _blobs = new(StringComparer.Ordinal);
 

@@ -2,7 +2,7 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>The §7.2 binding surface — filter/map/any/all/sortBy — and the child-scope (BindingScope) semantics they
+/// <summary>The binding surface — filter/map/any/all/sortBy — and the child-scope (BindingScope) semantics they
 /// introduce: per-element binding, outer-name shadowing, parent delegation (vars/pageUrl/DOM), and nesting.</summary>
 public class BindingBuiltinTests
 {
@@ -74,7 +74,7 @@ public class BindingBuiltinTests
     [Fact]
     public async Task Predicate_may_read_the_dom_through_the_child_scope()
     {
-        // The binding scope delegates DOM access to the parent, so content-aware predicates are legal (§7.2).
+        // The binding scope delegates DOM access to the parent, so content-aware predicates are legal.
         var dom = new FakeDom
         {
             OnCount = static (target, _) => target is string s && string.Equals(s, "keep", StringComparison.Ordinal) ? 1L : 0L,
@@ -93,7 +93,6 @@ public class BindingBuiltinTests
     [Fact]
     public async Task Nested_binding_builtins_are_the_flagship_indent_query()
     {
-        // §7.4 flagship: filter(map(keys(parents), k, toInt(k)), n, n < indent).
         var scope = new FakeScope()
             .With("parents", Val.Map(("0", "REC-A"), ("12", "REC-B"), ("24", "REC-C")))
             .With("indent", 15L);

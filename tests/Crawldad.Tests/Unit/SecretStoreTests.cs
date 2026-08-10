@@ -4,11 +4,8 @@ using Microsoft.Extensions.Configuration;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The credential-by-reference seam (§12): the configuration-backed <see cref="ConfigurationSecretStore"/> resolves a
-/// reference to its <c>Secrets:{ref}</c> value, and a missing reference is a <see cref="SecretNotFoundException"/> that
-/// names only the (safe) reference — never a secret.
-/// </summary>
+/// <summary>The credential-by-reference seam: the configuration-backed <see cref="ConfigurationSecretStore"/> resolves a
+/// reference to its <c>Secrets:{ref}</c> value, and a missing reference is a <see cref="SecretNotFoundException"/> that names only the (safe) reference — never a secret.</summary>
 public class SecretStoreTests
 {
     private static ConfigurationSecretStore Store(params (string Key, string Value)[] secrets)
@@ -43,7 +40,7 @@ public class SecretStoreTests
         await Should.ThrowAsync<ArgumentNullException>(() => store.ResolveAsync(null!, CancellationToken.None));
     }
 
-    // ----- CD-6 form-fill secretRef resolution: tenant-scoped (Secrets:{tenant}:{ref}) -----
+    // ----- form-fill secretRef resolution: tenant-scoped (Secrets:{tenant}:{ref}) -----
 
     private static ConfigurationSecretStore TenantStore(params (string Key, string Value)[] secrets)
     {
@@ -63,7 +60,7 @@ public class SecretStoreTests
     [Fact]
     public async Task A_tenant_cannot_resolve_another_tenants_form_fill_reference()
     {
-        // Only tenant `acme` has a value for `login-password`; tenant `globex` resolving the same reference misses (§12/CD-6):
+        // Only tenant `acme` has a value for `login-password`; tenant `globex` resolving the same reference misses:
         // the config key is namespaced per tenant, so a tenant is structurally confined to its own references.
         var store = TenantStore(("Secrets:acme:login-password", "acme-secret"));
 

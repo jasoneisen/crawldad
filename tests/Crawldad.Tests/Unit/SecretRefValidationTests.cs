@@ -5,14 +5,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The CD-6 secretRef validation surface (SECURITY.md commitments 2 &amp; 3): a <c>secretRef</c> input is a recognised type
-/// whose value is a reference only, and it is consumed <b>exclusively</b> by <c>fill.secret</c>. The JSON Schema fixes the
-/// <c>fill</c> shape (a <c>value</c> XOR a <c>secret</c>); the semantic walker enforces the structural guarantee — a secretRef
-/// named anywhere in the expression value space is rejected (<c>secret_ref_in_expression</c>), and a <c>fill.secret</c> must
-/// name a declared secretRef via <c>input.&lt;name&gt;</c> (<c>fill_secret_not_secret_ref</c>) — so a secret can never be
-/// interpolated, logged, pushed, or shaped into a result.
-/// </summary>
+/// <summary>The secretRef validation surface: a <c>secretRef</c> input is a recognised type whose value is a reference
+/// only, consumed <b>exclusively</b> by <c>fill.secret</c>. The JSON Schema fixes the <c>fill</c> shape (<c>value</c> XOR
+/// <c>secret</c>); the semantic walker rejects a secretRef named anywhere in the expression value space, so a secret can never be interpolated, logged, pushed, or shaped into a result.</summary>
 public class SecretRefValidationTests
 {
     private static JsonElement Parse(string json)
@@ -53,7 +48,7 @@ public class SecretRefValidationTests
             """)).ShouldBe(["pw"]); // only the secretRef; an untyped or non-string-typed declaration is ignored
     }
 
-    // ----- commitment 2: secretRef is a recognised input type; consumed only by fill.secret -----
+    // ----- secretRef is a recognised input type; consumed only by fill.secret -----
 
     [Fact]
     public void A_secretRef_input_consumed_only_by_fill_secret_validates_clean()
@@ -68,7 +63,7 @@ public class SecretRefValidationTests
     [Fact]
     public void An_ordinary_input_referenced_in_an_expression_is_not_flagged()
     {
-        // A non-secretRef input used in an expression is perfectly fine — the guardrail must not over-reach.
+        // A non-secretRef input used in an expression is fine — only secretRef-typed values are restricted.
         var payload = Payload(
             """ "term": { "type": "string" } """,
             """[ { "set": { "var": "x", "value": "input.term" } } ]""",
@@ -77,7 +72,7 @@ public class SecretRefValidationTests
         ValidateAll(payload).ShouldBeEmpty();
     }
 
-    // ----- commitment 3: a secretRef must not enter the expression value space -----
+    // ----- a secretRef must not enter the expression value space -----
 
     [Theory]
     [InlineData("""[ { "set": { "var": "leaked", "value": "input.loginPw" } } ]""", "/steps/0/set/value")]

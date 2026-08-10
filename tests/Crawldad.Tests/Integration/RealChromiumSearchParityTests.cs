@@ -5,17 +5,9 @@ using Crawldad.Tests.Support;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 4 core gate (search side): drives the FULL <c>SearchEnforcementRecords</c> payload (Appendix B.1,
-/// <c>search-full.json</c> — byte-identical to the fake acceptance suite's) through <c>POST /runs</c> against
-/// <b>real headless Chromium</b> served by the local fixture site (the <c>"local"</c> adapter), and asserts the shaped
-/// <c>result</c> (<c>newLinks</c>/<c>crawledToEnd</c>/<c>pages</c>) is <b>byte-identical to the same P3 golden</b> the
-/// record/replay fake produces. It mirrors <see cref="SearchAcceptanceTests"/> exactly (same M = 6 corpus, same
-/// goldens, same request counts, same early-stop / <c>!crawledToEnd</c> / dedup nuances) with the ONLY change being
-/// <c>backend.adapter</c> (<c>fake</c> → <c>local</c>). The date fills, the search-button postback, and each pagination
-/// postback fire as real browser navigations the payload's <c>waitForRequest</c> observes on the canonical Accela URL.
-/// <b>Zero live third-party traffic.</b>
-/// </summary>
+/// <summary>Drives the full <c>SearchEnforcementRecords</c> payload (<c>search-full.json</c>) through <c>POST /runs</c>
+/// against real headless Chromium (the <c>"local"</c> adapter) and asserts the result is byte-identical to the same
+/// golden <see cref="SearchAcceptanceTests"/> uses, with only <c>backend.adapter</c> changed. Zero live third-party traffic.</summary>
 [Collection(RealChromiumParityCollection.Name)]
 public class RealChromiumSearchParityTests(ParityAppFixture fixture)
 {

@@ -10,11 +10,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The retry/resilience layer end-to-end through <c>POST /runs</c> (§8.3): timeout retried into success with
-/// <c>RunAttemptFailed</c> events persisted, the §3.6 page-crash reopen-and-rebind, retryable exhaustion, and a
-/// terminal guard that is never retried. Delays run at 0ms through the fixture's frozen clock, so the suite stays fast.
-/// </summary>
+/// <summary>The retry/resilience layer end-to-end through <c>POST /runs</c>: timeout retried into success with
+/// <c>RunAttemptFailed</c> events persisted, page-crash reopen-and-rebind, retryable exhaustion, and a terminal guard
+/// that is never retried. Delays run at 0ms through the fixture's frozen clock, so the suite stays fast.</summary>
 [Collection(IntegrationCollection.Name)]
 public class RetryEndpointTests(AppFixture fixture)
 {

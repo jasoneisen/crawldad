@@ -3,15 +3,9 @@ using Microsoft.AspNetCore.Http;
 
 namespace Crawldad.Web.Infrastructure.Security;
 
-/// <summary>
-/// The authenticated tenant of the current HTTP request (CD-1), resolved from the principal the API-key handler issued.
-/// Endpoints inject this to read the actor to stamp on a mutation event (<see cref="Actor"/>, §12) or the tenant to scope a
-/// self-owned Marten session that Wolverine's per-request session tenanting cannot reach (<see cref="TenantId"/> — the SSE
-/// backfill opens its own query sessions from the store). The request-scoped Marten sessions Wolverine injects are already
-/// tenant-scoped by the same claim, so most endpoints never touch this. Only meaningful inside an authenticated request;
-/// every route that resolves it requires an authenticated tenant, so the claims are always present.
-/// </summary>
-/// <param name="accessor">The ambient HTTP context accessor.</param>
+/// <summary>The authenticated tenant of the current HTTP request, resolved from the principal the API-key handler
+/// issued. Endpoints inject this to stamp <see cref="Actor"/> on a mutation event, or to scope a self-owned Marten
+/// session (<see cref="TenantId"/>) that Wolverine's per-request tenanting can't reach, e.g. the SSE backfill.</summary>
 public sealed class TenantContext(IHttpContextAccessor accessor)
 {
     /// <summary>The current tenant's partition id (matches the request's Marten session tenant).</summary>

@@ -4,7 +4,7 @@ using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>The flat run scope (§8.2): set/push, loop-variable shadow/unshadow, and the read-only DOM access with
+/// <summary>The flat run scope: set/push, loop-variable shadow/unshadow, and the read-only DOM access with
 /// null-propagation for the non-nullable innerText/innerHtml seams.</summary>
 public class RunScopeTests
 {
@@ -56,14 +56,14 @@ public class RunScopeTests
         using (scope.Shadow(("x", 2L), ("y", 99L)))
         {
             scope.TryResolve("x", out var x);
-            x.ShouldBe(2L);          // shadowed
+            x.ShouldBe(2L);
             scope.TryResolve("y", out var y);
-            y.ShouldBe(99L);         // newly introduced
+            y.ShouldBe(99L);
         }
 
         scope.TryResolve("x", out var xAfter);
-        xAfter.ShouldBe(1L);         // outer restored
-        scope.TryResolve("y", out _).ShouldBeFalse(); // removed
+        xAfter.ShouldBe(1L);
+        scope.TryResolve("y", out _).ShouldBeFalse();
     }
 
     [Fact]

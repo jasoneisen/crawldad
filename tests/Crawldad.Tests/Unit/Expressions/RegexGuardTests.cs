@@ -2,11 +2,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit.Expressions;
 
-/// <summary>The §7.2 regex guards: a size cap (terminal <c>regex_too_large</c>) and a match timeout (terminal
-/// <c>regex_timeout</c>) so no authored pattern can hang a run. Exercised through both regex builtins — <c>matches</c>
-/// (the <see cref="System.Text.RegularExpressions.Regex.IsMatch(string)"/> path) and <c>replaceRegex</c> (the
-/// <see cref="System.Text.RegularExpressions.Regex.Replace(string, string)"/> path) — which share the single guarded
-/// factory the interpreter's <c>filter.hasTextRegex</c> selector also uses.</summary>
+/// <summary>The regex guards: a size cap (terminal <c>regex_too_large</c>) and a match timeout (terminal
+/// <c>regex_timeout</c>) so no authored pattern can hang a run. Exercised through <c>matches</c> and <c>replaceRegex</c>,
+/// which share the single guarded factory the interpreter's <c>filter.hasTextRegex</c> selector also uses.</summary>
 public class RegexGuardTests
 {
     private static string BigPattern => new('a', GuardedRegex.MaxPatternLength + 1);

@@ -3,11 +3,9 @@ using Crawldad.Contracts;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// Boots the whole host through Alba (the shared dev fixture) and drives the /health endpoint over real HTTP.
-/// A 200 with the expected JSON body proves HostConfiguration composed — Marten, Wolverine, the Wolverine.Http
-/// pipeline, and the shared JSON wire convention — and it is what covers that configuration.
-/// </summary>
+/// <summary>Boots the whole host through Alba and drives <c>/health</c> over real HTTP. A 200 with the expected JSON
+/// body proves <c>HostConfiguration</c> composed — Marten, Wolverine, the Wolverine.Http pipeline, and the shared
+/// JSON wire convention — and it is what covers that configuration.</summary>
 [Collection(IntegrationCollection.Name)]
 public class HostBootTests(AppFixture fixture)
 {

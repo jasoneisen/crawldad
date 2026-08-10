@@ -2,11 +2,9 @@ using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The shared blob-naming guard (CD-2, <see cref="BlobNaming"/>) both durable adapters route through: a safe tenant/key
-/// segment passes unchanged, while a hostile one (empty, a separator, or <c>..</c>) is rejected — so no tenant id can escape
-/// its prefix and reach another tenant's blobs.
-/// </summary>
+/// <summary>The shared blob-naming guard (<see cref="BlobNaming"/>) both durable adapters route through: a safe
+/// tenant/key segment passes unchanged, while a hostile one (empty, a separator, or <c>..</c>) is rejected — so no
+/// tenant id can escape its prefix and reach another tenant's blobs.</summary>
 public class BlobNamingTests
 {
     [Theory]

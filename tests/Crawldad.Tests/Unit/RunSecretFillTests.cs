@@ -10,14 +10,9 @@ using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The CD-6 <c>fill.secret</c> action (SECURITY.md commitments 3 &amp; 4), white-box against the record/replay fake: the
-/// secret is resolved from the vault <b>at action time</b>, registered into the run's <see cref="IRunSecretScope"/> (so every
-/// sink scrubs it), and typed straight into the field — never bound into a scope var, never routed through an expression. The
-/// <c>Filled</c> trace event carries only the ref NAME (<c>secret:&lt;name&gt;</c>). secretRef inputs are absent from the eval
-/// scope, and the fail-fast paths (missing ref, unresolvable ref, wrong input type, no vault) are terminal, naming only the
-/// safe reference.
-/// </summary>
+/// <summary>The <c>fill.secret</c> action, white-box against the record/replay fake: the secret is resolved from the vault
+/// AT ACTION TIME, registered into the run's <see cref="IRunSecretScope"/> for scrubbing, and typed straight into the field —
+/// never bound to a scope var or routed through an expression. The <c>Filled</c> event carries only the ref name, never the secret.</summary>
 public class RunSecretFillTests
 {
     private const string _capHome = "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement";
@@ -53,7 +48,7 @@ public class RunSecretFillTests
                 payload, Inputs(""", "loginPw": "vault-ref" """), secretStores: Vault("vault-ref", "S3cr3tP@ss"), secretScope: scope);
 
             outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
-            outcome.Result!.Value.GetString().ShouldBe("S3cr3tP@ss"); // the field holds the vault-resolved secret
+            outcome.Result!.Value.GetString().ShouldBe("S3cr3tP@ss");
             scope.FormSecrets.ShouldContain("S3cr3tP@ss");             // registered for exact-match scrubbing (the lower form floor)
         }
     }
@@ -109,7 +104,7 @@ public class RunSecretFillTests
             fresh.Status.ShouldBe(RunStatus.Succeeded, fresh.Failure?.Code);
             vault.Calls.ShouldBeGreaterThan(0);
             var cp = observer.Checkpoints[0];
-            JsonSerializer.Serialize(cp).ShouldNotContain(Secret); // the persisted checkpoint state carries no secret
+            JsonSerializer.Serialize(cp).ShouldNotContain(Secret);
             resume = new ResumeState(cp.Name, cp.Sequence, cp.StepIndex, cp.Cursor, cp.Vars);
         }
 

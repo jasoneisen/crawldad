@@ -3,26 +3,9 @@ using Xunit.Abstractions;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>
-/// The Phase 4 <b>live canary</b> (CRAWLDAD_PLAN.md Phase 4, success criterion 3): scrapes ONE real enforcement record
-/// from the <b>live Accela portal</b> and asserts the output is a structurally valid <c>RecordScrapedV1</c>. It drives
-/// the canonical <c>scrape-full.json</c> verbatim through <c>POST /runs</c> on the real <c>"local"</c> adapter (real
-/// headless Chromium, real network), so the §8.1 policy applies for real — the 2 s global throttle, the host/resource
-/// blocklist, and the cross-run asset cache — at concurrency 1. This is the nightly/manual drift signal; it is
-/// <b>never</b> part of the fast loop.
-/// <para>
-/// <b>Gated, and NOT run by the fast loop.</b> The single test self-skips unless <c>CRAWLDAD_LIVE_CANARY=1</c> and
-/// <c>CRAWLDAD_CANARY_LINK</c> are set (<see cref="LiveCanaryFactAttribute"/>), and it carries the <c>Category=LiveCanary</c>
-/// trait so CI filters it out explicitly too. To run it manually (one command):
-/// <code>
-/// CRAWLDAD_LIVE_CANARY=1 \
-/// CRAWLDAD_CANARY_LINK='https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?Module=Enforcement&amp;capID=&lt;REC&gt;&amp;agencyCode=LJCMG' \
-/// dotnet test --filter Category=LiveCanary
-/// </code>
-/// (optionally <c>CRAWLDAD_CANARY_PUBLISH_DATE=YYYY-MM-DD</c> and <c>CRAWLDAD_CANARY_REGION=&lt;tag&gt;</c>). The
-/// <see cref="CanaryWiringTests"/> proves this exact code path against the local fixture site with zero live traffic.
-/// </para>
-/// </summary>
+/// <summary>The live canary: scrapes ONE real enforcement record from the live Accela portal and asserts the output
+/// is a structurally valid <c>RecordScrapedV1</c> — the nightly/manual drift signal, never part of the fast loop.
+/// Gated: skipped unless <c>CRAWLDAD_LIVE_CANARY=1</c> and <c>CRAWLDAD_CANARY_LINK</c> are set; see <see cref="LiveCanaryFactAttribute"/> and <see cref="CanaryWiringTests"/> (same path, zero live traffic).</summary>
 [Trait("Category", LiveCanary.Category)]
 public sealed class LiveCanaryTests(ITestOutputHelper output)
 {

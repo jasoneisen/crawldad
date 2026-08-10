@@ -4,12 +4,9 @@ using Crawldad.Web.Features.Payloads;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The JSON Schema gate (Deliverable 1): <c>schema/crawldad-1.schema.json</c> accepts the canonical payloads and
-/// rejects the structural violations the semantic pass is not meant to catch — an unknown node head, a loop missing
-/// its <c>maxIterations</c> cap, a bad enum value, a mistyped field, a missing required field, and an unknown
-/// top-level key. Errors carry a JSON-Pointer path into the document.
-/// </summary>
+/// <summary>The JSON Schema gate: <c>schema/crawldad-1.schema.json</c> accepts the canonical payloads and rejects
+/// the structural violations the semantic pass is not meant to catch — an unknown node head, a missing
+/// <c>maxIterations</c> cap, a bad enum/type, a missing field, an unknown key — errors carrying a JSON-Pointer path.</summary>
 public class PayloadSchemaTests
 {
     private static JsonElement Parse(string json)
@@ -34,17 +31,17 @@ public class PayloadSchemaTests
         PayloadSchema.Validate(Load(fixture)).ShouldBeEmpty();
 
     [Theory]
-    [InlineData("""[ { "screenshot": {} } ]""")]                        // #8: an empty (all-optional) body is valid
+    [InlineData("""[ { "screenshot": {} } ]""")]                        // an empty (all-optional) body is valid
     [InlineData("""[ { "screenshot": { "name": "after-login" } } ]""")] // with the optional author label
     public void A_screenshot_node_satisfies_the_schema(string steps) =>
         PayloadSchema.Validate(Parse(Steps(steps))).ShouldBeEmpty();
 
     [Fact]
-    public void A_screenshot_node_with_an_unknown_property_fails_the_schema() => // #8: additionalProperties:false — no to/selector/fullPage yet
+    public void A_screenshot_node_with_an_unknown_property_fails_the_schema() => // additionalProperties:false — no to/selector/fullPage yet
         PayloadSchema.Validate(Parse(Steps("""[ { "screenshot": { "selector": "#x" } } ]"""))).ShouldNotBeEmpty();
 
-    // #9: the structured-Sel role/text/xpath variants (§5.2), each as a lone root, role with an accessible-name `name`,
-    // and the base+css pair (the sole two-root combination) satisfy the schema.
+    // The structured-Sel role/text/xpath variants, each as a lone root, role with an accessible-name `name`, and
+    // the base+css pair (the sole two-root combination) satisfy the schema.
     [Theory]
     [InlineData("""[ { "click": { "selector": { "role": "button", "name": "Go" } } } ]""")]
     [InlineData("""[ { "click": { "selector": { "role": "textbox" } } } ]""")]
@@ -55,7 +52,7 @@ public class PayloadSchemaTests
     public void A_structured_selector_variant_satisfies_the_schema(string steps) =>
         PayloadSchema.Validate(Parse(Steps(steps))).ShouldBeEmpty();
 
-    // #9: exactly one root, only base+css may combine, and `name` requires `role` — the schema rejects every violation.
+    // Exactly one root, only base+css may combine, and `name` requires `role` — the schema rejects every violation.
     [Theory]
     [InlineData("""[ { "click": { "selector": { "css": "#a", "title": "b" } } } ]""")]     // two page/frame roots
     [InlineData("""[ { "click": { "selector": { "role": "button", "text": "x" } } } ]""")]  // two page/frame roots
@@ -70,9 +67,9 @@ public class PayloadSchemaTests
     [Fact]
     public void A_download_node_carrying_the_removed_idempotency_key_fails_the_schema()
     {
-        // CD-11: download.idempotencyKey was accepted-but-ignored, then removed. The download node is
-        // additionalProperties:false, so the field is now rejected at save time exactly like any unknown property —
-        // content addressing already provides the stored:true dedup (§9.3). The reject descends into the download node.
+        // download.idempotencyKey was accepted-but-ignored, then removed: the download node is additionalProperties:false,
+        // so the field is now rejected at save time exactly like any unknown property — content addressing already
+        // provides the stored:true dedup. The reject descends into the download node.
         var errors = PayloadSchema.Validate(Parse(Steps(
             """[ { "download": { "trigger": [ { "click": { "selector": "a" } } ], "to": "input.store", "var": "dl", "idempotencyKey": "x" } } ]""")));
         errors.ShouldContain(e => e.Path.StartsWith("/steps/0/download", StringComparison.Ordinal));
@@ -95,7 +92,7 @@ public class PayloadSchemaTests
     }
 
     [Theory]
-    // CD-10: loop.for from/to/step accept a typed JSON number as well as an Expr string. All-typed, a computed Expr `to`
+    // loop.for from/to/step accept a typed JSON number as well as an Expr string. All-typed, a computed Expr `to`
     // mixed with typed from/step, and a negative typed step all satisfy the number|string union.
     [InlineData("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 5, "step": 2 }, "do": [] } } ]""")]
     [InlineData("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": "count(rows)", "step": 1 }, "do": [] } } ]""")]
@@ -104,7 +101,7 @@ public class PayloadSchemaTests
         PayloadSchema.Validate(Parse(Steps(steps))).ShouldBeEmpty();
 
     [Fact]
-    public void A_loop_bound_that_is_neither_a_number_nor_a_string_fails_the_schema() // CD-10: the number|string union rejects a boolean step
+    public void A_loop_bound_that_is_neither_a_number_nor_a_string_fails_the_schema() // the number|string union rejects a boolean step
     {
         var errors = PayloadSchema.Validate(Parse(Steps("""[ { "loop": { "maxIterations": 10, "for": { "var": "i", "from": 0, "to": 5, "step": true }, "do": [] } } ]""")));
         errors.ShouldNotBeEmpty();

@@ -2,11 +2,9 @@ using Crawldad.Web.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The storage seams are tenant-scoped (CD-1): the download-sink and screenshot-store fakes partition by tenant so a real
-/// CD-2 adapter inherits the isolation. One tenant can neither read, overwrite, nor probe another's blob — proven directly
-/// here on the fakes, complementing the end-to-end cross-tenant test.
-/// </summary>
+/// <summary>The storage seams are tenant-scoped: the download-sink and screenshot-store fakes partition by tenant so a real
+/// adapter inherits the isolation. One tenant can neither read, overwrite, nor probe another's blob — proven directly
+/// here on the fakes, complementing the end-to-end cross-tenant test.</summary>
 public class TenantStorageIsolationTests
 {
     [Fact]

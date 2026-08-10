@@ -11,26 +11,19 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Crawldad.Tests.Support;
 
 /// <summary>Records, in order, the URL of every page the run navigates to (a fresh <c>goto</c> or a pagination postback) —
-/// the fetch-count proof for the kill-and-restart gate (§11): a resumed host must NOT re-enter earlier pages.</summary>
+/// the fetch-count proof for the kill-and-restart gate: a resumed host must NOT re-enter earlier pages.</summary>
 internal sealed class PageFetchRecorder
 {
     private readonly ConcurrentQueue<string> _urls = new();
 
-    /// <summary>The URLs entered, in order.</summary>
     public IReadOnlyList<string> Urls => [.. _urls];
 
-    /// <summary>Records that the page landed on <paramref name="url"/>.</summary>
-    /// <param name="url">The URL the page now reports.</param>
     public void Record(string url) => _urls.Enqueue(url);
 }
 
-/// <summary>
-/// A one-shot gate that pauses a run at a chosen point so a test can act while it is provably mid-execution (§11): it
-/// blocks the first pagination whose current page URL contains a marker, signals <see cref="Reached"/>, then waits until
-/// <see cref="Release"/> (a cooperative-cancel test) or the run's cancellation token fires (a kill / deadline test, which
-/// throws <see cref="OperationCanceledException"/> out of the blocked call).
-/// </summary>
-/// <param name="blockWhenUrlContains">Block the pagination that departs a page whose URL contains this marker.</param>
+/// <summary>A one-shot gate pausing a run at a chosen point for mid-execution test control: blocks the first pagination
+/// whose URL contains a marker, signals <see cref="Reached"/>, then waits for <see cref="Release"/> or cancellation.</summary>
+/// <param name="blockWhenUrlContains">Matched against the URL of the page being departed, not the destination.</param>
 internal sealed class RunGate(string blockWhenUrlContains)
 {
     private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -81,8 +74,6 @@ internal sealed class GateHolder
 /// <summary>A record/replay backend that decorates <see cref="FakeBrowserBackend"/> to (a) record every page fetch and
 /// (b) optionally gate one pagination — the seam the durable-run gates drive. All real behaviour delegates to the fake;
 /// the gate + recorder come from a <see cref="GateHolder"/> read at connect time, so one host serves many tests.</summary>
-/// <param name="fixturesRoot">The fixtures root the inner fake reads.</param>
-/// <param name="holder">The gate + recorder for the current run.</param>
 internal sealed class GatedFakeBackend(string fixturesRoot, GateHolder holder) : IBrowserBackend
 {
     private readonly FakeBrowserBackend _inner = new(fixturesRoot);
@@ -100,12 +91,9 @@ internal sealed class GatedFakeBackend(string fixturesRoot, GateHolder holder) :
 }
 
 /// <summary>The gated session: forwards to the inner fake session and tracks its own teardown.</summary>
-/// <param name="inner">The inner fake session.</param>
-/// <param name="recorder">The fetch recorder.</param>
-/// <param name="gate">The pagination gate, or null.</param>
 internal sealed class GatedSession(IBrowserSession inner, PageFetchRecorder recorder, RunGate? gate) : IBrowserSession
 {
-    /// <summary>Whether the session was torn down — asserts a cancelled run left no orphaned session (§11).</summary>
+    /// <summary>Whether the session was torn down — used to assert a cancelled run left no orphaned session.</summary>
     public bool Disposed { get; private set; }
 
     /// <inheritdoc />
@@ -127,9 +115,6 @@ internal sealed class GatedSession(IBrowserSession inner, PageFetchRecorder reco
 
 /// <summary>The gated page: forwards to the inner fake page, records the landing URL after each navigation, and gates one
 /// pagination so the run can be caught mid-execution.</summary>
-/// <param name="inner">The inner fake page.</param>
-/// <param name="recorder">The fetch recorder.</param>
-/// <param name="gate">The pagination gate, or null.</param>
 internal sealed class GatedPage(IPageHandle inner, PageFetchRecorder recorder, RunGate? gate) : IPageHandle
 {
     /// <inheritdoc />
@@ -184,37 +169,24 @@ internal sealed class GatedPage(IPageHandle inner, PageFetchRecorder recorder, R
     public Task<byte[]> ScreenshotAsync(CancellationToken ct) => inner.ScreenshotAsync(ct);
 }
 
-/// <summary>Builds and polls durable-run hosts for the §11 async/cancel/kill/deadline gates.</summary>
+/// <summary>Builds and polls durable-run hosts for async/cancel/kill/deadline gates.</summary>
 public static class DurableHost
 {
-    /// <summary>The default terminal/queue poll window (issue #38): a generous contention margin, <b>not</b> a functional
-    /// expectation. In the happy path a queued run promotes and reaches terminal in well under a second, and the test host's
-    /// tightened Wolverine durability cadence (<see cref="TestDefaults"/>) keeps even a missed-in-process-delivery
-    /// backstop sub-second — so this window is only ever consumed by the multi-second stalls a loaded / slow shared runner
-    /// injects <em>outside</em> the durable layer (connection-pool acquisition, Marten schema/advisory-lock waits, GC or
-    /// thread-pool spikes under concurrent-agent load). It replaces the scattered 20–30 s magic constants that the two #38
-    /// occurrences timed out against; large enough that contention never flakes the promotion tests, small enough that a
-    /// genuinely stuck pipeline still fails the suite rather than hanging.</summary>
+    /// <summary>The default terminal/queue poll window: a generous contention margin, not a functional expectation — real
+    /// promotions finish sub-second. It absorbs infra stalls (connection-pool acquisition, Marten lock waits, GC pauses)
+    /// outside the durable layer, large enough to avoid flaky contention failures, small enough to still catch a stuck pipeline.</summary>
     public static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>Builds an Alba host on <paramref name="schema"/> with a frozen clock and the given <c>fake</c> backend
     /// override. Set <paramref name="resetData"/> false for the SECOND host of a kill-and-restart, which must inherit the
     /// first host's persisted checkpoint on the same schema.</summary>
-    /// <param name="schema">The Marten/durable schema to run on.</param>
-    /// <param name="fakeBackend">The backend registered under the <c>fake</c> adapter id.</param>
-    /// <param name="resetData">Whether to reset Marten data after boot (false to inherit a prior host's data).</param>
-    /// <param name="settings">Extra host settings to layer on (e.g. a low <c>Crawldad:Limits</c> cap), or null for none.</param>
     public static Task<IAlbaHost> BuildAsync(
         string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null) =>
         BuildAsync(schema, (_, _) => fakeBackend, resetData, settings);
 
     /// <summary>As <see cref="BuildAsync(string, IBrowserBackend, bool, IEnumerable{KeyValuePair{string, string?}})"/>, but the
     /// <c>fake</c> backend is built by a DI factory — so a backend can resolve a host service (e.g. the <c>IRunSecretScope</c> a
-    /// CD-15 credential test's backend registers a secret into).</summary>
-    /// <param name="schema">The Marten/durable schema to run on.</param>
-    /// <param name="fakeBackendFactory">The keyed factory that builds the backend registered under the <c>fake</c> adapter id.</param>
-    /// <param name="resetData">Whether to reset Marten data after boot (false to inherit a prior host's data).</param>
-    /// <param name="settings">Extra host settings to layer on (e.g. a low <c>Crawldad:Limits</c> cap), or null for none.</param>
+    /// credential test's backend registers a secret into).</summary>
     public static async Task<IAlbaHost> BuildAsync(
         string schema, Func<IServiceProvider, object?, IBrowserBackend> fakeBackendFactory, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null)
     {
@@ -241,13 +213,9 @@ public static class DurableHost
         return host;
     }
 
-    /// <summary>Polls until the run's <see cref="RunExecutorSaga"/> document is gone (CD-5): the shared finaliser deletes it in
-    /// the same transaction as the run's terminal disposition, so its <c>script</c>+<c>inputs</c> stop lingering at rest
-    /// (SECURITY.md "Durable state at rest"). Returns as soon as the run reaches terminal — there is no separate cleanup step to
-    /// wait on.</summary>
-    /// <param name="host">The host to poll.</param>
-    /// <param name="runId">The run whose saga should be reclaimed.</param>
-    /// <param name="timeout">How long to wait before giving up.</param>
+    /// <summary>Polls until the run's <see cref="RunExecutorSaga"/> document is gone: the shared finaliser deletes it in the
+    /// same transaction as the run's terminal disposition, so its <c>script</c>+<c>inputs</c> stop lingering at rest. Returns
+    /// as soon as the run reaches terminal.</summary>
     public static async Task WaitUntilSagaGoneAsync(IAlbaHost host, Guid runId, TimeSpan timeout)
     {
         var store = host.Services.GetRequiredService<IDocumentStore>();
@@ -270,18 +238,11 @@ public static class DurableHost
 
     /// <summary>Polls <c>GET /runs/{id}</c> until the run reaches a terminal state (past <c>queued</c> and <c>running</c>),
     /// returning its terminal state body.</summary>
-    /// <param name="host">The host to poll.</param>
-    /// <param name="runId">The run to poll.</param>
-    /// <param name="timeout">How long to wait before giving up.</param>
     public static async Task<JsonElement> PollUntilTerminalAsync(IAlbaHost host, Guid runId, TimeSpan timeout) =>
         await PollUntilAsync(host, runId, timeout, status => status is "succeeded" or "failed" or "cancelled");
 
-    /// <summary>Polls <c>GET /runs/{id}</c> until its status satisfies <paramref name="isDone"/> (CD-16: e.g. "left the queue"
-    /// — no longer <c>queued</c>), returning the matching state body.</summary>
-    /// <param name="host">The host to poll.</param>
-    /// <param name="runId">The run to poll.</param>
-    /// <param name="timeout">How long to wait before giving up.</param>
-    /// <param name="isDone">The predicate over the wire status that ends the poll.</param>
+    /// <summary>Polls <c>GET /runs/{id}</c> until its status satisfies <paramref name="isDone"/> (e.g. "left the queue" —
+    /// no longer <c>queued</c>), returning the matching state body.</summary>
     public static async Task<JsonElement> PollUntilAsync(IAlbaHost host, Guid runId, TimeSpan timeout, Func<string, bool> isDone)
     {
         var deadline = DateTime.UtcNow + timeout;

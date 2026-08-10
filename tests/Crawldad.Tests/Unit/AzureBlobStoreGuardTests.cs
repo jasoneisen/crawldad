@@ -4,11 +4,9 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The Azure adapter shares the traversal guard (CD-2): every operation validates the tenant (and key) segment <b>before</b>
-/// any storage I/O, so a hostile tenant id can never collapse another tenant's blob prefix. Deterministic and emulator-free —
-/// the guard fails closed before Azurite/Azure is ever contacted (the reason name construction precedes container creation).
-/// </summary>
+/// <summary>The Azure adapter shares the traversal guard: every operation validates the tenant (and key) segment
+/// <b>before</b> any storage I/O, so a hostile tenant id can never collapse another tenant's blob prefix.
+/// Deterministic and emulator-free — the guard fails closed before Azurite/Azure is ever contacted.</summary>
 public class AzureBlobStoreGuardTests
 {
     private static AzureBlobStore Store() =>

@@ -2,20 +2,12 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Web.Infrastructure.Storage;
 
-/// <summary>
-/// The boot-time guard for the durable-storage knobs (CD-2), mirroring <c>RunLimitsOptionsValidator</c>: bound from
-/// <c>Crawldad:Storage</c> and registered with <c>ValidateOnStart</c>, it fails the host <b>loudly at startup</b> on a
-/// misconfiguration that would otherwise surface as a broken sweep (a non-positive interval a periodic timer can't run) or a
-/// silently non-durable production store (a filesystem provider with no root, an Azure provider with no connection string).
-/// The <see cref="StorageOptions.Provider"/> value itself is validated where it is switched on (an unknown provider throws at
-/// registration); this closes the remaining gaps in the bound settings.
-/// </summary>
+/// <summary>The boot-time guard for the durable-storage knobs: bound from <c>Crawldad:Storage</c> and registered with
+/// <c>ValidateOnStart</c>, it fails the host loudly at startup on a misconfiguration that would otherwise surface as
+/// a broken sweep or a silently non-durable production store.</summary>
 public sealed class StorageOptionsValidator : IValidateOptions<StorageOptions>
 {
     /// <summary>Validates the bound storage knobs, collecting every failure so a misconfigured host reports them all at once.</summary>
-    /// <param name="name">The options name (unused — there is a single unnamed instance).</param>
-    /// <param name="options">The bound options.</param>
-    /// <returns>Success, or a failure listing each invalid knob.</returns>
     public ValidateOptionsResult Validate(string? name, StorageOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

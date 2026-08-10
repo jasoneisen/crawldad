@@ -4,11 +4,9 @@ using Microsoft.Playwright;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The <see cref="PlaywrightFaults"/> mapping onto the §8.3 taxonomy, driven with synthetic exceptions so every branch
-/// (timeout, crash, non-crash passthrough, success) is covered without a real browser. A real timeout is separately
-/// exercised end-to-end through the local adapter.
-/// </summary>
+/// <summary>The <see cref="PlaywrightFaults"/> mapping onto the exception taxonomy, driven with synthetic
+/// exceptions so every branch (timeout, crash, non-crash passthrough, success) is covered without a real browser.
+/// A real timeout is separately exercised end-to-end through the local adapter.</summary>
 public class PlaywrightFaultsTests
 {
     [Fact]

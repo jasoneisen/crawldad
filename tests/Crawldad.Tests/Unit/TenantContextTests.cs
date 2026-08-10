@@ -4,11 +4,9 @@ using Microsoft.AspNetCore.Http;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The per-request tenant accessor (CD-1): reads the tenant + actor from the authenticated principal the API-key handler
+/// <summary>The per-request tenant accessor: reads the tenant + actor from the authenticated principal the API-key handler
 /// issued. Every route that resolves it requires authentication, so the claims are present; a missing principal is a loud
-/// failure rather than a silent default-tenant fallback.
-/// </summary>
+/// failure rather than a silent default-tenant fallback.</summary>
 public class TenantContextTests
 {
     private sealed class StubHttpContextAccessor(HttpContext? context) : IHttpContextAccessor
@@ -42,7 +40,7 @@ public class TenantContextTests
     [Fact]
     public void Throws_when_the_actor_claim_is_absent()
     {
-        var tenant = ContextWith(new Claim(CrawldadClaims.TenantId, "alpha")); // tenant present, actor missing
+        var tenant = ContextWith(new Claim(CrawldadClaims.TenantId, "alpha"));
 
         Should.Throw<InvalidOperationException>(() => tenant.Actor);
     }

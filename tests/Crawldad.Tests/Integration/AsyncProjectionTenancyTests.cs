@@ -12,7 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>A host running projections on the PRODUCTION lifecycle — <c>Async</c>, built by the projection daemon out of
+/// <summary>A host running projections on the production lifecycle — <c>Async</c>, built by the projection daemon out of
 /// band — rather than the suite's default <c>Inline</c>. Lazily built (after the eager fixtures) so its schema migration
 /// does not contend, and single-node so the solo daemon actually runs.</summary>
 public sealed class AsyncProjectionFixture : IAsyncLifetime
@@ -58,12 +58,9 @@ public sealed class AsyncProjectionCollection : ICollectionFixture<AsyncProjecti
     public const string Name = "async-projection";
 }
 
-/// <summary>
-/// CD-1 review carry-over: the tenant boundary holds through the ASYNC projection daemon, not just the inline path the rest
-/// of the suite forces (TestDefaults). A run's <c>RunTimeline</c> is built off-band by the daemon under the production
-/// <c>Async</c> lifecycle; this proves the daemon writes into the run's tenant partition — tenant A reads its own timeline,
-/// tenant B (a valid other tenant) gets 404 — so async projection catch-up never crosses the isolation boundary (§12).
-/// </summary>
+/// <summary>The tenant boundary holds through the ASYNC projection daemon, not just the inline path the rest of
+/// the suite forces. A run's <c>RunTimeline</c> is built off-band under the production <c>Async</c> lifecycle;
+/// tenant A reads its own timeline while tenant B gets 404, so async catch-up never crosses tenants.</summary>
 [Collection(AsyncProjectionCollection.Name)]
 public class AsyncProjectionTenancyTests(AsyncProjectionFixture fixture)
 {
@@ -107,8 +104,7 @@ public class AsyncProjectionTenancyTests(AsyncProjectionFixture fixture)
         await daemon.StartAllAsync();
         await store.WaitForNonStaleProjectionDataAsync(TimeSpan.FromSeconds(30));
 
-        // The daemon-built timeline is readable by tenant A, and tenant B (a valid other tenant) gets 404 — the async write
-        // landed in A's partition, so async catch-up never crosses the tenant boundary.
+        // Confirms the async write landed only in tenant A's partition.
         await host.Scenario(x =>
         {
             x.WithRequestHeader("Authorization", TestTenants.Bearer(TestTenants.PrimaryKey));

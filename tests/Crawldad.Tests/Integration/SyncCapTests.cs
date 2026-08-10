@@ -12,10 +12,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>The re-armable per-test behaviour for the ONE shared sync-cap backend (below): the gate that holds a run past the
-/// window, plus the two special modes a couple of gates need — a run secret registered at connect (§12 leak gate) and a raw
-/// fault at connect (the unexpected-fault gate). Keeping every gate on a single host means one schema migration, not three,
-/// which matters under the shared-Postgres global-lock contention. Reset by each test before it drives its run.</summary>
+/// <summary>Re-armable per-test behaviour for the ONE shared sync-cap backend: the gate that holds a run past the
+/// window, plus two special modes — a run secret registered at connect (leak gate) and a raw fault at connect
+/// (unexpected-fault gate). One shared host avoids three schema migrations under Postgres lock contention.</summary>
 internal sealed class SyncCapArming
 {
     public RunGate? Gate { get; private set; }
@@ -43,9 +42,9 @@ internal sealed class SyncCapArming
     }
 }
 
-/// <summary>The single fake backend behind every CD-15 gate: it gates a run (via <see cref="SyncCapArming"/>) so it crosses
-/// the sync window, and — when armed — registers a run secret at connect (a real adapter's §12 behaviour) or throws a raw
-/// fault at connect (blocking at the gate first, so the fault lands after the 202, not before).</summary>
+/// <summary>The single fake backend behind every sync-cap gate: it gates a run (via <see cref="SyncCapArming"/>) so it
+/// crosses the sync window, and — when armed — registers a run secret at connect (mimicking a real adapter) or throws
+/// a raw fault at connect (blocking at the gate first, so the fault lands after the 202, not before).</summary>
 internal sealed class SyncCapBackend(string fixturesRoot, SyncCapArming arming, IRunSecretScope secretScope) : IBrowserBackend
 {
     private readonly FakeBrowserBackend _inner = new(fixturesRoot);
@@ -54,7 +53,7 @@ internal sealed class SyncCapBackend(string fixturesRoot, SyncCapArming arming, 
     {
         if (arming.Secret is { } secret)
         {
-            secretScope.Register(secret); // mimic a real adapter registering the resolved credential into the run's scope (§12)
+            secretScope.Register(secret); // mimic a real adapter registering the resolved credential into the run's scope
         }
 
         if (arming.FaultAtConnect)
@@ -69,7 +68,7 @@ internal sealed class SyncCapBackend(string fixturesRoot, SyncCapArming arming, 
     }
 }
 
-/// <summary>One shared host for the CD-15 sync-cap gates: a small <c>SyncUpgradeThresholdMs</c> so a run the gate holds open
+/// <summary>One shared host for the sync-cap gates: a small <c>SyncUpgradeThresholdMs</c> so a run the gate holds open
 /// crosses the window and auto-upgrades deterministically (the frozen clock does not affect the real-time window). Built
 /// lazily (like the other durable fixtures) and re-armed per test via its <see cref="SyncCapArming"/>.</summary>
 public sealed class SyncCapFixture : IAsyncLifetime
@@ -105,15 +104,9 @@ public sealed class SyncCapCollection : ICollectionFixture<SyncCapFixture>
     public const string Name = "sync-cap";
 }
 
-/// <summary>
-/// The CD-15 gates: the default synchronous <c>POST /runs</c> is capped at a wall-clock window and, on crossing it, is
-/// <b>auto-upgraded, not failed</b> — the caller gets <c>202 { runId, status:"running" }</c> and the same run keeps executing
-/// on the async surface, completing with the terminal result a native async run would have (golden via <c>GET /runs/{id}</c>).
-/// A run finishing inside the window keeps today's synchronous shape (proven byte-for-byte by the acceptance suite and the
-/// no-progress-row edge in <see cref="RunEndpointTests"/>). Cancel, the wall-clock deadline (§8.4), SSE, credential scrubbing,
-/// and the pinned/replay paths all hold across the upgrade. Deterministic throughout: a run is held past the window by a gate,
-/// never by a sleep.
-/// </summary>
+/// <summary>The default synchronous <c>POST /runs</c> is capped at a wall-clock window and, on crossing it, is
+/// auto-upgraded, not failed — the caller gets <c>202 { runId, status:"running" }</c> and the run keeps executing on
+/// the async surface. Cancel, the deadline, SSE, credential scrubbing, and pinned/replay all hold across the upgrade.</summary>
 [Collection(SyncCapCollection.Name)]
 public class SyncCapTests(SyncCapFixture fixture)
 {
@@ -181,7 +174,7 @@ public class SyncCapTests(SyncCapFixture fixture)
         frames[^1].Event.ShouldBe("RunSucceeded");
     }
 
-    // ----- pinned + replay crossing the window (the reviewer's BLOCKER) ------
+    // ----- pinned + replay crossing the window ------
 
     [Fact]
     public async Task A_pinned_sync_run_crossing_the_window_upgrades_and_completes_with_the_golden()
@@ -248,7 +241,7 @@ public class SyncCapTests(SyncCapFixture fixture)
             x.Post.Json(new JsonObject()).ToUrl($"/runs/{runId}/cancel");
             x.StatusCodeShouldBe(202);
         });
-        // No gate.Release(): the cancel forcibly cancels the observer-less interpreter (CD-15), unblocking it via its own token.
+        // No gate.Release(): the cancel forcibly cancels the observer-less interpreter, unblocking it via its own token.
 
         var terminal = await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(20));
         terminal.GetProperty("status").GetString().ShouldBe("cancelled");
@@ -292,7 +285,7 @@ public class SyncCapTests(SyncCapFixture fixture)
         terminal.GetProperty("failure").GetProperty("code").GetString().ShouldBe(SyncRunSupervisor.InternalErrorCode);
     }
 
-    // ----- the §12 boundary holds across the request→background handoff -------
+    // ----- the credential-scrubbing boundary holds across the request→background handoff -------
 
     [Fact]
     public async Task An_upgraded_run_keeps_a_run_secret_out_of_every_sink()
@@ -325,7 +318,7 @@ public class SyncCapTests(SyncCapFixture fixture)
         string.Join('\n', frames.Select(f => f.Data)).ShouldNotContain(Secret);
     }
 
-    // ----- host shutdown drains the in-flight supervised tail (#26) -----------
+    // ----- host shutdown drains the in-flight supervised tail -----------
 
     [Fact]
     public async Task Host_shutdown_drains_an_in_flight_upgraded_run_without_a_disposed_service_fault()

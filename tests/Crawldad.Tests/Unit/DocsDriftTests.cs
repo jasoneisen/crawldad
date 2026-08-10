@@ -9,15 +9,9 @@ using Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The docs-drift gate (#20): keeps the LLM-facing docs truthful the same way the coverage gate keeps the code honest.
-/// Every curated example (<c>docs/examples/*.json</c>) and every complete payload block embedded in <c>docs/API.md</c> is
-/// run through the <b>real save-time gate</b> (<see cref="PayloadValidation"/> — JSON Schema + semantic pass, exactly what
-/// <c>POST /payloads</c> applies), so a documented payload that would not actually be accepted fails the build. The wire-code
-/// table is cross-checked against the enumerated <see cref="InterpreterErrorCodes"/>/<see cref="ExpressionErrorCodes"/> so a
-/// new code cannot ship undocumented, and every schema node/field is asserted to carry a <c>description</c> (Deliverable 2).
-/// Reads the repo working tree (docs live in source, not the test output), located by walking up to <c>Crawldad.slnx</c>.
-/// </summary>
+/// <summary>The docs-drift gate: keeps the LLM-facing docs truthful the way the coverage gate keeps the code honest.
+/// Curated examples and complete <c>docs/API.md</c> payload blocks run through the real save-time gate
+/// (<see cref="PayloadValidation"/>); the wire-code table is cross-checked and every schema field must carry a <c>description</c>.</summary>
 public class DocsDriftTests
 {
     private static readonly string _repoRoot = FindRepoRoot();
@@ -76,10 +70,9 @@ public class DocsDriftTests
     {
         var apiReference = File.ReadAllText(ApiReference);
 
-        // The two central, growth-prone slug registries plus the two queue-admission codes. If a new interpreter/expression
-        // code ships without a row in §12, this fails — cheap insurance against the table rotting away from the contracts.
-        // (Endpoint string-literal rejection codes and open-ended author-defined `fail`/`guard` codes have no central
-        // registry to reflect over; they are covered narratively in §12.)
+        // The two central, growth-prone slug registries plus the two queue-admission codes: if a new interpreter/expression
+        // code ships without a row in the wire-code table, this fails — cheap insurance against the table rotting away
+        // from the contracts. (Endpoint string-literal codes and open-ended `fail`/`guard` codes have no central registry.)
         var enumerated = SlugConstantsOf(typeof(InterpreterErrorCodes))
             .Concat(SlugConstantsOf(typeof(ExpressionErrorCodes)))
             .Append(RunQueue.QueueDepthExceededCode)
@@ -114,8 +107,8 @@ public class DocsDriftTests
         text.ShouldContain("docs/examples/");
     }
 
-    // Every value under any `properties` map must carry a non-empty description (Deliverable 2: the schema is the DSL
-    // reference, so a new node/field without a description fails the build).
+    // Every value under any `properties` map must carry a non-empty description — the schema is the DSL reference, so
+    // a new node/field without one fails the build.
     private static void CollectUndescribed(JsonElement node, string path, List<string> undescribed)
     {
         if (node.ValueKind == JsonValueKind.Object)

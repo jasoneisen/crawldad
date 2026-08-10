@@ -8,24 +8,11 @@ using Wolverine.Http;
 
 namespace Crawldad.Web.Features.Payloads;
 
-/// <summary>
-/// <c>POST /payloads/{id}/revise</c> (§14.1): appends a new script revision to a managed payload. The revised script runs
-/// the SAME scrub-then-validate gate as a draft (<see cref="PayloadScript"/> + <see cref="PayloadValidation"/>), so every
-/// persisted revision is executable and credential-free (§12). An unknown payload is a <c>404</c>; an archived payload is
-/// a <c>400</c> (cannot revise); an invalid script is a <c>400</c> with the structured error list. The event's actor is
-/// stamped from the authenticated tenant, never the request body (§12).
-/// </summary>
+/// <summary><c>POST /payloads/{id}/revise</c>: appends a new script revision to a managed payload, running the SAME
+/// scrub-then-validate gate as a draft (<see cref="PayloadScript"/> + <see cref="PayloadValidation"/>) so every persisted
+/// revision is executable and credential-free. The event's actor is stamped from the tenant, never the request body.</summary>
 public static class RevisePayloadEndpoint
 {
-    /// <summary>Handles <c>POST /payloads/{id}/revise</c>.</summary>
-    /// <param name="id">The payload to revise.</param>
-    /// <param name="request">The revised payload + optional note.</param>
-    /// <param name="session">The request-scoped Marten session.</param>
-    /// <param name="scrubber">Redacts credential material from the persisted script and note (§12).</param>
-    /// <param name="tenant">The authenticated tenant — its actor identity is stamped on the event (§12).</param>
-    /// <param name="clock">The time seam for the event timestamp.</param>
-    /// <param name="ct">Cancels the save.</param>
-    /// <returns><c>200</c> with the new head <see cref="PayloadResponse"/>, <c>404</c> when unknown, or <c>400</c> when archived/invalid.</returns>
     [WolverinePost("/payloads/{id}/revise")]
     public static async Task<IResult> Handle(
         Guid id,

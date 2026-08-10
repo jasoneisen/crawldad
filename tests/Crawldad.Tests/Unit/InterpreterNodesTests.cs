@@ -6,11 +6,9 @@ using Crawldad.Web.Features.Runs.Interpreter;
 
 namespace Crawldad.Tests.Unit;
 
-/// <summary>
-/// The Phase 2 control/effect nodes (§6): <c>switch</c>, <c>guard</c>, <c>fail</c>, <c>log</c>, the do-while
+/// <summary>The control/effect nodes: <c>switch</c>, <c>guard</c>, <c>fail</c>, <c>log</c>, the do-while
 /// <c>loop { while }</c>, <c>onMaxIterations</c> on every loop form, <c>set</c> with a <c>path</c>, and template
-/// interpolation reaching selectors. Each case runs a small payload against the fake backend.
-/// </summary>
+/// interpolation reaching selectors. Each case runs a small payload against the fake backend.</summary>
 public class InterpreterNodesTests
 {
     private static string Payload(string steps, string result = "null", string vars = "{}") =>
