@@ -1,6 +1,6 @@
 {
   "manifest": "1",
-  "description": "Scripted-fault fixture (§ Deliverable 3) for the retry layer. The form→results click times out on its first 2 triggers, then succeeds — so a payload with retry.maxAttempts >= 3 retries into success, while retry.maxAttempts <= 2 exhausts into a retryable-exhausted failure. The attempt count is per-transition on the session (resets with a fresh run).",
+  "description": "Scripted-fault fixture (Deliverable 3) for the retry layer. The form→results click times out on its first 2 triggers, then succeeds — so a payload with retry.maxAttempts >= 3 retries into success, while retry.maxAttempts <= 2 exhausts into a retryable-exhausted failure. The attempt count is per-transition on the session (resets with a fresh run).",
   "initialState": "form",
   "states": {
     "form": {

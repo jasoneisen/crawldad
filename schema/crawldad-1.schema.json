@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://crawldad.dev/schema/crawldad-1.schema.json",
   "title": "Crawldad payload v1",
-  "description": "Normative structure of a Crawldad v1 automation payload (CRAWLDAD_DESIGN.md §4-§6). Leaf expressions/templates are strings validated by the semantic pass, not this schema; this schema fixes the document shape, the node vocabulary (exactly one recognised head per node), and the mandatory loop safety cap.",
+  "description": "Normative structure of a Crawldad v1 automation payload. Leaf expressions/templates are strings validated by the semantic pass, not this schema; this schema fixes the document shape, the node vocabulary (exactly one recognised head per node), and the mandatory loop safety cap.",
   "type": "object",
   "required": [
     "crawldad",
@@ -15,16 +15,16 @@
   "properties": {
     "crawldad": {
       "const": "1",
-      "description": "Dialect version — v1 is frozen (§4)."
+      "description": "Dialect version — v1 is frozen."
     },
     "name": {
       "type": "string",
       "minLength": 1,
-      "description": "Logical identity of the managed payload (§4)."
+      "description": "Logical identity of the managed payload."
     },
     "inputs": {
       "type": "object",
-      "description": "Typed parameters bound at run time (§4).",
+      "description": "Typed parameters bound at run time.",
       "additionalProperties": {
         "type": "object",
         "required": [
@@ -33,7 +33,7 @@
         "additionalProperties": false,
         "properties": {
           "type": {
-            "description": "The input's declared type. `backend` resolves to a `{ adapter, options }` backend binding (§9); `storageTarget` to a download sink (§9.3); `secretRef` is a vault REFERENCE only (never the secret) consumed solely by `fill.secret` (CD-6/§12); the rest are ordinary JSON value types.",
+            "description": "The input's declared type. `backend` resolves to a `{ adapter, options }` backend binding; `storageTarget` to a download sink; `secretRef` is a vault REFERENCE only (never the secret) consumed solely by `fill.secret` (CD-6); the rest are ordinary JSON value types.",
             "enum": [
               "string",
               "number",
@@ -58,7 +58,7 @@
     },
     "config": {
       "type": "object",
-      "description": "Session config (§8.1). Only `backend` (the adapter-resolution Expr) is required; every other block is optional and defaults per §8.1. The launch/context/route blocks become the SessionPolicy a real adapter applies (§9.2); `retry` drives the resilience layer (§8.3).",
+      "description": "Session config. Only `backend` (the adapter-resolution Expr) is required; every other block is optional. The launch/context/route blocks become the SessionPolicy a real adapter applies; `retry` drives the resilience layer.",
       "required": [
         "backend"
       ],
@@ -66,26 +66,26 @@
       "properties": {
         "backend": {
           "type": "string",
-          "description": "Expr resolving to the { adapter, options } backend binding (§9)."
+          "description": "Expr resolving to the { adapter, options } backend binding."
         },
         "defaultTimeoutMs": {
           "type": "integer",
           "minimum": 0,
-          "description": "Context default timeout and the interpreter's timeout-hierarchy floor (§8.4); 120000 when absent."
+          "description": "Context default timeout and the interpreter's timeout-hierarchy floor; 120000 when absent."
         },
         "deadlineMs": {
           "type": "integer",
           "minimum": 1,
-          "description": "Run wall-clock cap for an async run (§8.4/§11), enforced by the executor saga's timeout; a generous default (30 min) when absent."
+          "description": "Run wall-clock cap for an async run, enforced by the executor saga's timeout; a generous default (30 min) when absent."
         },
         "screenshotOnFailure": {
           "type": "boolean",
-          "description": "Whether the executor captures a page screenshot on a step failure (§13), stored in deletable blob storage with only its ref in the trace; true when absent, set false to disable."
+          "description": "Whether the executor captures a page screenshot on a step failure, stored in deletable blob storage with only its ref in the trace; true when absent, set false to disable."
         },
         "launch": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Browser launch options passed to a launching backend (§9.2).",
+          "description": "Browser launch options passed to a launching backend.",
           "properties": {
             "args": {
               "type": "array",
@@ -99,7 +99,7 @@
         "context": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Browser context options applied at connect (§9.2).",
+          "description": "Browser context options applied at connect.",
           "properties": {
             "bypassCsp": {
               "type": "boolean",
@@ -110,7 +110,7 @@
         "route": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Request-interception policy applied per page (§8.1): abort by host/resource type, else cache, else throttle.",
+          "description": "Request-interception policy applied per page: abort by host/resource type, else cache, else throttle.",
           "properties": {
             "blockHosts": {
               "type": "array",
@@ -157,7 +157,7 @@
         "retry": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Operation-level resilience (§8.3), wrapping the whole program.",
+          "description": "Operation-level resilience, wrapping the whole program.",
           "properties": {
             "maxAttempts": {
               "type": "integer",
@@ -182,7 +182,7 @@
             },
             "onPageCrashed": {
               "type": "string",
-              "description": "Page-crash handling (reopenPage → close+reopen on the same context, §3.6)."
+              "description": "Page-crash handling (reopenPage → close+reopen on the same context)."
             }
           }
         }
@@ -190,16 +190,16 @@
     },
     "vars": {
       "type": "object",
-      "description": "Initial variable bindings, evaluated once in order (§4). A string value is an Expr; a non-string is a JSON literal.",
+      "description": "Initial variable bindings, evaluated once in order. A string value is an Expr; a non-string is a JSON literal.",
       "additionalProperties": true
     },
     "steps": {
       "$ref": "#/$defs/block",
-      "description": "The ordered program (§5, §6)."
+      "description": "The ordered program."
     },
     "result": {
       "type": "string",
-      "description": "Final Expr shaping the response body (§10)."
+      "description": "Final Expr shaping the response body."
     }
   },
   "$defs": {
@@ -211,7 +211,7 @@
       }
     },
     "sel": {
-      "description": "A selector (§5.2): a CSS/xpath string, or a structured object rooted at EXACTLY ONE of css/xpath/text/role/title/base, with optional refinements. `role` may carry an accessible-name `name`; `base` may pair with a relative `css` (the sole two-root combination). Only the keys the engine's SelResolver implements are permitted.",
+      "description": "A selector: a CSS/xpath string, or a structured object rooted at EXACTLY ONE of css/xpath/text/role/title/base, with optional refinements. `role` may carry an accessible-name `name`; `base` may pair with a relative `css` (the sole two-root combination). Only the keys the engine's SelResolver implements are permitted.",
       "oneOf": [
         {
           "type": "string"
@@ -328,15 +328,15 @@
               "type": "string"
             },
             "base": {
-              "description": "Root relative to a bound locator var (a child locator); may pair with a relative `css` (the sole two-root combination, §5.2).",
+              "description": "Root relative to a bound locator var (a child locator); may pair with a relative `css` (the sole two-root combination).",
               "type": "string"
             },
             "in": {
-              "description": "Resolve inside a bound frame handle — the var a `frame` node bound (§5.2).",
+              "description": "Resolve inside a bound frame handle — the var a `frame` node bound.",
               "type": "string"
             },
             "nth": {
-              "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (§8.3, #37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
+              "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (#37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
               "type": "string"
             },
             "first": {
@@ -344,7 +344,7 @@
               "type": "boolean"
             },
             "filter": {
-              "description": "Narrow the locator to matches whose text matches a regex (`.Filter(HasTextRegex)`, §5.2).",
+              "description": "Narrow the locator to matches whose text matches a regex (`.Filter(HasTextRegex)`).",
               "type": "object",
               "required": [
                 "hasTextRegex"
@@ -450,7 +450,7 @@
       ]
     },
     "numExpr": {
-      "description": "An integer loop bound (§6): either an Expr string that evaluates to a whole number, or a typed JSON number literal (CD-10). A number N behaves exactly as the Expr \"N\" (an integral literal ⇒ long, else double), so the two forms are interchangeable. The loop counter is an integer, so a non-integral value — a fractional literal (2.5) or a computed non-integer (5.0/2) — is a terminal type_error (§8.3, #33); a bare non-integral literal is rejected at save time with the same code, while an integral-valued double (2.0) is accepted and coerced.",
+      "description": "An integer loop bound: either an Expr string that evaluates to a whole number, or a typed JSON number literal (CD-10). A number N behaves exactly as the Expr \"N\" (an integral literal ⇒ long, else double), so the two forms are interchangeable. The loop counter is an integer, so a non-integral value — a fractional literal (2.5) or a computed non-integer (5.0/2) — is a terminal type_error (#33); a bare non-integral literal is rejected at save time with the same code, while an integral-valued double (2.0) is accepted and coerced.",
       "oneOf": [
         {
           "type": "string"
@@ -462,7 +462,7 @@
     },
     "failure": {
       "type": "object",
-      "description": "A typed failure payload (§4/§8.3).",
+      "description": "A typed failure payload.",
       "required": [
         "class",
         "code",
@@ -471,7 +471,7 @@
       "additionalProperties": false,
       "properties": {
         "class": {
-          "description": "`terminal` is never retried; `retryable` is retried per `config.retry` then surfaces as `retryable-exhausted` (§8.3).",
+          "description": "`terminal` is never retried; `retryable` is retried per `config.retry` then surfaces as `retryable-exhausted`.",
           "enum": [
             "terminal",
             "retryable"
@@ -489,7 +489,7 @@
       }
     },
     "node": {
-      "description": "One step: an object with exactly one recognised head key (§5/§6). An unknown head, or more than one head, matches no branch and fails.",
+      "description": "One step: an object with exactly one recognised head key. An unknown head, or more than one head, matches no branch and fails.",
       "type": "object",
       "oneOf": [
         {
@@ -499,7 +499,7 @@
           "additionalProperties": false,
           "properties": {
             "comment": {
-              "description": "A no-op annotation (§6): ignored at execution and exempt from validation. The only node with a bare-string body.",
+              "description": "A no-op annotation: ignored at execution and exempt from validation. The only node with a bare-string body.",
               "type": "string"
             }
           }
@@ -511,7 +511,7 @@
           "additionalProperties": false,
           "properties": {
             "goto": {
-              "description": "Navigate the page to a URL (`page.GotoAsync`, §5.1).",
+              "description": "Navigate the page to a URL (`page.GotoAsync`).",
               "type": "object",
               "required": [
                 "url"
@@ -527,7 +527,7 @@
                   "type": "string"
                 },
                 "timeoutMs": {
-                  "description": "Per-node timeout override in milliseconds (§8.4); falls back to `config.defaultTimeoutMs`.",
+                  "description": "Per-node timeout override in milliseconds; falls back to `config.defaultTimeoutMs`.",
                   "type": "integer"
                 }
               }
@@ -541,7 +541,7 @@
           "additionalProperties": false,
           "properties": {
             "waitForLoadState": {
-              "description": "Wait for the page to reach a lifecycle load state (`WaitForLoadStateAsync`, §5.1).",
+              "description": "Wait for the page to reach a lifecycle load state (`WaitForLoadStateAsync`).",
               "type": "object",
               "required": [
                 "state"
@@ -557,7 +557,7 @@
                   ]
                 },
                 "timeoutMs": {
-                  "description": "Per-node timeout override in milliseconds (§8.4); falls back to `config.defaultTimeoutMs`.",
+                  "description": "Per-node timeout override in milliseconds; falls back to `config.defaultTimeoutMs`.",
                   "type": "integer"
                 }
               }
@@ -571,7 +571,7 @@
           "additionalProperties": false,
           "properties": {
             "waitForRequest": {
-              "description": "Run `trigger`, then wait for the HTTP request it provokes (`RunAndWaitForRequestAsync`, §5.1) — the postback-wait idiom.",
+              "description": "Run `trigger`, then wait for the HTTP request it provokes (`RunAndWaitForRequestAsync`) — the postback-wait idiom.",
               "type": "object",
               "required": [
                 "urlPrefix",
@@ -588,7 +588,7 @@
                   "type": "string"
                 },
                 "timeoutMs": {
-                  "description": "Per-node timeout override in milliseconds (§8.4); falls back to `config.defaultTimeoutMs`.",
+                  "description": "Per-node timeout override in milliseconds; falls back to `config.defaultTimeoutMs`.",
                   "type": "integer"
                 },
                 "trigger": {
@@ -606,7 +606,7 @@
           "additionalProperties": false,
           "properties": {
             "waitFor": {
-              "description": "Wait for a selector to reach a DOM state (`Locator.WaitForAsync`, §5.1).",
+              "description": "Wait for a selector to reach a DOM state (`Locator.WaitForAsync`).",
               "type": "object",
               "required": [
                 "selector"
@@ -614,7 +614,7 @@
               "additionalProperties": false,
               "properties": {
                 "selector": {
-                  "description": "The element to wait on (§5.2).",
+                  "description": "The element to wait on.",
                   "$ref": "#/$defs/sel"
                 },
                 "state": {
@@ -627,11 +627,11 @@
                   ]
                 },
                 "in": {
-                  "description": "Resolve the selector inside a bound frame handle (§5.2).",
+                  "description": "Resolve the selector inside a bound frame handle.",
                   "type": "string"
                 },
                 "timeoutMs": {
-                  "description": "Per-node timeout override in milliseconds (§8.4); falls back to `config.defaultTimeoutMs`.",
+                  "description": "Per-node timeout override in milliseconds; falls back to `config.defaultTimeoutMs`.",
                   "type": "integer"
                 }
               }
@@ -645,7 +645,7 @@
           "additionalProperties": false,
           "properties": {
             "frame": {
-              "description": "Bind a frame locator to a var so later actions/selectors can target it with `in` (`page.FrameLocator`, §5.2).",
+              "description": "Bind a frame locator to a var so later actions/selectors can target it with `in` (`page.FrameLocator`).",
               "type": "object",
               "required": [
                 "var",
@@ -672,7 +672,7 @@
           "additionalProperties": false,
           "properties": {
             "addStyleTag": {
-              "description": "Inject a `<style>` tag into the page (`AddStyleTagAsync`, §5.1) — e.g. to force hidden tabs visible.",
+              "description": "Inject a `<style>` tag into the page (`AddStyleTagAsync`) — e.g. to force hidden tabs visible.",
               "type": "object",
               "required": [
                 "content"
@@ -694,7 +694,7 @@
           "additionalProperties": false,
           "properties": {
             "click": {
-              "description": "Click an element (`ClickAsync`, §5.1).",
+              "description": "Click an element (`ClickAsync`).",
               "type": "object",
               "required": [
                 "selector"
@@ -702,15 +702,15 @@
               "additionalProperties": false,
               "properties": {
                 "selector": {
-                  "description": "The element to click (§5.2).",
+                  "description": "The element to click.",
                   "$ref": "#/$defs/sel"
                 },
                 "in": {
-                  "description": "Resolve the selector inside a bound frame handle (§5.2).",
+                  "description": "Resolve the selector inside a bound frame handle.",
                   "type": "string"
                 },
                 "timeoutMs": {
-                  "description": "Per-node timeout override in milliseconds (§8.4); falls back to `config.defaultTimeoutMs`.",
+                  "description": "Per-node timeout override in milliseconds; falls back to `config.defaultTimeoutMs`.",
                   "type": "integer"
                 }
               }
@@ -729,10 +729,10 @@
                 "selector"
               ],
               "additionalProperties": false,
-              "description": "Type into a field (§5.1). Exactly one value source: `value` (an Expr, ordinary data) XOR `secret` (a `input.<name>` reference to a secretRef input, CD-6). A `secret` is resolved from the vault at fill time and never enters the expression value space; `value` and `secret` are mutually exclusive.",
+              "description": "Type into a field. Exactly one value source: `value` (an Expr, ordinary data) XOR `secret` (a `input.<name>` reference to a secretRef input, CD-6). A `secret` is resolved from the vault at fill time and never enters the expression value space; `value` and `secret` are mutually exclusive.",
               "properties": {
                 "selector": {
-                  "description": "The field to type into (§5.2).",
+                  "description": "The field to type into.",
                   "$ref": "#/$defs/sel"
                 },
                 "value": {
@@ -744,7 +744,7 @@
                   "description": "A `input.<name>` reference to a secretRef input; resolved from the vault at fill time (never interpolated, never an Expr)."
                 },
                 "in": {
-                  "description": "Resolve the selector inside a bound frame handle (§5.2).",
+                  "description": "Resolve the selector inside a bound frame handle.",
                   "type": "string"
                 }
               },
@@ -770,7 +770,7 @@
           "additionalProperties": false,
           "properties": {
             "clear": {
-              "description": "Clear a field's value (`ClearAsync`, §5.1).",
+              "description": "Clear a field's value (`ClearAsync`).",
               "type": "object",
               "required": [
                 "selector"
@@ -778,11 +778,11 @@
               "additionalProperties": false,
               "properties": {
                 "selector": {
-                  "description": "The field to clear (§5.2).",
+                  "description": "The field to clear.",
                   "$ref": "#/$defs/sel"
                 },
                 "in": {
-                  "description": "Resolve the selector inside a bound frame handle (§5.2).",
+                  "description": "Resolve the selector inside a bound frame handle.",
                   "type": "string"
                 }
               }
@@ -798,7 +798,7 @@
             "screenshot": {
               "type": "object",
               "additionalProperties": false,
-              "description": "Capture a full-page PNG to the tenant's deletable screenshot blob store (§13), recording only the content-addressed ref in the trace — the same seam, retention, and tenant partitioning as screenshot-on-failure (never the image, §12). `name` is an optional author label (Tmpl) carried into the trace/timeline to correlate the shot; it does not affect the content-addressed ref.",
+              "description": "Capture a full-page PNG to the tenant's deletable screenshot blob store, recording only the content-addressed ref in the trace — the same seam, retention, and tenant partitioning as screenshot-on-failure (never the image). `name` is an optional author label (Tmpl) carried into the trace/timeline to correlate the shot; it does not affect the content-addressed ref.",
               "properties": {
                 "name": {
                   "description": "Optional author label (a Tmpl) carried into the trace/timeline to correlate the shot; it does not affect the content-addressed ref.",
@@ -815,7 +815,7 @@
           "additionalProperties": false,
           "properties": {
             "locate": {
-              "description": "Bind a lazy, re-queried locator handle to a var for reuse in later actions/selectors and DOM reads (§5.2). Root it at a `selector` (page/frame) or derive it `from` a bound handle.",
+              "description": "Bind a lazy, re-queried locator handle to a var for reuse in later actions/selectors and DOM reads. Root it at a `selector` (page/frame) or derive it `from` a bound handle.",
               "type": "object",
               "required": [
                 "var"
@@ -827,7 +827,7 @@
                   "type": "string"
                 },
                 "selector": {
-                  "description": "Root the handle at a page/frame selector (§5.2). Provide this or `from`.",
+                  "description": "Root the handle at a page/frame selector. Provide this or `from`.",
                   "$ref": "#/$defs/sel"
                 },
                 "base": {
@@ -835,7 +835,7 @@
                   "type": "string"
                 },
                 "in": {
-                  "description": "Resolve inside a bound frame handle (§5.2).",
+                  "description": "Resolve inside a bound frame handle.",
                   "type": "string"
                 },
                 "from": {
@@ -843,7 +843,7 @@
                   "type": "string"
                 },
                 "nth": {
-                  "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (§8.3, #37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
+                  "description": "Select the nth match, 0-based (`.Nth`). An Expr evaluating to a whole, non-negative number (a long, or an integral-valued double such as 2.0, coerced like an array index). A non-integral value (2.5, or a computed 5.0/2) is a terminal type_error (#37); a negative index — 0-based nth has no from-the-end meaning and the backends diverge on it — or one past int.MaxValue is a terminal index_out_of_range. A bare non-integral or out-of-range literal is rejected at save time with the same code; an integral-valued double is accepted and coerced.",
                   "type": "string"
                 },
                 "first": {
@@ -894,22 +894,22 @@
                 "var"
               ],
               "additionalProperties": false,
-              "description": "Run `trigger`, capture the browser download it provokes, and stream the bytes to the `to` storageTarget under their content-addressed identity (§9.3). Storage is idempotent by content hash — an already-present blob short-circuits to `stored:true` with no re-upload — so a stable artifact is de-duplicated automatically, no author key required. (`idempotencyKey` was removed in CD-11: content addressing already delivers that `stored:true` dedup, and a pre-fetch key skip would need per-tenant key→blob state kept coherent with §12 retention plus author warrants against upstream drift and skipped trigger side-effects. See §9.3.)",
+              "description": "Run `trigger`, capture the browser download it provokes, and stream the bytes to the `to` storageTarget under their content-addressed identity. Storage is idempotent by content hash — an already-present blob short-circuits to `stored:true` with no re-upload — so a stable artifact is de-duplicated automatically, no author key required. (`idempotencyKey` was removed in CD-11: content addressing already delivers that `stored:true` dedup, and a pre-fetch key skip would need per-tenant key→blob state kept coherent with retention plus author warrants against upstream drift and skipped trigger side-effects.)",
               "properties": {
                 "trigger": {
                   "description": "The nodes that provoke the browser download (e.g. a `click` on a file link).",
                   "$ref": "#/$defs/block"
                 },
                 "to": {
-                  "description": "An Expr resolving to the `storageTarget` the bytes stream to (§9.3).",
+                  "description": "An Expr resolving to the `storageTarget` the bytes stream to.",
                   "type": "string"
                 },
                 "var": {
-                  "description": "The variable bound to the download result `{ contentId, sha256, sizeBytes, storedAs, stored }` (§9.3).",
+                  "description": "The variable bound to the download result `{ contentId, sha256, sizeBytes, storedAs, stored }`.",
                   "type": "string"
                 },
                 "timeoutMs": {
-                  "description": "Per-node timeout override in milliseconds (§8.4); falls back to `config.defaultTimeoutMs`.",
+                  "description": "Per-node timeout override in milliseconds; falls back to `config.defaultTimeoutMs`.",
                   "type": "integer"
                 }
               }
@@ -923,7 +923,7 @@
           "additionalProperties": false,
           "properties": {
             "set": {
-              "description": "Bind or update a run variable (interpreter state, §8.2). With `path`, deep-set into an object/array var.",
+              "description": "Bind or update a run variable (interpreter state). With `path`, deep-set into an object/array var.",
               "type": "object",
               "required": [
                 "var",
@@ -954,7 +954,7 @@
           "additionalProperties": false,
           "properties": {
             "push": {
-              "description": "Append a value to an array var (interpreter state, §8.2) — the accumulate-output-list idiom.",
+              "description": "Append a value to an array var (interpreter state) — the accumulate-output-list idiom.",
               "type": "object",
               "required": [
                 "into",
@@ -981,7 +981,7 @@
           "additionalProperties": false,
           "properties": {
             "log": {
-              "description": "Emit a `LogEmitted` trace event (§5.1/§13). A `warning`/`error` is not a failure — the run continues (§8.3).",
+              "description": "Emit a `LogEmitted` trace event. A `warning`/`error` is not a failure — the run continues.",
               "type": "object",
               "required": [
                 "level",
@@ -990,7 +990,7 @@
               "additionalProperties": false,
               "properties": {
                 "level": {
-                  "description": "The log level. `warning`/`error` still continue the run (§8.3).",
+                  "description": "The log level. `warning`/`error` still continue the run.",
                   "enum": [
                     "info",
                     "warning",
@@ -1012,7 +1012,7 @@
           "additionalProperties": false,
           "properties": {
             "fail": {
-              "description": "Raise a typed failure unconditionally (§6/§8.3) — e.g. an unreachable `else`. A `terminal` class is never retried.",
+              "description": "Raise a typed failure unconditionally — e.g. an unreachable `else`. A `terminal` class is never retried.",
               "$ref": "#/$defs/failure"
             }
           }
@@ -1024,7 +1024,7 @@
           "additionalProperties": false,
           "properties": {
             "guard": {
-              "description": "Assert a condition or raise a typed failure (§6): `cond` must hold, else `elseFail` is raised (§8.3).",
+              "description": "Assert a condition or raise a typed failure: `cond` must hold, else `elseFail` is raised.",
               "type": "object",
               "required": [
                 "cond",
@@ -1051,7 +1051,7 @@
           "additionalProperties": false,
           "properties": {
             "if": {
-              "description": "Conditional branch (§6): run `then` when `cond` is true, else the optional `else`.",
+              "description": "Conditional branch: run `then` when `cond` is true, else the optional `else`.",
               "type": "object",
               "required": [
                 "cond",
@@ -1082,7 +1082,7 @@
           "additionalProperties": false,
           "properties": {
             "switch": {
-              "description": "Multi-way branch (§6): run the `do` of the first `case` whose `when` is true, else `default`. Sugar over nested if/else.",
+              "description": "Multi-way branch: run the `do` of the first `case` whose `when` is true, else `default`. Sugar over nested if/else.",
               "type": "object",
               "required": [
                 "cases"
@@ -1126,7 +1126,7 @@
           "additionalProperties": false,
           "properties": {
             "loop": {
-              "description": "A bounded loop (§6) with a mandatory `maxIterations` cap. Exactly one of `for` (numeric counter) or `while` (do-while condition).",
+              "description": "A bounded loop with a mandatory `maxIterations` cap. Exactly one of `for` (numeric counter) or `while` (do-while condition).",
               "type": "object",
               "required": [
                 "maxIterations",
@@ -1135,7 +1135,7 @@
               "additionalProperties": false,
               "properties": {
                 "maxIterations": {
-                  "description": "The mandatory safety cap — the most iterations the loop may run (§6). Exceeding it is terminal `max_iterations_exceeded` unless `onMaxIterations` is `warn`.",
+                  "description": "The mandatory safety cap — the most iterations the loop may run. Exceeding it is terminal `max_iterations_exceeded` unless `onMaxIterations` is `warn`.",
                   "type": "integer",
                   "minimum": 1
                 },
@@ -1161,7 +1161,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "var": {
-                      "description": "The loop counter variable (visible only in the body, §8.2).",
+                      "description": "The loop counter variable (visible only in the body).",
                       "type": "string"
                     },
                     "from": {
@@ -1187,7 +1187,7 @@
                   }
                 },
                 "while": {
-                  "description": "Do-while condition form (§6): run the body, then continue while this Expr is true. The only checkpoint-resumable loop form (§11).",
+                  "description": "Do-while condition form: run the body, then continue while this Expr is true. The only checkpoint-resumable loop form.",
                   "type": "string"
                 }
               },
@@ -1213,7 +1213,7 @@
           "additionalProperties": false,
           "properties": {
             "forEach": {
-              "description": "Iterate an array value or a bound locator's matches (§6), binding each item to `as` (and its position to `index`). Mandatory `maxIterations` cap.",
+              "description": "Iterate an array value or a bound locator's matches, binding each item to `as` (and its position to `index`). Mandatory `maxIterations` cap.",
               "type": "object",
               "required": [
                 "in",
@@ -1228,7 +1228,7 @@
                   "type": "string"
                 },
                 "as": {
-                  "description": "The item variable (visible only in the body, §8.2).",
+                  "description": "The item variable (visible only in the body).",
                   "type": "string"
                 },
                 "index": {
@@ -1240,7 +1240,7 @@
                   "$ref": "#/$defs/block"
                 },
                 "maxIterations": {
-                  "description": "The mandatory safety cap (§6).",
+                  "description": "The mandatory safety cap.",
                   "type": "integer",
                   "minimum": 1
                 },
@@ -1262,7 +1262,7 @@
           "additionalProperties": false,
           "properties": {
             "break": {
-              "description": "Exit the enclosing loop (§6). With `when`, only when the Expr is true; bare = unconditional.",
+              "description": "Exit the enclosing loop. With `when`, only when the Expr is true; bare = unconditional.",
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -1281,7 +1281,7 @@
           "additionalProperties": false,
           "properties": {
             "continue": {
-              "description": "Skip to the enclosing loop's next iteration (§6). With `when`, only when the Expr is true.",
+              "description": "Skip to the enclosing loop's next iteration. With `when`, only when the Expr is true.",
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -1300,7 +1300,7 @@
           "additionalProperties": false,
           "properties": {
             "checkpoint": {
-              "description": "A durable resume anchor for a long-running top-level `while` loop (§11): reaching it records the `cursor` + a variable snapshot, so a killed run resumes here against a fresh session. Placement is save-time-validated (`checkpoint_misplaced`/`checkpoint_not_unique`).",
+              "description": "A durable resume anchor for a long-running top-level `while` loop: reaching it records the `cursor` + a variable snapshot, so a killed run resumes here against a fresh session. Placement is save-time-validated (`checkpoint_misplaced`/`checkpoint_not_unique`).",
               "type": "object",
               "required": [
                 "name",
@@ -1311,7 +1311,7 @@
                 "name": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "The checkpoint's stable name — the durable resume anchor (§11)."
+                  "description": "The checkpoint's stable name — the durable resume anchor."
                 },
                 "cursor": {
                   "type": "string",
@@ -1319,7 +1319,7 @@
                 },
                 "resume": {
                   "$ref": "#/$defs/block",
-                  "description": "Nodes run ONLY on resume, before the enclosing loop continues, to re-establish the browser at the cursor; the restored cursor is bound to the `checkpoint` var (§11)."
+                  "description": "Nodes run ONLY on resume, before the enclosing loop continues, to re-establish the browser at the cursor; the restored cursor is bound to the `checkpoint` var."
                 }
               }
             }

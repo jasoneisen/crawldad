@@ -18,7 +18,7 @@
     { "locate": { "var": "fileLink", "selector": "#attachmentList td:first-child a" } },
     { "set": { "var": "filename", "value": "trim(coalesce(text('#attachmentList td:first-child'),''))" } },
 
-    { "comment": "download hashes the bytes and streams to the store; idempotent by content identity (§9.3)" },
+    { "comment": "download hashes the bytes and streams to the store; idempotent by content identity" },
     { "download": { "trigger": [ { "click": { "selector": "fileLink" } } ],
                     "to": "input.attachmentStore", "timeoutMs": 180000, "var": "dl" } },
     { "if": { "cond": "dl.stored",

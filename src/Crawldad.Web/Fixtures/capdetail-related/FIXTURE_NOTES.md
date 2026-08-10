@@ -57,7 +57,7 @@ Hand-derived from `LJCMGClient.cs:637-688`, cross-checked against the interprete
 
 ## B.2 PAYLOAD DISCREPANCY found here (reported loudly)
 Appendix B.2's scrape `vars` initialize `"description": ""` and `"parentRecordNumber": ""`. A `vars`
-value is an **expression** (§4), and the empty string `""` is an **empty expression** — the parser
+value is an **expression**, and the empty string `""` is an **empty expression** — the parser
 correctly rejects it (`syntax_error: unexpected token '<end of input>'`), so the full B.2 payload would
 fail at var-init before executing a single step. The correct empty-string initializer is `"''"` (a
 string-literal expression). This fragment uses `"parentRecordNumber": "''"`; the full-payload P2 WP must

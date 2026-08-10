@@ -10,18 +10,18 @@
     <PackageReference Include="WolverineFx.RuntimeCompilation" />
     <!-- Record/replay fake backend + the read-only DOM builtins parse captured HTML with AngleSharp. -->
     <PackageReference Include="AngleSharp" />
-    <!-- The fake backend's structured-Sel `xpath` variant evaluates XPath over the AngleSharp DOM (§5.2). -->
+    <!-- The fake backend's structured-Sel `xpath` variant evaluates XPath over the AngleSharp DOM. -->
     <PackageReference Include="AngleSharp.XPath" />
     <!-- Phase 4 real backend adapters (local/browserless/browserbase) wrap Playwright for .NET. -->
     <PackageReference Include="Microsoft.Playwright" />
-    <!-- Payload validation-at-save (§12): enforces schema/crawldad-1.schema.json against saved payloads. -->
+    <!-- Payload validation-at-save: enforces schema/crawldad-1.schema.json against saved payloads. -->
     <PackageReference Include="JsonSchema.Net" />
-    <!-- The durable Azure Blob storage adapter (CD-2, §9.3/§12/§13). The filesystem adapter is the hermetic default;
+    <!-- The durable Azure Blob storage adapter (CD-2). The filesystem adapter is the hermetic default;
          this is the Azure-native durable seam for the Azure deployment target, tested against Azurite. -->
     <PackageReference Include="Azure.Storage.Blobs" />
   </ItemGroup>
 
-  <!-- The payload JSON Schema (Deliverable 1) is the normative structural spec (§4). It lives once at the
+  <!-- The payload JSON Schema (Deliverable 1) is the normative structural spec. It lives once at the
        repo root and is embedded into this assembly so the save-time validator loads it with no file-path
        dependency; the same file is what an external tool/typed client would consume. -->
   <ItemGroup>

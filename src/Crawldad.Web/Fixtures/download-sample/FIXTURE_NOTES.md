@@ -1,7 +1,7 @@
 # download-sample fixture — provenance & fidelity notes
 
 ## What this is
-A **synthesized** (not captured) single-page fixture for the `download` action (§9.3/§9.4), the
+A **synthesized** (not captured) single-page fixture for the `download` action, the
 tension-#1 (b) reshaping: downloads stream to a caller `Target`, engine-hashed and idempotent,
 reproducing `LJCMGClient.cs:559-594` (`WaitForDownloadAsync` → `AttachmentHashing` →
 `handleDownload`) **without** the iframe/pagination machinery (that is Phase 3). No Chromium, no
@@ -12,7 +12,7 @@ live traffic.
 - `page.html` — an attachment row with a file link; the first cell's text is the **scraped** filename.
 - `sample.bin` — the download body (30 bytes of deterministic ASCII: `Crawldad sample attachment v1\n`).
 
-## manifest schema extension (Phase 2 § Deliverable 2)
+## manifest schema extension (Phase 2 Deliverable 2)
 A transition may now carry a `download` block and may omit `emit`:
 ```jsonc
 {
@@ -50,12 +50,12 @@ three fields little-endian and the last eight bytes in order. With hash bytes
 `e2 2e dc 18 | 62 6e | c6 f5 | 8e c1 | 64 8a a2 8b 2f 48` that yields
 `18dc2ee2-6e62-f5c6-8ec1-648aa28b2f48`. Pinned in `AttachmentContentIdTests`.
 
-## The storedAs / internalFilename split (§9.3)
+## The storedAs / internalFilename split
 The download's suggested name (`report.pdf`) and the scraped filename cell (`Site Photo.jpg`) carry
 **different extensions on purpose**. The engine's `storedAs` uses the suggested name (`.pdf`); the
 payload composes `internalFilename` from the scraped cell (`.jpg`), exactly as the reference builds
 `InternalFilename` from the scraped `filename`, not the download's own name. Same `contentId`, two
-different filenames — the distinction §9.3 calls out.
+different filenames — the distinction calls out.
 
 ## Idempotency
 Clicking the same link twice yields identical bytes → identical `contentId`. The first download finds

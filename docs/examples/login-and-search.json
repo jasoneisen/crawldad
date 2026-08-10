@@ -41,7 +41,7 @@
         "urlPrefix": "https://example.gov/portal/search", "method": "POST",
         "trigger": [ { "click": { "selector": { "role": "button", "name": "Search" } } } ] } },
 
-    { "comment": "Checkpointed pagination (§11/#14): a TOP-LEVEL while loop whose FIRST node is the checkpoint, so a host restart resumes from the last completed page against a fresh session instead of from the top." },
+    { "comment": "Checkpointed pagination (#14): a TOP-LEVEL while loop whose FIRST node is the checkpoint, so a host restart resumes from the last completed page against a fresh session instead of from the top." },
     { "loop": { "maxIterations": 1000, "while": "hasMorePages", "do": [
         { "checkpoint": { "name": "resultsPage",
             "cursor": "{ resumeUrl: pageUrl(), page: page + 1 }",

@@ -225,7 +225,7 @@
     { "frame": { "var": "attFrame", "selector": "#ctl00_PlaceHolderMain_attachmentEdit_iframeAttachmentList" } },
     { "set": { "var": "attPagesVisited", "value": "0" } },
     { "loop": { "maxIterations": 100000, "while": "hasMoreAttachmentPages", "do": [
-      { "comment": "CHECKPOINT (§11) — the attachment page cursor. On resume the fresh session re-opens the record's attachments tab, re-binds the iframe (the pre-loop frame node is skipped), and fast-forwards to the checkpointed page with clicks only; already-hashed downloads short-circuit (§9.3), so no bytes re-transfer." },
+      { "comment": "CHECKPOINT — the attachment page cursor. On resume the fresh session re-opens the record's attachments tab, re-binds the iframe (the pre-loop frame node is skipped), and fast-forwards to the checkpointed page with clicks only; already-hashed downloads short-circuit, so no bytes re-transfer." },
       { "checkpoint": { "name": "attachmentPage",
           "cursor": "{ page: attPagesVisited }",
           "resume": [
@@ -258,7 +258,7 @@
             { "set": { "var": "attType",      "value": "trim(coalesce(text(attRow,'td:nth-child(5)'),''))" } },
             { "set": { "var": "attSize",      "value": "trim(coalesce(text(attRow,'td:nth-child(6)'),''))" } },
             { "set": { "var": "latestUpdate", "value": "trim(coalesce(text(attRow,'td:nth-child(7)'),''))" } },
-            { "comment": "download hashes the bytes and streams to the store; idempotent by content identity (§9.3)" },
+            { "comment": "download hashes the bytes and streams to the store; idempotent by content identity" },
             { "download": { "trigger": [ { "click": { "selector": "fileLink" } } ],
                             "to": "input.attachmentStore", "timeoutMs": 180000, "var": "dl" } },
             { "if": { "cond": "dl.stored",

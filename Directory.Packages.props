@@ -25,7 +25,7 @@
     <!-- The expression evaluator's read-only DOM builtins and the record/replay fake backend parse captured HTML
          with AngleSharp. -->
     <PackageVersion Include="AngleSharp" Version="1.7.1" />
-    <!-- The record/replay fake's structured-Sel `xpath` variant (§5.2) evaluates XPath over the AngleSharp DOM to
+    <!-- The record/replay fake's structured-Sel `xpath` variant evaluates XPath over the AngleSharp DOM to
          model Playwright's `xpath=` selector engine (the real backend uses Playwright's own engine). AngleSharp.XPath
          is the AngleSharp-native XPath extension (INode.SelectNodes); MIT, tracks AngleSharp 1.x. -->
     <PackageVersion Include="AngleSharp.XPath" Version="2.0.6" />
@@ -36,14 +36,14 @@
   </ItemGroup>
 
   <ItemGroup Label="Storage (CD-2)">
-    <!-- The durable Azure Blob storage adapter (CD-2, deployment target is Azure — docs/PRODUCT.md). Pinned to 12.21.2,
+    <!-- The durable Azure Blob storage adapter (CD-2, deployment target is Azure — docs/ARCHITECTURE.md). Pinned to 12.21.2,
          the build cached in this environment; its transitive Azure.Core/Azure.Storage.Common are auto-pinned above. The
          adapter is exercised against the Azurite emulator (opt-in local + CI service), never live storage. -->
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.21.2" />
   </ItemGroup>
 
   <ItemGroup Label="Validation">
-    <!-- Payload validation-at-save (§12): the JSON Schema (schema/crawldad-1.schema.json) is enforced by
+    <!-- Payload validation-at-save: the JSON Schema (schema/crawldad-1.schema.json) is enforced by
          JsonSchema.Net — the de-facto System.Text.Json-native JSON Schema engine. Pinned to 8.0.0, the last
          MIT-licensed line (9.x switched to the Open Source Maintenance Fee EULA). Its transitive deps
          (JsonPointer.Net/Json.More.Net/Humanizer.Core, all MIT) are auto-pinned by transitive pinning above. -->

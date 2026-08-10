@@ -1,6 +1,6 @@
 {
   "manifest": "1",
-  "description": "Kill-and-restart resume fixture (§11). The same 3-page CapHome search as caphome-multipage, but each results page carries a DISTINCT, directly-navigable URL (?pg=N) — and a matching gotoUrl — so a resumed run can `goto` straight to the checkpointed page (the checkpoint's resume block navigates to pageUrl()) WITHOUT re-clicking through earlier pages. The row URLs still resolve to https://aca-prod.accela.com/... (scheme+host+href), so the shaped result is byte-identical to caphome-multipage/golden-a-full.json. No Chromium, no live traffic.",
+  "description": "Kill-and-restart resume fixture. The same 3-page CapHome search as caphome-multipage, but each results page carries a DISTINCT, directly-navigable URL (?pg=N) — and a matching gotoUrl — so a resumed run can `goto` straight to the checkpointed page (the checkpoint's resume block navigates to pageUrl()) WITHOUT re-clicking through earlier pages. The row URLs still resolve to https://aca-prod.accela.com/... (scheme+host+href), so the shaped result is byte-identical to caphome-multipage/golden-a-full.json. No Chromium, no live traffic.",
   "initialState": "form",
   "states": {
     "form": {
