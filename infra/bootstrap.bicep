@@ -29,8 +29,8 @@ param regionCode string = 'eus2'
 @allowed([ 'stg', 'prod' ])
 param envToken string = 'stg'
 
-@description('GitHub org/repo the OIDC federated credential trusts.')
-param githubRepo string = 'jasoneisen/crawldad'
+@description('OIDC subject prefix the federated credential trusts — the repo\'s `sub_claim_prefix` (immutable-ID form), fetched by bootstrap.sh via the GitHub OIDC customization API.')
+param githubSubjectPrefix string
 
 @description('GitHub Environment whose deployments are trusted (must match the deploy workflow job\'s environment).')
 param githubEnvironment string = 'staging'
@@ -71,7 +71,7 @@ module cicd 'bootstrap-cicd.bicep' = {
   params: {
     location: location
     identityName: cicdIdentityName
-    githubRepo: githubRepo
+    githubSubjectPrefix: githubSubjectPrefix
     githubEnvironment: githubEnvironment
     tags: tags
   }

@@ -9,8 +9,8 @@ param location string
 @description('Name of the CI-deploy user-assigned identity.')
 param identityName string
 
-@description('GitHub org/repo the federated credential trusts (the workflow that will deploy).')
-param githubRepo string
+@description('OIDC subject prefix GitHub presents for this repo — the repo\'s `sub_claim_prefix` (now the immutable-ID form `repo:<owner>@<ownerId>/<repo>@<repoId>`), fetched live by bootstrap.sh.')
+param githubSubjectPrefix string
 
 @description('GitHub Environment whose deployments are trusted. The subject must match the workflow job\'s environment exactly.')
 param githubEnvironment string
@@ -36,7 +36,7 @@ resource federatedCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/f
   name: 'github-${githubEnvironment}'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubRepo}:environment:${githubEnvironment}'
+    subject: '${githubSubjectPrefix}:environment:${githubEnvironment}'
     audiences: [ 'api://AzureADTokenExchange' ]
   }
 }

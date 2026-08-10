@@ -37,6 +37,12 @@ BUDGET_START="$(date -u +%Y-%m-01)"
 echo "==> Using subscription $SUBSCRIPTION_ID"
 az account set --subscription "$SUBSCRIPTION_ID"
 
+# GitHub now embeds immutable account/repo IDs in the OIDC subject (repo:<owner>@<id>/<repo>@<id>:...). Fetch the
+# repo's actual sub prefix so the federated credential trusts exactly what GitHub presents.
+SUBJECT_PREFIX="$(gh api "repos/$REPO/actions/oidc/customization/sub" --jq '.sub_claim_prefix // empty')"
+[ -n "$SUBJECT_PREFIX" ] || SUBJECT_PREFIX="repo:$REPO"
+echo "==> OIDC subject prefix: $SUBJECT_PREFIX"
+
 # ── 1. Bootstrap deploy (idempotent) ──────────────────────────────────────────────────────
 echo "==> Deploying infra/bootstrap.bicep"
 az deployment sub create \
@@ -47,7 +53,7 @@ az deployment sub create \
       location="$LOCATION" \
       regionCode="$REGION_CODE" \
       envToken="$ENV_TOKEN" \
-      githubRepo="$REPO" \
+      githubSubjectPrefix="$SUBJECT_PREFIX" \
       githubEnvironment="$GH_ENV" \
       budgetContactEmail="$BUDGET_EMAIL" \
       budgetStartDate="$BUDGET_START" \
