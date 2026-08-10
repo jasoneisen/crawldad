@@ -133,17 +133,35 @@ jobs:
           echo "name=$ACR" >> "$GITHUB_OUTPUT"
           echo "resolved ACR: $ACR"
 
-      # Build the app image server-side in ACR (no local docker), stamping this run's SHA for traceability, then
-      # resolve the immutable digest to pin the deployment. Publish the digest to $GITHUB_ENV so the .bicepparam
+      # Build the app image server-side in ACR (no local docker), stamping this run's SHA for traceability. Runs on
+      # the ARM token cached at login, so it tolerates a long first-run infra deploy before it.
+      - name: Build image to ACR
+        env:
+          ACR: ${{ steps.acr.outputs.name }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_SHA::7}"
+          az acr build -r "$ACR" -t "crawldad:$TAG" --build-arg SOURCE_REVISION_ID="$GITHUB_SHA" -f Dockerfile .
+
+      # Re-login: the GitHub OIDC client assertion is valid only ~5 minutes, and the first-run infra deploy + image
+      # build can outlive it. Digest resolution below needs a NEW AAD token (ACR data plane), which redeems the
+      # assertion again — so refresh it here. This also restarts the ARM-token clock for the long deploy tail.
+      - name: Azure re-login (fresh OIDC assertion)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ steps.cfg.outputs.subscription_id }}
+
+      # Resolve the immutable digest to pin the deployment. Publish it to $GITHUB_ENV so the .bicepparam
       # (readEnvironmentVariable SERVE_IMAGE) picks it up in the what-if + deploy steps below.
-      - name: Build image to ACR and resolve digest
+      - name: Resolve image digest
         env:
           ACR: ${{ steps.acr.outputs.name }}
         run: |
           set -euo pipefail
           SERVER=$(az acr show -n "$ACR" --query loginServer -o tsv)
           TAG="${GITHUB_SHA::7}"
-          az acr build -r "$ACR" -t "crawldad:$TAG" --build-arg SOURCE_REVISION_ID="$GITHUB_SHA" -f Dockerfile .
           DIGEST=$(az acr repository show -n "$ACR" --image "crawldad:$TAG" --query digest -o tsv)
           echo "SERVE_IMAGE=$SERVER/crawldad@$DIGEST" >> "$GITHUB_ENV"
           echo "built $SERVER/crawldad@$DIGEST"
