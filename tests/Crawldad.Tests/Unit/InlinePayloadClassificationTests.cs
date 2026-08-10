@@ -140,4 +140,21 @@ public class InlinePayloadClassificationTests
         outcome.Status.ShouldBe(RunStatus.Failed, outcome.Failure?.Code);
         outcome.Failure!.Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
     }
+
+    // The payload's `inputs` block is read for secretRef detection in the interpreter CONSTRUCTOR — before RunAsync's
+    // classified region — on BOTH the synchronous and the durable path. A wrong-typed declaration must classify, not
+    // fault the constructor, so Names is total and the structural pre-pass classifies it inside RunAsync on either path.
+    [Theory]
+    [InlineData("""{ "token": "string" }""")] // a declaration value that is a string, not an object
+    [InlineData("5")]                          // the inputs block itself is not an object
+    public async Task Malformed_inline_inputs_declaration_is_malformed_node_on_the_sync_and_durable_paths(string inputs)
+    {
+        var payload = $$"""{ "name": "t", "config": { "backend": "input.backend" }, "inputs": {{inputs}}, "vars": {}, "steps": [], "result": "null" }""";
+
+        (await FailureCode(payload)).ShouldBe(InterpreterErrorCodes.MalformedNode); // synchronous interpreter path
+
+        var (durable, _, _) = await Runner.RunWithObserverAsync(payload);           // durable (observer) interpreter path
+        durable.Status.ShouldBe(RunStatus.Failed, durable.Failure?.Code);
+        durable.Failure!.Code.ShouldBe(InterpreterErrorCodes.MalformedNode);
+    }
 }

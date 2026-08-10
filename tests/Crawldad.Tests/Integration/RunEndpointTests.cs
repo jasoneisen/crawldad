@@ -329,6 +329,25 @@ public class RunEndpointTests(AppFixture fixture)
     }
 
     [Fact]
+    public async Task Malformed_inline_inputs_declaration_is_a_terminal_failure_not_a_500()
+    {
+        // The payload's `inputs` block is read for secretRef detection in the interpreter CONSTRUCTOR, which runs in the
+        // request thread on the synchronous path BEFORE RunAsync. A declaration that is a bare string (not a `{ type }`
+        // object) must classify as malformed_node — HTTP 200 with a failure body — never a raw ctor TryGetProperty 500.
+        const string Payload =
+            """
+            { "name": "t", "config": { "backend": "input.backend" },
+              "inputs": { "token": "a bare string, not a declaration object" },
+              "vars": {}, "steps": [], "result": "null" }
+            """;
+
+        var root = await PostAsync(Body(Payload, FakeBackendInput()));
+
+        root.GetProperty("status").GetString().ShouldBe("failed");
+        root.GetProperty("failure").GetProperty("code").GetString().ShouldBe("malformed_node");
+    }
+
+    [Fact]
     public async Task An_async_run_with_no_config_is_accepted_not_a_500() =>
         // The deadline is read from the payload in the request thread on the async path, BEFORE the interpreter runs; a
         // missing config must fall back to the default deadline (202 Accepted), never fault that read as a 500. The run

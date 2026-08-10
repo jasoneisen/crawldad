@@ -13,7 +13,9 @@ internal sealed record PayloadIssue(string Path, string Code, string Message, in
 /// walker (which rejects them anywhere in the expression value space), so the two never disagree on what is a secret.</summary>
 internal static class SecretRefInputs
 {
-    /// <summary>The <c>secretRef</c>-typed input names, or an empty set when none are declared.</summary>
+    /// <summary>The <c>secretRef</c>-typed input names, or an empty set when none are declared. Total on an UNVALIDATED
+    /// inline payload — a non-object <c>inputs</c> block or declaration is simply skipped (it is not a secretRef and
+    /// TryGetProperty would throw on a non-object receiver); the structural pre-pass classifies the malformation.</summary>
     public static IReadOnlySet<string> Names(JsonElement payload)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -21,7 +23,8 @@ internal static class SecretRefInputs
         {
             foreach (var declared in inputs.EnumerateObject())
             {
-                if (declared.Value.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String
+                if (declared.Value.ValueKind == JsonValueKind.Object
+                    && declared.Value.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String
                     && string.Equals(type.GetString(), "secretRef", StringComparison.Ordinal))
                 {
                     names.Add(declared.Name);
@@ -67,6 +70,14 @@ internal static class PayloadValidator
             issues.Add(TopLevel("/config", "config must be an object", "config"));
         }
 
+        // The inputs block declares input types; the interpreter ctor reads it for secretRef detection BEFORE the
+        // classified region, so its shape is validated eagerly here — a non-object block/declaration classifies as
+        // malformed_node rather than a ctor-time TryGetProperty throw (which no path can catch).
+        if (payload.TryGetProperty("inputs", out var inputs))
+        {
+            ValidateInputsStructure(inputs, issues);
+        }
+
         if (!payload.TryGetProperty("steps", out var steps) || steps.ValueKind != JsonValueKind.Array)
         {
             issues.Add(TopLevel("/steps", "steps must be an array", "steps"));
@@ -85,6 +96,25 @@ internal static class PayloadValidator
 
     private static PayloadIssue TopLevel(string path, string message, string kind) =>
         new(path, InterpreterErrorCodes.MalformedNode, message, 0, kind);
+
+    // The inputs block must be an object of object-valued declarations (each `{ "type": ... }`). Mirrors the shape
+    // SecretRefInputs.Names now skips defensively, so a malformation surfaces as a classified issue, not a silent skip.
+    private static void ValidateInputsStructure(JsonElement inputs, List<PayloadIssue> issues)
+    {
+        if (inputs.ValueKind != JsonValueKind.Object)
+        {
+            issues.Add(TopLevel("/inputs", "inputs must be an object", "inputs"));
+            return;
+        }
+
+        foreach (var declared in inputs.EnumerateObject())
+        {
+            if (declared.Value.ValueKind != JsonValueKind.Object)
+            {
+                issues.Add(new PayloadIssue($"/inputs/{declared.Name}", InterpreterErrorCodes.MalformedNode, $"input declaration '{declared.Name}' must be an object", 0, "inputs"));
+            }
+        }
+    }
 
     /// <summary>Full save-time validation: the structural pre-pass plus the semantic pass. The payload is assumed
     /// schema-valid (all required fields present, correctly typed).</summary>
