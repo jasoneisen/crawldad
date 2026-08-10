@@ -157,14 +157,17 @@ with full descriptions; ≥4 validated examples; llms.txt served + committed; th
 the build on any invalid example. Deferred: docs site, cookbook, SDK generation, MCP server.
 
 ### [#21](https://github.com/jasoneisen/crawldad/issues/21) OpenAPI spec for the HTTP surface
-**Status:** approved 2026-08-08. **Ref:** #20 (this is the split-out envelope-spec ticket).
-`GET /openapi.json` generated from the Wolverine.HTTP endpoints: every routable endpoint,
-request/response contracts from `src/Crawldad.Contracts`, both auth schemes, and the full status
-shapes (sync result, 202 queued/running, 429 `queue_depth_exceeded`). Envelope only — payload
-bodies reference the served schema (#20) rather than duplicating the DSL.
-**Done when:** `/openapi.json` served (anonymous-or-not decided deliberately, like `/health`); the
-spec covers every routable endpoint with accurate auth + response shapes; a sync test asserts no
-endpoint is missing from the spec. Deferred: SDK generation, hosted reference UI.
+**Status:** shipped 2026-08-10 (PR #44, reviewer-approved after one round). OpenAPI 3.1 at
+anonymous `GET /openapi.json` — hand-authored envelope, drift-tested both ways against the
+reflected Wolverine routes (incl. auth), with component schemas generated from the actual
+`Crawldad.Contracts` types via `JsonSchemaExporter` under the live wire conventions; payload
+bodies `$ref` the served DSL schema (#20). `Microsoft.AspNetCore.OpenApi` deliberately declined:
+it pulls `Microsoft.OpenApi` 2.0.0 (GHSA-v5pm-xwqc-g5wc → NU1903, trips the zero-warning gate)
+and ApiExplorer can't see Wolverine's opaque-IResult 202/429 shapes anyway. Review round caught
+the generated schemas marking `[JsonIgnore(WhenWritingNull)]` members `required` (every real run
+body failed its own schema) — fixed via a `TransformSchemaNode` hook plus a
+representative-wire-bodies-validate test; replay's 429/shared-400s and rename's 400 wording also
+corrected. Deferred per ticket: SDK generation, hosted reference UI.
 
 ### [#26](https://github.com/jasoneisen/crawldad/issues/26) Drain `SyncRunSupervisor` tasks on host shutdown
 **Status:** shipped 2026-08-08 (PR #27, reviewer-approved; flake death independently verified
