@@ -148,7 +148,7 @@ ternary `?:`, member `.`, index `[]`; references `input.*`, declared vars, loop 
 `pageUrl()`. `+` concatenates when either side is a string. String/DOM builtins **null-propagate** (a null
 primary yields null, like C# `?.`); a **required conversion** or an **out-of-range index** is a *terminal*
 failure, never null — so `coalesce(x, default)` / `?:` are how you supply a default. The enumerated builtins
-(string / collection / URL / DOM read-only) are the whole surface — the schema and design doc list them.
+(string / collection / URL / DOM read-only) are the whole surface — the schema and [`PAYLOAD_SPEC.md`](PAYLOAD_SPEC.md) list them.
 
 ### 2.5 Secrets (`secretRef`)
 

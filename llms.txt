@@ -30,5 +30,7 @@ Curated, schema-valid payloads (each validated in CI against the schema). Commen
 
 ## Optional
 
-- [Design & requirements](CRAWLDAD_DESIGN.md): the full normative design (§4-§14) behind the schema and the API — deeper than the consumer reference.
-- [Security model](SECURITY.md): credential scrubbing, credentials-by-reference (`secretRef`), tenant isolation, and PII handling.
+- [Engine & runtime spec](docs/SPEC.md): the run engine's behavioral contract — execution model, error taxonomy, timeout hierarchy, resource limits, the trace/event model, checkpoints, and the backend adapter interface.
+- [Payload language spec](docs/PAYLOAD_SPEC.md): the DSL semantics behind the schema — action set, selectors, control flow, and the expression language with its enumerated builtins.
+- [Architecture](docs/ARCHITECTURE.md): the system architecture (C4 diagrams + run lifecycle) and the Azure infrastructure reference.
+- [Threat model](docs/THREAT_MODEL.md): credential scrubbing, credentials-by-reference (`secretRef`), tenant isolation, and PII handling.
