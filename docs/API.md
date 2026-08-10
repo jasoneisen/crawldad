@@ -9,8 +9,9 @@ contracts and endpoints, not from older design notes.
 - **The payload is the program.** Structure is JSON (composable, diffable); only leaf expressions are strings
   in a small, pure expression language. The full grammar is the JSON Schema — served live at
   `GET /schema/crawldad-1.schema.json`, where every node and field carries a `description`.
-- **The HTTP surface is small.** Runs (`/runs`, plus SSE / cancel / replay / drift / timeline / queue-stats)
-  and managed payloads (`/payloads`, plus revisions / diff). Everything is JSON; enums serialize camelCase.
+- **The HTTP surface is small.** Runs (`/runs`, plus SSE / cancel / replay / drift / timeline / screenshots /
+  queue-stats) and managed payloads (`/payloads`, plus revisions / diff). Everything is JSON (except a screenshot,
+  which streams as `image/png`); enums serialize camelCase.
 - **A failed *run* is not a failed *request*.** A run that starts and faults is `HTTP 200` with a typed
   `failure`. `4xx`/`429` are reserved for requests that never start a run (bad input, an over-depth queue).
 
@@ -24,7 +25,7 @@ contracts and endpoints, not from older design notes.
 6. [Streaming trace (SSE) — `GET /runs/{id}/events`](#6-streaming-trace-sse--get-runsidevents)
 7. [Cancel — `POST /runs/{id}/cancel`](#7-cancel--post-runsidcancel)
 8. [Replay — `POST /runs/{id}/replay`](#8-replay--post-runsidreplay)
-9. [Drift & timeline — `GET /runs/{id}/drift`, `/timeline`](#9-drift--timeline)
+9. [Drift, timeline & screenshots — `GET /runs/{id}/drift`, `/timeline`, `/screenshots/{ref}`](#9-drift-timeline--screenshots)
 10. [Queue stats — `GET /runs/queue-stats`](#10-queue-stats--get-runsqueue-stats)
 11. [Managed payloads — `/payloads`](#11-managed-payloads--payloads)
 12. [Wire codes](#12-wire-codes)
@@ -347,7 +348,7 @@ an unknown run is `404`.
 
 ---
 
-## 9. Drift & timeline
+## 9. Drift, timeline & screenshots
 
 ### `GET /runs/{id}/drift`
 A run's pinned revision vs the payload's current head. Drift = the pinned revision is no longer head.
@@ -365,7 +366,29 @@ The observability read model (the lag-tolerant cross-run view): ordered steps wi
 **redacted** input key *names*, extracted-value shape refs (never values), download and screenshot blob refs
 (never bytes), the terminal failure + its screenshot ref, the pinned revision + script hash, and the backend
 region. Everything derives from already-scrubbed trace events, so no raw credential or bulk PII surfaces.
-`404` for an unknown run.
+`404` for an unknown run. Each `screenshotRef` here (and `failure.screenshotRef`) is fetched as an actual PNG
+via [`GET /runs/{id}/screenshots/{ref}`](#get-runsidscreenshotsref) below.
+
+### `GET /runs/{id}/screenshots/{ref}`
+Streams a captured screenshot — an authored `screenshot` node, or a screenshot-on-failure — back as
+`image/png`. The `{ref}` is the timeline's `screenshotRef` with its `screenshots/` prefix dropped, i.e. the
+`{sha256}.png` tail:
+
+```text
+timeline screenshotRef:  screenshots/9f8c…21.png
+GET /runs/7b3…/screenshots/9f8c…21.png   →   200 image/png
+```
+
+**Authorization is by run association, not by blob knowledge.** The ref must actually appear in *this* run's
+tenant-scoped trace; a ref that belongs to another run — or another tenant, or nothing — is a `404`,
+indistinguishable from an unknown run (a tenant can never confirm another's capture exists). Screenshots are
+content-addressed, so the bytes for a ref never change: the response is cacheable **privately** (the content is
+tenant-scoped) and long-lived, with a digest `ETag` for revalidation (a matching `If-None-Match` gets `304`).
+
+Fetching **mid-run** works — the interpreter stores each capture's blob *before* it records the ref, so any ref
+visible in the trace already has its bytes. A `404` after the ref is authorized means the blob has **expired**:
+screenshots can show PII, so the retention janitor deletes them once past their (shorter) retention window,
+while the immutable trace keeps the ref forever. `404` also covers an unknown run or a malformed ref.
 
 ---
 
@@ -623,6 +646,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `POST /runs/{id}/replay` | ✔ | `ReplayRunRequest` | `200 RunResponse` / `202 RunStateResponse` | `404`, `400 inline_not_replayable` |
 | `GET /runs/{id}/drift` | ✔ | — | `200 RunDriftResponse` | `404` |
 | `GET /runs/{id}/timeline` | ✔ | — | `200 RunTimelineResponse` | `404` |
+| `GET /runs/{id}/screenshots/{ref}` | ✔ | — | `200 image/png` | `404` (unknown run / ref, or expired) |
 | `GET /runs/queue-stats` | ✔ | — | `200 QueueStatsResponse` | — |
 | `POST /payloads` | ✔ | `SavePayloadRequest` | `200 PayloadResponse` | `400 PayloadValidationProblem` |
 | `GET /payloads` | ✔ | — | `200 PayloadListResponse` | — |
