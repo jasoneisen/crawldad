@@ -79,7 +79,7 @@ ensure_env_secret() {
   if gh secret list --repo "$REPO" --env "$GH_ENV" --json name --jq '.[].name' 2>/dev/null | grep -qx "$name"; then
     echo "    secret $name already set on env $GH_ENV — leaving it (no rotation)"
   else
-    printf '%s' "$value" | gh secret set "$name" --repo "$REPO" --env "$GH_ENV" --body -
+    printf '%s' "$value" | gh secret set "$name" --repo "$REPO" --env "$GH_ENV"
     echo "    set secret $name on env $GH_ENV"
   fi
 }
