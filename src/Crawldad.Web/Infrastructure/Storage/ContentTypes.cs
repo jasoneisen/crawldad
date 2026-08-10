@@ -5,6 +5,9 @@ namespace Crawldad.Web.Infrastructure.Storage;
 /// to <c>application/octet-stream</c>.</summary>
 internal static class ContentTypes
 {
+    /// <summary>The screenshot media type (all captures are PNG) — the screenshot-retrieval response's content type.</summary>
+    public const string Png = "image/png";
+
     /// <summary>Maps a file name's extension to a content type (defaulting to <c>application/octet-stream</c>).</summary>
     /// <param name="fileName">The stored-blob or suggested file name.</param>
     /// <returns>The guessed content type.</returns>
@@ -12,7 +15,7 @@ internal static class ContentTypes
     {
         ".PDF" => "application/pdf",
         ".JPG" or ".JPEG" => "image/jpeg",
-        ".PNG" => "image/png",
+        ".PNG" => Png,
         ".HTML" or ".HTM" => "text/html",
         ".CSV" => "text/csv",
         ".JSON" => "application/json",

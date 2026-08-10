@@ -34,4 +34,11 @@ internal sealed class InMemoryScreenshotStore : IScreenshotStore
         _blobs[$"{tenant}/{reference}"] = png;
         return Task.FromResult(reference);
     }
+
+    public Task<Stream?> OpenReadAsync(string tenant, string reference, CancellationToken ct)
+    {
+        // The physical key is "{tenant}/{ref}", so another tenant's partition is unreachable by construction.
+        var found = _blobs.TryGetValue($"{tenant}/{reference}", out var png);
+        return Task.FromResult<Stream?>(found ? new MemoryStream(png!, writable: false) : null);
+    }
 }

@@ -32,5 +32,9 @@ public class TenantStorageIsolationTests
         reference.ShouldStartWith("screenshots/"); // the content-addressed ref stays tenant-independent (wire/trace unchanged)
         store.ReferencesFor("tenant-a").ShouldContain(reference);
         store.ReferencesFor("tenant-b").ShouldBeEmpty();
+
+        // …and the read path honours the same partition: B cannot read A's capture even by the shared, content-addressed ref.
+        (await store.OpenReadAsync("tenant-a", reference, CancellationToken.None)).ShouldNotBeNull();
+        (await store.OpenReadAsync("tenant-b", reference, CancellationToken.None)).ShouldBeNull();
     }
 }
