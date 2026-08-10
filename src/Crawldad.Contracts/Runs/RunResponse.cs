@@ -3,36 +3,22 @@ using System.Text.Json.Serialization;
 
 namespace Crawldad.Contracts.Runs;
 
-/// <summary>Run counters (§10 <c>stats</c>). <c>cacheHits</c> is always 0 until the route cache lands (Phase 4).</summary>
-/// <param name="DurationMs">Wall-clock duration measured through the <see cref="TimeProvider"/> seam.</param>
-/// <param name="Steps">Executed node count (each dispatched node, loop bodies re-counted per iteration).</param>
-/// <param name="Requests">Navigations plus matched <c>waitForRequest</c>s.</param>
-/// <param name="CacheHits">Route-cache hits (0 until the route cache lands).</param>
-/// <param name="Downloads">Completed <c>download</c> nodes (§9.3).</param>
+/// <summary>Run counters (<c>stats</c>): <c>steps</c> counts loop bodies per iteration; <c>cacheHits</c> is always 0
+/// until the route cache lands.</summary>
 public sealed record RunStats(long DurationMs, int Steps, int Requests, int CacheHits, int Downloads);
 
-/// <summary>Where a failure occurred (§10 <c>failure.atStep</c>).</summary>
+/// <summary>Where a failure occurred (<c>failure.atStep</c>).</summary>
 /// <param name="Index">The top-level step index being executed.</param>
-/// <param name="Kind">The head key of the failing node (e.g. <c>loop</c>), or <c>config</c> before the steps run.</param>
+/// <param name="Kind">The failing node's head key (e.g. <c>loop</c>), or <c>config</c> before the steps run.</param>
 public sealed record RunStepRef(int Index, string Kind);
 
-/// <summary>A typed run failure (§8.3/§10). <see cref="Class"/> is <c>"terminal"</c> or <c>"retryable-exhausted"</c>
-/// (the latter because Phase 1 makes a single attempt); <see cref="Code"/> is a stable slug.</summary>
-/// <param name="Class">The failure class the caller branches on.</param>
-/// <param name="Code">The stable failure slug (e.g. <c>unknown_backend_adapter</c>, <c>index_out_of_range</c>).</param>
-/// <param name="Message">A human-readable description.</param>
-/// <param name="AtStep">Where the failure occurred.</param>
+/// <summary>A typed run failure. <see cref="Class"/> is <c>"terminal"</c> or <c>"retryable-exhausted"</c> (a single
+/// attempt was made); <see cref="Code"/> is a stable slug.</summary>
 public sealed record RunFailureDetail(string Class, string Code, string Message, RunStepRef AtStep);
 
-/// <summary>
-/// The <c>POST /runs</c> response (§10). One request → one structured response; a failed <em>run</em> is still HTTP
-/// 200 (the request succeeded). Exactly one of <see cref="Result"/>/<see cref="Failure"/> is present.
-/// </summary>
-/// <param name="RunId">The run's stream id.</param>
-/// <param name="Status">Succeeded or failed.</param>
-/// <param name="Result">The payload's evaluated <c>result</c> (present on success; object-literal key order preserved).</param>
-/// <param name="Failure">The typed failure (present on failure).</param>
-/// <param name="Stats">The run counters.</param>
+/// <summary>The <c>POST /runs</c> response: one request, one structured response — a failed run is still HTTP 200.
+/// Exactly one of <see cref="Result"/>/<see cref="Failure"/> is present; <see cref="Result"/> preserves object-literal
+/// key order.</summary>
 public sealed record RunResponse(
     Guid RunId,
     RunStatus Status,

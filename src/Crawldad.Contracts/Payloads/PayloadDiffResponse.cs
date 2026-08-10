@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Crawldad.Contracts.Payloads;
 
-/// <summary>How a single JSON location changed between two payload revisions (§14.1). Serialized camelCase via <see cref="ContractsJson"/>.</summary>
+/// <summary>How a single JSON location changed between two payload revisions. Serialized camelCase via <see cref="ContractsJson"/>.</summary>
 public enum PayloadDiffKind
 {
     /// <summary>The location exists only in the <c>to</c> revision.</summary>
@@ -16,33 +16,16 @@ public enum PayloadDiffKind
     Changed,
 }
 
-/// <summary>
-/// One structural change between two payload revisions: a JSON-Pointer <see cref="Path"/> into the payload documents, the
-/// change <see cref="Kind"/>, and the before/after values. <see cref="From"/> is absent for an <see cref="PayloadDiffKind.Added"/>
-/// change; <see cref="To"/> is absent for a <see cref="PayloadDiffKind.Removed"/> change; both are present for a
-/// <see cref="PayloadDiffKind.Changed"/> change.
-/// </summary>
-/// <param name="Path">JSON Pointer to the changed location (empty for the document root).</param>
-/// <param name="Kind">The kind of change.</param>
-/// <param name="From">The value in the <c>from</c> revision (absent when added).</param>
-/// <param name="To">The value in the <c>to</c> revision (absent when removed).</param>
+/// <summary>One structural change: a JSON-Pointer <see cref="Path"/>, the <see cref="Kind"/>, and before/after values —
+/// <see cref="From"/> absent when added, <see cref="To"/> absent when removed, both present when changed.</summary>
 public sealed record PayloadDiffEntry(
     string Path,
     PayloadDiffKind Kind,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? From,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? To);
 
-/// <summary>
-/// The <c>GET /payloads/{id}/diff/{from}/{to}</c> response (§14.1): both revisions' scripts plus a minimal structural
-/// diff — the set of JSON locations that changed, deepest-point only (an unchanged subtree yields no entries). Both
-/// scripts are the stored, credential-scrubbed documents (§12).
-/// </summary>
-/// <param name="PayloadId">The payload's event-stream id.</param>
-/// <param name="FromRevision">The base revision.</param>
-/// <param name="ToRevision">The compared revision.</param>
-/// <param name="FromScript">The base revision's payload document.</param>
-/// <param name="ToScript">The compared revision's payload document.</param>
-/// <param name="Changes">The structural changes (empty when the two scripts are identical).</param>
+/// <summary>The diff response: both revisions' scripts plus the structural diff, deepest-point only (an unchanged
+/// subtree yields no entries); both scripts are the stored, credential-scrubbed documents.</summary>
 public sealed record PayloadDiffResponse(
     Guid PayloadId,
     int FromRevision,
