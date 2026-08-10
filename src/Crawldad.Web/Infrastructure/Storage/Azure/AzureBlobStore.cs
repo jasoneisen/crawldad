@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
+using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Options;
@@ -66,6 +67,25 @@ internal sealed class AzureBlobStore : IDownloadSink, IScreenshotStore, IRetenti
         }
 
         return reference;
+    }
+
+    public async Task<Stream?> OpenReadAsync(string tenant, string reference, CancellationToken ct)
+    {
+        if (!BlobNaming.TryParseScreenshotRef(reference, out var digest))
+        {
+            return null; // not a well-formed screenshot ref — never a blind blob read
+        }
+
+        var name = ScreenshotName(tenant, digest); // validates the tenant + rebuilds from the digest (traversal guard) before any I/O
+        await EnsureContainerAsync(ct);
+        try
+        {
+            return (await _container.GetBlobClient(name).DownloadStreamingAsync(cancellationToken: ct)).Value.Content;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null; // unknown ref or retention-deleted
+        }
     }
 
     // ----- IRetentionStore ----------------------------------------------------------------------------------------------

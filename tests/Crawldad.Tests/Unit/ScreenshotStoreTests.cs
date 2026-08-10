@@ -34,6 +34,23 @@ public class ScreenshotStoreTests
         store.Blobs.Count.ShouldBe(1);
     }
 
+    [Fact]
+    public async Task Open_read_round_trips_a_saved_capture_from_its_own_partition()
+    {
+        var store = new InMemoryScreenshotStore();
+        var png = Encoding.UTF8.GetBytes("fake-png-bytes");
+        var reference = await store.SaveAsync(TestTenants.InterpreterTenant, png, CancellationToken.None);
+
+        await using var stream = await store.OpenReadAsync(TestTenants.InterpreterTenant, reference, CancellationToken.None);
+        using var buffer = new MemoryStream();
+        await stream!.CopyToAsync(buffer, CancellationToken.None);
+        buffer.ToArray().ShouldBe(png);
+    }
+
+    [Fact]
+    public async Task Open_read_is_null_for_an_unknown_ref() =>
+        (await new InMemoryScreenshotStore().OpenReadAsync(TestTenants.InterpreterTenant, "screenshots/deadbeef.png", CancellationToken.None)).ShouldBeNull();
+
     [Theory]
     [InlineData("a.pdf", "application/pdf")]
     [InlineData("a.jpg", "image/jpeg")]

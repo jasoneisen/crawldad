@@ -60,6 +60,18 @@ internal sealed class FileSystemBlobStore : IDownloadSink, IScreenshotStore, IRe
         return reference;
     }
 
+    /// <inheritdoc/>
+    public Task<Stream?> OpenReadAsync(string tenant, string reference, CancellationToken ct)
+    {
+        if (!BlobNaming.TryParseScreenshotRef(reference, out var digest))
+        {
+            return Task.FromResult<Stream?>(null); // not a well-formed screenshot ref — never a blind path read
+        }
+
+        var path = ScreenshotPath(tenant, digest); // rebuilt from the validated digest (traversal-safe)
+        return Task.FromResult<Stream?>(File.Exists(path) ? File.OpenRead(path) : null);
+    }
+
     // ----- IRetentionStore (the janitor sweep + PII erasure primitive) --------------------------------------------------
 
     /// <inheritdoc/>

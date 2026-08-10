@@ -32,7 +32,8 @@ internal static class BlobStoreContract
         (await CollectAsync(retention, BlobKind.Download, tenantB)).ShouldBeEmpty();
     }
 
-    /// <summary>Screenshots are content-addressed (identical bytes ⇒ one blob, a tenant-independent ref) and tenant-partitioned.</summary>
+    /// <summary>Screenshots are content-addressed (identical bytes ⇒ one blob, a tenant-independent ref), tenant-partitioned,
+    /// and read back byte-for-byte from — and only from — the storing tenant's own partition.</summary>
     public static async Task AssertScreenshotContractAsync(IScreenshotStore store, IRetentionStore retention)
     {
         var tenantA = NewTenant();
@@ -47,6 +48,25 @@ internal static class BlobStoreContract
 
         (await CollectAsync(retention, BlobKind.Screenshot, tenantA)).Count.ShouldBe(1);
         (await CollectAsync(retention, BlobKind.Screenshot, tenantB)).ShouldBeEmpty(); // B never captured one
+
+        // Read-back: A round-trips its own bytes; B cannot read A's blob by the (shared, content-addressed) ref; an unknown ref is null.
+        (await ReadAsync(store, tenantA, reference)).ShouldBe(png);
+        (await ReadAsync(store, tenantB, reference)).ShouldBeNull();                       // tenant isolation on the read path
+        (await ReadAsync(store, tenantA, $"screenshots/{new string('0', 64)}.png")).ShouldBeNull(); // unknown/retention-deleted
+        (await ReadAsync(store, tenantA, "screenshots/not-a-valid-digest.png")).ShouldBeNull();     // malformed ref ⇒ never a blind read
+    }
+
+    private static async Task<byte[]?> ReadAsync(IScreenshotStore store, string tenant, string reference)
+    {
+        await using var stream = await store.OpenReadAsync(tenant, reference, CancellationToken.None);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer, CancellationToken.None);
+        return buffer.ToArray();
     }
 
     /// <summary>The retention lifecycle: a durable store enumerates what it holds (per tenant + kind) and deletes exactly what

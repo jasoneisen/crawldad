@@ -1,9 +1,11 @@
 using System.IO;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Alba;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Infrastructure.Browser.Fake;
+using Microsoft.AspNetCore.TestHost;
 
 namespace Crawldad.Tests.Integration;
 
@@ -81,9 +83,18 @@ public class FileSystemStorageTests(FileSystemStorageFixture fixture)
         screenshotRef.ShouldStartWith("screenshots/");
 
         // The screenshot bytes landed as a real PNG under {root}/{tenant}/screenshots/{sha}.png (the ref's tenant-independent tail).
-        var blob = Path.Combine(fixture.Root, TestTenants.PrimaryId, "screenshots", screenshotRef!["screenshots/".Length..]);
+        var tail = screenshotRef!["screenshots/".Length..];
+        var blob = Path.Combine(fixture.Root, TestTenants.PrimaryId, "screenshots", tail);
         File.Exists(blob).ShouldBeTrue();
         (await File.ReadAllBytesAsync(blob))[..8].ShouldBe([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // PNG signature
+
+        // And it streams back byte-for-byte over GET /runs/{id}/screenshots/{ref} — the durable filesystem read path end-to-end.
+        using var client = fixture.Host.GetTestServer().CreateClient();
+        client.DefaultRequestHeaders.Add("Authorization", TestTenants.Bearer(TestTenants.PrimaryKey));
+        using var response = await client.GetAsync(new Uri($"/runs/{runId}/screenshots/{tail}", UriKind.Relative));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.ShouldBe("image/png");
+        (await response.Content.ReadAsByteArrayAsync()).ShouldBe(await File.ReadAllBytesAsync(blob));
     }
 }
 
