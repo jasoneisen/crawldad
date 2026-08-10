@@ -15,11 +15,11 @@ public static class BrowsersModule
     /// no event stream carries the secret). Multi-tenancy comes from the shared <c>AllDocumentsAreMultiTenanted</c> policy.</summary>
     public static void ConfigureMarten(StoreOptions options) => options.Schema.For<BrowserRegistration>();
 
-    /// <summary>Registers the slice's services: the register validator, the encrypting credential store, the connect
-    /// resolver, and ASP.NET Data Protection (the at-rest secret cipher).</summary>
+    /// <summary>Registers the slice's services: the register validator, the encrypting credential store, and the connect
+    /// resolver. Data Protection itself — the at-rest cipher these lean on, plus its persisted key ring — is wired
+    /// host-wide by <see cref="Infrastructure.Security.DataProtectionModule"/>.</summary>
     public static void AddBrowsersServices(IServiceCollection services)
     {
-        services.AddDataProtection();
         services.AddScoped<IValidator<RegisterBrowserRequest>, RegisterBrowserRequestValidator>();
         services.AddSingleton<IBrowserCredentialStore, MartenBrowserCredentialStore>();
         services.AddSingleton<IConnectCredentialResolver, BrowserCredentialResolver>();

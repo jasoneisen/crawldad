@@ -19,6 +19,11 @@
     <!-- The durable Azure Blob storage adapter. The filesystem adapter is the hermetic default;
          this is the Azure-native durable seam for the Azure deployment target, tested against Azurite. -->
     <PackageReference Include="Azure.Storage.Blobs" />
+    <!-- Persist the Data Protection key ring to a blob wrapped by a Key Vault key (issue #65), authenticated with the
+         app's managed identity. Wired only when Crawldad:DataProtection is configured; absent config keeps the default. -->
+    <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" />
+    <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Keys" />
+    <PackageReference Include="Azure.Identity" />
   </ItemGroup>
 
   <!-- The payload JSON Schema (Deliverable 1) is the normative structural spec. It lives once at the

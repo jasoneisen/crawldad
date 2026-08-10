@@ -82,12 +82,12 @@ public static class HostConfiguration
         builder.Services.AddProblemDetails();
 
         // Per-slice service registration (validators + infrastructure seams). Each slice owns its DI, mirroring the
-        // foundation; the Runs slice registers the POST /runs validator and the browser-backend seam (including the
-        // credential scrubber + per-run secret scope), and the Payloads slice registers the POST /payloads validator.
+        // foundation; e.g. Runs registers the POST /runs validator + browser-backend seam, Payloads its POST /payloads validator.
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
-        BrowsersModule.AddBrowsersServices(builder.Services); // browser-registration store + encrypting resolver + Data Protection
+        BrowsersModule.AddBrowsersServices(builder.Services); // browser-registration store + encrypting resolver
         StorageModule.AddStorage(builder.Services, builder.Configuration); // durable download sink + screenshot store + retention janitor
+        DataProtectionModule.AddKeyRingProtection(builder.Services, builder.Configuration); // the at-rest secret cipher + its persisted key ring
         AddTenantSecurity(builder);
         ScrubAllLogOutput(builder.Services);
         return builder;

@@ -47,6 +47,14 @@
     <ProjectReference Include="..\..\src\Crawldad.Contracts\Crawldad.Contracts.csproj" />
   </ItemGroup>
 
+  <!-- The suite hosts the ASP.NET app (Alba) and tests its Data-Protection wiring, so reference the shared framework
+       explicitly. This also lets restore PRUNE the framework-provided packages the Data-Protection blob/key extensions
+       drag in transitively via the netstandard2.0 Microsoft.AspNetCore.DataProtection 3.1.32 dep — otherwise their
+       legacy System.Drawing.Common 4.7.0 closure trips the repo's NuGetAudit (as it is already pruned in Crawldad.Web). -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="Shouldly" />
