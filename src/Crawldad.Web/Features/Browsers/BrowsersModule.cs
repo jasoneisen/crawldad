@@ -1,0 +1,27 @@
+using Crawldad.Contracts.Browsers;
+using Crawldad.Web.Infrastructure.Security;
+using FluentValidation;
+using Marten;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Crawldad.Web.Features.Browsers;
+
+/// <summary>Self-registration for the Browsers slice: the tenant-scoped <see cref="BrowserRegistration"/> credential
+/// document, the register-request validator, the Data-Protection-backed credential store, and the tenant-scoped
+/// connect resolver the backends resolve through. Mirrors the Payloads/Runs module shape.</summary>
+public static class BrowsersModule
+{
+    /// <summary>Registers the plain, tenant-scoped <see cref="BrowserRegistration"/> document (secrets encrypted at rest;
+    /// no event stream carries the secret). Multi-tenancy comes from the shared <c>AllDocumentsAreMultiTenanted</c> policy.</summary>
+    public static void ConfigureMarten(StoreOptions options) => options.Schema.For<BrowserRegistration>();
+
+    /// <summary>Registers the slice's services: the register validator, the encrypting credential store, the connect
+    /// resolver, and ASP.NET Data Protection (the at-rest secret cipher).</summary>
+    public static void AddBrowsersServices(IServiceCollection services)
+    {
+        services.AddDataProtection();
+        services.AddScoped<IValidator<RegisterBrowserRequest>, RegisterBrowserRequestValidator>();
+        services.AddSingleton<IBrowserCredentialStore, MartenBrowserCredentialStore>();
+        services.AddSingleton<IConnectCredentialResolver, BrowserCredentialResolver>();
+    }
+}

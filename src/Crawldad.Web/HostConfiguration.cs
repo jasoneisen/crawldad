@@ -1,4 +1,5 @@
 using Crawldad.Contracts;
+using Crawldad.Web.Features.Browsers;
 using Crawldad.Web.Features.Payloads;
 using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Security;
@@ -52,6 +53,7 @@ public static class HostConfiguration
                 // filling its module in place exactly as IncidentModule does in the foundation.
                 PayloadsModule.ConfigureMarten(options, projectionLifecycle);
                 RunsModule.ConfigureMarten(options, projectionLifecycle);
+                BrowsersModule.ConfigureMarten(options); // the tenant-scoped browser-credential document (no projection)
             })
             .IntegrateWithWolverine()           // transactional outbox/inbox + aggregate handlers
             .AddAsyncDaemon(DaemonMode.HotCold);
@@ -84,6 +86,7 @@ public static class HostConfiguration
         // credential scrubber + per-run secret scope), and the Payloads slice registers the POST /payloads validator.
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
+        BrowsersModule.AddBrowsersServices(builder.Services); // browser-registration store + encrypting resolver + Data Protection
         StorageModule.AddStorage(builder.Services, builder.Configuration); // durable download sink + screenshot store + retention janitor
         AddTenantSecurity(builder);
         ScrubAllLogOutput(builder.Services);

@@ -10,7 +10,7 @@ namespace Crawldad.Web.Infrastructure.Browser.Real;
 /// no connect URL or token can escape an exception message — any fault becomes a secret-free <see cref="BrowserConnectException"/>.</summary>
 internal sealed class BrowserlessBackend(
     IPlaywrightProvider provider,
-    ISecretStore secrets,
+    IConnectCredentialResolver resolver,
     IRunSecretScope secretScope,
     IAssetCache cache,
     IThrottleGate throttle,
@@ -55,7 +55,7 @@ internal sealed class BrowserlessBackend(
     {
         var credentialRef = binding.CredentialRef
             ?? throw new BrowserConnectException("the 'browserless' backend requires a credentialRef (the account token)");
-        return await secrets.ResolveAsync(credentialRef, ct);
+        return await resolver.ResolveConnectAsync(credentialRef, binding.Tenant!, ct); // tenant-scoped: registered browsers then config
     }
 
     /// <summary>Builds the native connect URL: the region substituted into the template, the token as the first query

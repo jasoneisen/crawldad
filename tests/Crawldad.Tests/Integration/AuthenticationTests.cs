@@ -104,6 +104,14 @@ public class AuthenticationTests(AppFixture fixture)
             {
                 x.Get.Url(path);
             }
+            else if (string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase))
+            {
+                x.Put.Json(new { }).ToUrl(path); // body is irrelevant — authorization rejects before model binding
+            }
+            else if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase))
+            {
+                x.Delete.Url(path);
+            }
             else
             {
                 x.Post.Json(new { }).ToUrl(path); // body is irrelevant — authorization rejects before model binding

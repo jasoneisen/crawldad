@@ -60,9 +60,6 @@ internal sealed class StubSecretScope(params string[] secrets) : IRunSecretScope
 /// <see cref="ConfigurationSecretStore"/> tenant scoping via configuration.</summary>
 internal sealed class MapSecretStore(IReadOnlyDictionary<string, string> secrets) : ISecretStore
 {
-    public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) =>
-        secrets.TryGetValue(credentialRef, out var secret) ? Task.FromResult(secret) : throw new SecretNotFoundException(credentialRef);
-
     public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct) =>
         secrets.TryGetValue(reference, out var secret) ? Task.FromResult(secret) : throw new SecretNotFoundException(reference);
 }
@@ -77,8 +74,6 @@ internal sealed class CountingVault(string secret) : ISecretStore
 
     /// <summary>Resets the call count (between the fresh run and the resumed run).</summary>
     public void Reset() => Calls = 0;
-
-    public Task<string> ResolveAsync(string credentialRef, CancellationToken ct) => Task.FromResult(secret);
 
     public Task<string> ResolveForTenantAsync(string reference, string tenant, CancellationToken ct)
     {

@@ -89,15 +89,17 @@ bearer token.
 
 ## 5. Give Crawldad the backend binding
 
-**(a) Store the URL as a connect secret.** Backend connect resolves `Secrets:<credentialRef>` from the
-operator's configuration (`ConfigurationSecretStore`; connect secrets are process-global, not tenant-scoped).
-Put the tunnel URL there under a reference name you choose:
+**(a) Register the tunnel URL as a browser credential.** Register it through the API under a name you choose
+([`API.md` §12](API.md#12-browsers--browsers)); the name becomes the `credentialRef`, the secret is encrypted at
+rest, and it is scoped to your tenant — no operator config edit, and no other tenant can reach it:
 
 ```jsonc
-// appsettings / env / user-secrets — the value is the tunnel URL, never checked into a payload
-"Secrets": { "my-laptop-tunnel": "https://d34db33f.ngrok-free.app" }
-// env-var form: Secrets__my-laptop-tunnel=https://d34db33f.ngrok-free.app
+PUT /browsers/my-laptop-tunnel
+{ "adapter": "browserbase", "mode": "connectUrl", "secret": "https://d34db33f.ngrok-free.app" }
 ```
+
+At connect the `credentialRef` resolves tenant-scoped: your registered browser first, then a tenant-namespaced
+config fallback (`Secrets:{tenant}:{ref}`) an operator can seed for a shared staging tunnel.
 
 **(b) Reference it in the run's `backend` input.** A `backend` input value ([`API.md` §2.1](API.md#21-inputs))
 selects the adapter and carries the credential by reference:
@@ -153,7 +155,7 @@ A healthy tunnel returns the usual synchronous `200 { status: "succeeded", resul
 ## 6. Failure modes and what the API returns
 
 A backend connect happens **once** per run, before the interpreter's retry layer, and any connect fault is a
-**terminal** `backend_unavailable` ([`API.md` §12.3](API.md#123-run-failures--failurecode)) — HTTP `200` for a
+**terminal** `backend_unavailable` ([`API.md` §13.3](API.md#133-run-failures--failurecode)) — HTTP `200` for a
 sync run (a failed *run* is not a failed *request*), or the terminal state of a `202` async run. No page is
 bound yet, so there is no failure screenshot. Connect-fault messages are **secret-free by construction**: the
 raw provider error (which can embed the URL) is never wrapped into it — a hand-written message is used instead
@@ -163,7 +165,7 @@ raw provider error (which can embed the URL) is never wrapped into it — a hand
 |---|---|---|
 | Tunnel down / URL unreachable / not a live CDP endpoint / Host-check `403` | `backend_unavailable` | `failed to establish a 'browserbase' backend session` |
 | `credentialRef` omitted from the binding | `backend_unavailable` | `the 'browserbase' backend requires a credentialRef (an apiKey or a connectUrl)` |
-| `credentialRef` names a secret the vault has no value for | `backend_unavailable` | `failed to establish a 'browserbase' backend session` (the missing-secret detail is folded into the secret-free connect message) |
+| `credentialRef` resolves to no registered browser and no tenant config fallback (including another tenant's name) | `backend_unavailable` | `failed to establish a 'browserbase' backend session` (the missing-secret detail is folded into the secret-free connect message) |
 | `adapter` misspelled (no such adapter registered) | `unknown_backend_adapter` | `no backend is registered for adapter '<name>'` |
 
 The first three are `class: "terminal"` from the adapter; `unknown_backend_adapter` is a terminal interpreter
