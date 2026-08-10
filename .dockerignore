@@ -1,0 +1,36 @@
+# Keep the build context small and — most importantly — keep secrets and build output OUT of the image context.
+# The Dockerfile COPYs only the paths it needs (global.json, Directory.*.props, src/, schema/, llms.txt), but the
+# daemon still transfers the whole context first, so exclude everything heavy or sensitive here.
+
+# Build output (rebuilt inside the image; never ship host bin/obj).
+**/bin/
+**/obj/
+**/TestResults/
+**/App_Data/
+
+# Secrets / local config — the repo .env is gitignored and off-limits; make doubly sure nothing secret-bearing
+# can ever enter the image context.
+*.env
+.env
+**/*.env
+**/appsettings.*.local.json
+**/*.user
+
+# VCS, tooling, agent, and IDE metadata.
+.git/
+.github/
+.claude/
+.vs/
+.vscode/
+.devcontainer/
+
+# Not needed to build or run the app. (NOTE: .editorconfig is deliberately NOT excluded — it carries the analyzer
+# severity config the warnings-as-errors Release publish needs; without it CA1062/MA0048/… fire as build errors.)
+infra/
+docs/
+eng/
+tests/
+**/*.md
+Dockerfile
+.dockerignore
+.gitignore
