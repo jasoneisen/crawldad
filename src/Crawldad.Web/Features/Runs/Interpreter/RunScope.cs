@@ -10,12 +10,17 @@ internal sealed class RunScope : IEvalScope, IDomAccess
 {
     private readonly Dictionary<string, object?> _vars = new(StringComparer.Ordinal);
     private readonly SelResolver _sel;
+    private readonly ISelectorMissSink _misses;
     private IPageHandle? _page;
 
-    public RunScope(IReadOnlyDictionary<string, object?> input, int expressionStepBudget = CrawldadExpression.DefaultStepBudget)
+    public RunScope(
+        IReadOnlyDictionary<string, object?> input,
+        int expressionStepBudget = CrawldadExpression.DefaultStepBudget,
+        ISelectorMissSink? misses = null)
     {
         _vars["input"] = new Dictionary<string, object?>(input, StringComparer.Ordinal);
         _sel = new SelResolver(this);
+        _misses = misses ?? NoSelectorMissSink.Instance; // the interpreter passes its counter-backed sink; scope/selector unit tests get the inert one
         ExpressionStepBudget = expressionStepBudget;
     }
 
@@ -45,6 +50,8 @@ internal sealed class RunScope : IEvalScope, IDomAccess
     public string PageUrl() => PageHandle.Url;
 
     public IDomAccess Dom => this;
+
+    public ISelectorMissSink Misses => _misses;
 
     // ----- mutation (structural nodes only) ----------------------------------
 

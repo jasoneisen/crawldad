@@ -62,7 +62,7 @@ public class RunEventsHeartbeatTests
         // with the heartbeat active (there is no background timer, so nothing leaks or races on close).
         await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
-            session.Events.Append(runId, new RunSucceeded(new RunStats(0, 0, 0, 0, 0), clock.GetUtcNow()));
+            session.Events.Append(runId, new RunSucceeded(new RunStats(0, 0, 0, 0, 0, 0), clock.GetUtcNow()));
             await session.SaveChangesAsync();
         }
 

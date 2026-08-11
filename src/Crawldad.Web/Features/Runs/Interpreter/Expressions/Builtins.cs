@@ -53,6 +53,7 @@ internal static partial class BuiltinRegistry
 
             // Collection / control.
             new Builtin("coalesce", 2, int.MaxValue, CoalesceAsync),
+            new Builtin("require", 1, 1, RequireAsync),
 
             // URL — parsed as absolute System.Uri; invalid → invalid_url.
             Fn1("urlScheme", value => UrlPart(value, static uri => uri.Scheme)),
@@ -61,12 +62,13 @@ internal static partial class BuiltinRegistry
             Fn2("resolveUrl", ResolveUrl),
             new Builtin("pageUrl", 0, 0, static (_, ctx) => new ValueTask<object?>(ctx.Scope.PageUrl())),
 
-            // DOM — the only page access. count is polymorphic (string ⇒ selector query).
+            // DOM — the only page access. count/exists are existence predicates (never selector misses); the extraction
+            // builtins text/innerText/innerHtml/attr record a miss when their target matches no element.
             new Builtin("count", 1, 1, CountAsync),
             new Builtin("exists", 1, 2, ExistsAsync),
-            new Builtin("text", 1, 2, DomString(static (dom, target, css, ct) => dom.TextAsync(target, css, ct))),
-            new Builtin("innerText", 1, 2, DomString(static (dom, target, css, ct) => dom.InnerTextAsync(target, css, ct))),
-            new Builtin("innerHtml", 1, 2, DomString(static (dom, target, css, ct) => dom.InnerHtmlAsync(target, css, ct))),
+            new Builtin("text", 1, 2, DomExtract(static (dom, target, css, ct) => dom.TextAsync(target, css, ct))),
+            new Builtin("innerText", 1, 2, DomExtract(static (dom, target, css, ct) => dom.InnerTextAsync(target, css, ct))),
+            new Builtin("innerHtml", 1, 2, DomExtract(static (dom, target, css, ct) => dom.InnerHtmlAsync(target, css, ct))),
             new Builtin("attr", 2, 3, AttrAsync),
         };
 
@@ -108,12 +110,22 @@ internal static partial class BuiltinRegistry
         new(name, 3, 3, async (args, ctx) =>
             fn(await args[0].EvaluateAsync(ctx), await args[1].EvaluateAsync(ctx), await args[2].EvaluateAsync(ctx)));
 
-    private static BuiltinInvoker DomString(Func<IDomAccess, object, string?, CancellationToken, ValueTask<string?>> read) =>
+    // A DOM extraction builtin (text/innerText/innerHtml): reads the first match's string, and reports a selector miss
+    // when NOTHING matched. All three read null exactly when the target matched zero elements (a matched-but-empty
+    // element is "", never null — both backends short-circuit to null on a zero count), so the null return IS the miss
+    // signal, needing no extra DOM round-trip. A soft miss still null-propagates as before; a required/strict miss throws.
+    private static BuiltinInvoker DomExtract(Func<IDomAccess, object, string?, CancellationToken, ValueTask<string?>> read) =>
         async (args, ctx) =>
         {
             var target = RequireDomTarget(await args[0].EvaluateAsync(ctx));
             var css = args.Count > 1 ? ExpressionValues.RequireString(await args[1].EvaluateAsync(ctx), "relative css") : null;
-            return await read(ctx.Scope.Dom, target, css, ctx.Ct);
+            var value = await read(ctx.Scope.Dom, target, css, ctx.Ct);
+            if (value is null)
+            {
+                await ReportMissAsync(ctx, target, css);
+            }
+
+            return value;
         };
 
     // ----- lazy / polymorphic invokers --------------------------------------
@@ -175,8 +187,71 @@ internal static partial class BuiltinRegistry
             name = ExpressionValues.RequireString(await args[1].EvaluateAsync(ctx), "attribute name");
         }
 
-        return await ctx.Scope.Dom.AttrAsync(target, css, name, ctx.Ct);
+        var value = await ctx.Scope.Dom.AttrAsync(target, css, name, ctx.Ct);
+
+        // attr's null is ambiguous — no element matched, OR a matched element simply lacks the attribute (legitimately
+        // blank, NOT a miss). Only a zero count is a miss, so disambiguate with a count, and only on the null path so a
+        // present attribute costs no extra DOM round-trip.
+        if (value is null && await ctx.Scope.Dom.CountAsync(target, css, ctx.Ct) == 0)
+        {
+            await ReportMissAsync(ctx, target, css);
+        }
+
+        return value;
     }
+
+    // Reports one selector miss for an extraction builtin: records it on the run's sink (which counts it and, first time
+    // for this selector, emits a SelectorMiss event) and raises a terminal selector_miss when the sink says so — because
+    // the extraction was require()-wrapped (ctx.RequireExtraction) or config.strictExtraction promotes every miss.
+    private static async ValueTask ReportMissAsync(EvalContext ctx, object target, string? relativeCss)
+    {
+        var selector = DescribeSelector(target, relativeCss);
+        if (await ctx.Scope.Misses.RecordAsync(selector, ctx.RequireExtraction, ctx.Ct))
+        {
+            throw new ExpressionEvaluationException(
+                ExpressionErrorCodes.SelectorMiss, $"required extraction found no element matching selector '{selector}'");
+        }
+    }
+
+    // A stable, human-readable description of the missed target for the SelectorMiss event and its dedupe key: the CSS
+    // string as-is, a structured Sel's primary locator, or a placeholder for an opaque handle (a bound locator carries no
+    // stable text) — narrowed by the relative CSS when present, which is the part that drifts in a per-row extraction.
+    private static string DescribeSelector(object target, string? relativeCss)
+    {
+        var baseSelector = target switch
+        {
+            string css => css,
+            Dictionary<string, object?> map => DescribeSelMap(map),
+            _ => "<handle>",
+        };
+
+        return relativeCss is null ? baseSelector : $"{baseSelector} {relativeCss}";
+    }
+
+    // The primary locator of a structured Sel map, in resolution-priority order, for the miss description: the bare css
+    // string (the common case), or a "<kind>=<value>" for the other roots, or a placeholder for a locator-less map.
+    private static string DescribeSelMap(Dictionary<string, object?> map)
+    {
+        foreach (var key in _selMapLocatorKeys)
+        {
+            if (map.TryGetValue(key, out var value))
+            {
+                var text = ExpressionValues.ToStringValue(value);
+                return string.Equals(key, "css", StringComparison.Ordinal) ? text : $"{key}={text}";
+            }
+        }
+
+        return "<sel>";
+    }
+
+    private static readonly string[] _selMapLocatorKeys = ["css", "xpath", "text", "role", "title", "base"];
+
+    // require(x): evaluates x with selector misses in its subtree promoted to terminal selector_miss failures. A lazy
+    // builtin (like coalesce) so it can rewrite the evaluation context, not just receive x's value — composes with
+    // trim/coalesce/binding builtins, which thread the flag through their ctx copies. With no extraction inside, it is a
+    // transparent passthrough.
+    private static ValueTask<object?> RequireAsync(IReadOnlyList<ExpressionNode> args, EvalContext ctx) =>
+        args[0].EvaluateAsync(ctx with { RequireExtraction = true });
 
     // ----- value-level helpers ----------------------------------------------
 

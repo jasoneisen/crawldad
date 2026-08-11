@@ -20,6 +20,12 @@ public interface IEvalScope
     /// <summary>The read-only DOM access seam the page-querying builtins (<c>count/exists/text/…</c>) go through.</summary>
     IDomAccess Dom { get; }
 
+    /// <summary>Where the extraction builtins report a selector miss (a target that matched no element). The run scope
+    /// backs it with the interpreter's <c>selectorMisses</c> counter and trace stream (making misses countable and
+    /// classifiable); a binding scope delegates to its parent; a scope with no run behind it supplies the inert
+    /// <see cref="NoSelectorMissSink"/>, which still honours <c>require(...)</c>.</summary>
+    ISelectorMissSink Misses { get; }
+
     /// <summary>The per-evaluation expression step budget: the maximum node evaluations a single
     /// <see cref="CrawldadExpression.EvaluateAsync"/> may spend before it aborts. Carried on the scope so it rides to
     /// every nested evaluation without threading through call sites; a payload can never raise it.</summary>

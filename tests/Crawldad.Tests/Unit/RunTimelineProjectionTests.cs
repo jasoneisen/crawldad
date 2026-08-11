@@ -27,7 +27,7 @@ public class RunTimelineProjectionTests
         t = projection.Apply(new Downloaded("abc.pdf", "application/pdf", 30, "sha", _t0), t);
         t = projection.Apply(new Downloaded("def.csv", "text/csv", 12, "sha2", _t0), t); // a second download → non-empty spread
         t = projection.Apply(new StepStarted(1, "loop", _t0.AddSeconds(1)), t); // closes step 0 → 1000ms
-        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(3)), t);
+        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(3)), t);
 
         t.PayloadName.ShouldBe("ljcmg.search");
         t.ScriptHash.ShouldBe("hash-abc");
@@ -55,7 +55,7 @@ public class RunTimelineProjectionTests
         t = projection.Apply(new StepStarted(0, "screenshot", _t0), t);
         t = projection.Apply(new Screenshotted("screenshots/aaa.png", "after-login", 2048, _t0), t);
         t = projection.Apply(new Screenshotted("screenshots/bbb.png", null, 4096, _t0), t); // a second, unnamed → non-empty spread
-        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
+        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
 
         t.Screenshots.ShouldBe([
             new RunTimelineScreenshot("screenshots/aaa.png", "after-login", 2048),
@@ -72,7 +72,7 @@ public class RunTimelineProjectionTests
         t = projection.Apply(new StepStarted(0, "capture", _t0), t);
         t = projection.Apply(new Captured("aaa.html", 512, "sha-a", _t0), t);
         t = projection.Apply(new Captured("bbb.html", 1024, "sha-b", _t0), t); // a second capture → non-empty spread
-        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
+        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
 
         t.Captures.ShouldBe([
             new RunTimelineCapture("aaa.html", 512, "sha-a"),
@@ -90,7 +90,7 @@ public class RunTimelineProjectionTests
         t = projection.Apply(new StepStarted(0, "goto", _t0), t);
         t = projection.Apply(new StepStarted(1, "fail", _t0), t);
         t = projection.Apply(new StepFailed(1, "boom", "screenshots/xyz.png", _t0), t);
-        t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(2)), t);
+        t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(2)), t);
 
         t.Status.ShouldBe(RunStatus.Failed);
         t.Failure.ShouldBe(new RunTimelineFailure("boom", "kaboom", new RunStepRef(1, "fail"), "screenshots/xyz.png"));
@@ -105,7 +105,7 @@ public class RunTimelineProjectionTests
 
         var t = projection.Create(Started());
         t = projection.Apply(new StepFailed(0, "invalid_backend_binding", null, _t0), t);
-        t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
+        t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
 
         t.Steps.ShouldBeEmpty();
         t.Status.ShouldBe(RunStatus.Failed);
@@ -119,7 +119,7 @@ public class RunTimelineProjectionTests
 
         var t = projection.Create(Started());
         t = projection.Apply(new StepStarted(0, "loop", _t0), t);
-        t = projection.Apply(new RunCancelled(new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(5)), t);
+        t = projection.Apply(new RunCancelled(new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(5)), t);
 
         t.Status.ShouldBe(RunStatus.Cancelled);
         t.Steps.ShouldHaveSingleItem().DurationMs.ShouldBe(5000);

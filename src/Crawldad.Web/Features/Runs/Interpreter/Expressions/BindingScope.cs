@@ -19,4 +19,7 @@ internal sealed class BindingScope(IEvalScope parent, string name, object? value
     public string PageUrl() => parent.PageUrl();
 
     public IDomAccess Dom => parent.Dom;
+
+    // A binding body's extraction misses report to the same run sink as the enclosing expression.
+    public ISelectorMissSink Misses => parent.Misses;
 }

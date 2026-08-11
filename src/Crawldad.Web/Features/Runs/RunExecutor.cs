@@ -146,7 +146,7 @@ public sealed class RunExecutor(
     // A synthetic stopped outcome for a run the deadline forcibly cancelled mid-call (there is no salvageable result);
     // FinalizeAsync maps a Cancelled outcome under a Deadline stop reason to the terminal run_deadline_exceeded failure.
     private static RunOutcome DeadlineOutcome() =>
-        new(RunStatus.Cancelled, null, null, null, new RunStats(0, 0, 0, 0, 0), []);
+        new(RunStatus.Cancelled, null, null, null, new RunStats(0, 0, 0, 0, 0, 0), []);
 
     // Loads the run definition + progress and returns them only when the run is actually runnable: an unknown run (no saga)
     // or one that is no longer running (already terminal — an idempotent redelivery) yields null and the executor no-ops.

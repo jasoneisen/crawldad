@@ -1,9 +1,12 @@
 namespace Crawldad.Web.Features.Runs.Interpreter.Expressions;
 
 /// <summary>The environment threaded through evaluation: the read-only <see cref="IEvalScope"/>, the cancellation
-/// token, and the per-evaluation <see cref="Fuel"/> counter. <see cref="Fuel"/> is a shared mutable reference, so it
-/// accumulates across the whole tree even though this struct is copied (e.g. by <c>ctx with { Scope = … }</c>).</summary>
-internal readonly record struct EvalContext(IEvalScope Scope, ExpressionFuel Fuel, CancellationToken Ct);
+/// token, the per-evaluation <see cref="Fuel"/> counter, and <see cref="RequireExtraction"/> (whether an enclosing
+/// <c>require(...)</c> has promoted a selector miss in this subtree to terminal). <see cref="Fuel"/> is a shared mutable
+/// reference, so it accumulates across the whole tree even though this struct is copied (e.g. by
+/// <c>ctx with { Scope = … }</c>); <see cref="RequireExtraction"/> rides each copy, so <c>require</c> flips it for its
+/// argument subtree only (immutable dynamic scope), and binding-builtin bodies inherit it through the same copy.</summary>
+internal readonly record struct EvalContext(IEvalScope Scope, ExpressionFuel Fuel, CancellationToken Ct, bool RequireExtraction = false);
 
 /// <summary>The per-evaluation fuel counter: one instance per top-level <see cref="CrawldadExpression.EvaluateAsync"/>,
 /// shared by reference through the whole tree. Bounds a breadth-heavy but non-recursive expression (e.g. a binding

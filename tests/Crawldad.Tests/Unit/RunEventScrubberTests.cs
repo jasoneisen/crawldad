@@ -13,7 +13,7 @@ public class RunEventScrubberTests
     private const string _secret = "bb_live_LEAKCANARY_event_0123456789";
 
     private static readonly DateTimeOffset _at = FakeClock.Fixed;
-    private static readonly RunStats _stats = new(0, 1, 0, 0, 0);
+    private static readonly RunStats _stats = new(0, 1, 0, 0, 0, 0);
 
     private static CredentialScrubber Scrubber() => new(new StubSecretScope(_secret));
 
@@ -158,6 +158,15 @@ public class RunEventScrubberTests
         scrubbed.BlobRef.ShouldBe($"{_redacted}.html");
         scrubbed.Size.ShouldBe(4096);
         scrubbed.Sha256.ShouldBe("abc"); // a content hash carries nothing to redact
+    }
+
+    [Fact]
+    public void SelectorMiss_scrubs_the_selector_text() // the declared selector could interpolate a credential-shaped value — scrubbed like Clicked.SelectorText
+    {
+        var scrubbed = (SelectorMiss)RunEventScrubber.Scrub(new SelectorMiss($"[data-token='{_secret}']", 4, _at), Scrubber());
+
+        scrubbed.Selector.ShouldBe($"[data-token='{_redacted}']");
+        scrubbed.StepIndex.ShouldBe(4);
     }
 
     [Fact]

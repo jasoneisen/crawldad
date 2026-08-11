@@ -106,7 +106,7 @@ public sealed class SyncRunSupervisor(
         }
     }
 
-    private static RunStats EmptyStats => new(0, 0, 0, 0, 0);
+    private static RunStats EmptyStats => new(0, 0, 0, 0, 0, 0);
 
     private async Task FinalizeAsync(SyncRunHandoff handoff, RunOutcome outcome)
     {

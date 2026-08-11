@@ -199,7 +199,7 @@ Successful synchronous run (`200`, `RunResponse`):
   "runId": "3f…",
   "status": "succeeded",
   "result": { "title": "Example Domain" },   // the payload's `result`, evaluated (object key order preserved)
-  "stats": { "durationMs": 812, "steps": 37, "requests": 2, "cacheHits": 0, "downloads": 0 }
+  "stats": { "durationMs": 812, "steps": 37, "requests": 2, "cacheHits": 0, "downloads": 0, "selectorMisses": 0 }
 }
 ```
 
@@ -215,13 +215,17 @@ Failed run — still `200` (the request succeeded; the run faulted):
     "message": "Record not accessible (redirected to /Login.aspx)",
     "atStep": { "index": 2, "kind": "guard" }
   },
-  "stats": { "durationMs": 410, "steps": 3, "requests": 1, "cacheHits": 0, "downloads": 0 }
+  "stats": { "durationMs": 410, "steps": 3, "requests": 1, "cacheHits": 0, "downloads": 0, "selectorMisses": 0 }
 }
 ```
 
 `stats`: `durationMs` (wall clock), `steps` (nodes executed — loop bodies re-count per iteration), `requests`
 (navigations + matched `waitForRequest`s), `cacheHits` (route cache; 0 until it lands), `downloads`
-(completed `download` nodes).
+(completed `download` nodes), `selectorMisses` (extraction selectors — `text`/`innerText`/`innerHtml`/`attr` — that
+matched **no element**, the soft drift signal; a matched-but-empty element is **not** counted). A run can **succeed
+with `selectorMisses > 0`** — that is precisely the drift alarm ("canary succeeded but misses > 0"). Make a miss
+terminal with `require(...)` around the extraction, or `config.strictExtraction: true` run-wide — see
+[`PAYLOAD_SPEC.md`](PAYLOAD_SPEC.md).
 
 **Scrubbing of your `result`.** Before it is returned (and persisted for the async poll), `result`/`partial`
 pass through the credential scrubber's **exact-secret** rule only: any credential *your run* registered — a
@@ -297,7 +301,7 @@ The state of a background (async / upgraded / queued) run, from the executor-own
 { "runId": "…", "status": "running" }
 // terminal (succeeded shown; failed carries `failure`, cancelled carries `partial`)
 { "runId": "…", "status": "succeeded", "result": { /* … */ },
-  "stats": { "durationMs": 91234, "steps": 512, "requests": 84, "cacheHits": 0, "downloads": 12 },
+  "stats": { "durationMs": 91234, "steps": 512, "requests": 84, "cacheHits": 0, "downloads": 12, "selectorMisses": 0 },
   "queueWaitMs": 4120 }
 ```
 
@@ -328,8 +332,10 @@ data: {"url":"https://example.gov/portal/search"}
   to resume **exactly** where you left off — the durable stream is authoritative, so no frame is lost or
   duplicated across a disconnect.
 - `event` is the trace event's type name (`StepStarted`, `Navigated`, `Clicked`, `Waited`, `Extracted`,
-  `Downloaded`, `Screenshotted`, `Filled`, `LogEmitted`, `StepFailed`, …). The stream closes on `RunSucceeded`,
-  `RunFailed`, or `RunCancelled`.
+  `Downloaded`, `Screenshotted`, `Captured`, `SelectorMiss`, `Filled`, `LogEmitted`, `StepFailed`, …). The stream
+  closes on `RunSucceeded`, `RunFailed`, or `RunCancelled`. `SelectorMiss` (`{ selector, stepIndex }`) marks an
+  extraction selector that matched nothing — emitted once per distinct selector per run, the soft drift signal for
+  `stats.selectorMisses`.
 - `data` is the already-**scrubbed** event JSON — no credential ever streams. An unknown (or cross-tenant) run
   is `404` (checked before any SSE headers).
 - **Keepalive.** During an idle stretch (a long `waitFor`, a slow page, the gap between a queued run's steps) the
@@ -592,6 +598,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `division_by_zero` | terminal | integer `/` or `%` by zero |
 | `int_conversion_failed` | terminal | a required integer conversion (`toInt`) failed |
 | `invalid_url` | terminal | a URL builtin got a non-absolute URL |
+| `selector_miss` | terminal | a `require(...)`-wrapped extraction (or any extraction under `config.strictExtraction`) matched no element |
 | `unknown_identifier` | terminal | a bare identifier was unbound at evaluation |
 | `regex_too_large` / `regex_timeout` | terminal | a regex exceeded the size / time guard |
 | `timeout` / `pageCrashed` | retryable-exhausted | the two retryable conditions, after `config.retry` exhausted |
@@ -664,9 +671,9 @@ only anonymous ones.
 
 ## 16. Examples
 
-Seven curated, schema-valid payloads live in [`docs/examples/`](examples/) (every one is validated against the
-schema in CI, so they never drift). Five are lifted verbatim from the tested acceptance fixtures; two
-(`login-and-search`, `capture-document`) are authored to show the newer surface.
+Eight curated, schema-valid payloads live in [`docs/examples/`](examples/) (every one is validated against the
+schema in CI, so they never drift). Five are lifted verbatim from the tested acceptance fixtures; three
+(`login-and-search`, `capture-document`, `strict-extraction`) are authored to show the newer surface.
 
 - **[`first-search.json`](examples/first-search.json)** — the gentle intro. Navigate, conditionally `fill`
   two date fields, fire the search via `waitForRequest` (click + await the postback), then `locate` the result
@@ -691,6 +698,13 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
   `{ url, captureRef, sha256, sizeBytes }` into the result — a compact **manifest of refs**, never the HTML, which
   bypasses the credential scrubber and Crawldad's own retention entirely. `config.captureOnFailure` banks the
   failing page's HTML to the same BYO target for selector-drift diagnosis.
+
+- **[`strict-extraction.json`](examples/strict-extraction.json)** — observable selector-miss (§3, issue #75). A
+  **required** anchor `trim(require(text('#…lblPermitNumber')))` fails the run `selector_miss` (banking the failing
+  page via `captureOnFailure`) the instant the record-number id drifts — instead of a page of empty records. The
+  optional fields stay **soft** (`coalesce(text('#…'), '')`): a miss degrades to `''` but still increments
+  `stats.selectorMisses` and emits a `SelectorMiss` event, so a drifting county is visible to drift monitoring while
+  the run succeeds. Flip `config.strictExtraction: true` to make every field required without per-field `require(...)`.
 
 - **[`login-and-search.json`](examples/login-and-search.json)** — the newer surface, all at once.
   `fill.secret` types a vault-resolved password that never touches an expression; a `screenshot` node captures
