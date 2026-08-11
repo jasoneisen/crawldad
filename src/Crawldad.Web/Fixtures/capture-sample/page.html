@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<!-- Synthesized (not captured) minimal parcel-detail page for the capture node + captureOnFailure tests.
+     The detail link's token= param is credential-SHAPED but is the customer's OWN scraped page content: a
+     capture streams it byte-for-byte to the customer's OWN storage, so it must NOT be rewritten by the
+     CredentialScrubber's param regex the way a result-borne innerHtml would be (that corruption is issue #70).
+     A full-document capture includes the doctype and the <html> element itself; a #content capture is that
+     element's outerHTML subtree only (no <html>/<head>/<footer>). See FIXTURE_NOTES.md. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Parcel 42 - LJCMG</title></head>
+<body>
+  <div id="content">
+    <h1>Parcel 42</h1>
+    <p class="owner">Owner: Jane Q. Public</p>
+    <a id="detail" href="/LJCMG/Cap/CapDetail.aspx?capId=42&amp;token=abc123SECRETtoken&amp;tab=info">Open detail</a>
+  </div>
+  <footer>LJCMG parcel viewer</footer>
+</body>
+</html>

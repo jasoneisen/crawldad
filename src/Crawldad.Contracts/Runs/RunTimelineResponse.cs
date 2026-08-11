@@ -16,6 +16,11 @@ public sealed record RunTimelineDownload(string BlobRef, string ContentType, lon
 /// label, and PNG byte size — never the image (lives in the deletable, TTL-governed screenshot blob store).</summary>
 public sealed record RunTimelineScreenshot(string ScreenshotRef, string? Name, long Size);
 
+/// <summary>One document a <c>capture</c> node (or capture-on-failure) streamed to tenant BYO storage. Metadata only:
+/// content-addressed blob ref, byte size, and SHA-256 — never the HTML (which lives in the customer's own storage,
+/// under the customer's own retention).</summary>
+public sealed record RunTimelineCapture(string BlobRef, long Size, string Sha256);
+
 /// <summary>A run's terminal failure as surfaced in its timeline: the typed failure plus the screenshot ref captured
 /// on the failing step, or null when none was taken (disabled, no page bound, or a cancelled deadline).</summary>
 public sealed record RunTimelineFailure(string Code, string Message, RunStepRef AtStep, string? ScreenshotRef);
@@ -38,4 +43,5 @@ public sealed record RunTimelineResponse(
     IReadOnlyList<RunTimelineExtract> Extracted,
     IReadOnlyList<RunTimelineDownload> Downloads,
     IReadOnlyList<RunTimelineScreenshot> Screenshots,
+    IReadOnlyList<RunTimelineCapture> Captures,
     RunTimelineFailure? Failure);

@@ -99,6 +99,22 @@ public class RunTraceEmissionTests
     }
 
     [Fact]
+    public async Task A_capture_emits_a_captured_event_with_its_ref_size_and_hash()
+    {
+        const string CaptureInputs =
+            """{ "backend": { "adapter": "fake", "options": { "fixture": "capture-sample" } }, "captureStore": { "kind": "fake", "name": "s" } }""";
+        var payload = await File.ReadAllTextAsync(Path.Combine(Runner.FixturesRoot, "Payloads", "capture-fragment.json"));
+        var (outcome, observer, _) = await Runner.RunWithObserverAsync(payload, CaptureInputs);
+
+        outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
+        var captures = OfType<Captured>(observer).ToList();
+        captures.Count.ShouldBe(3);                 // doc + #content subtree + doc2, one Captured each
+        captures[0].BlobRef.ShouldEndWith(".html"); // the engine's content-addressed name for a captured document
+        captures[0].Size.ShouldBeGreaterThan(0);
+        captures[0].Sha256.Length.ShouldBe(64);
+    }
+
+    [Fact]
     public async Task A_log_node_and_a_retry_attempt_emit_through_the_observer_on_the_durable_path()
     {
         // A payload that logs then retries (the inject-timeout fixture fails the #go click twice, then succeeds) proves

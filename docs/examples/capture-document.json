@@ -1,0 +1,27 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.capture",
+  "inputs": {
+    "backend":      { "type": "backend",       "required": true },
+    "captureStore": { "type": "storageTarget", "required": true }
+  },
+  "config": {
+    "backend": "input.backend",
+    "defaultTimeoutMs": 120000,
+    "captureOnFailure": { "to": "input.captureStore" }
+  },
+  "vars": { "pages": [] },
+  "steps": [
+    { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement" } },
+    { "waitForLoadState": { "state": "networkidle" } },
+
+    { "comment": "capture the full rendered document (doctype + <html>); the bytes stream content-addressed to BYO storage — we keep only the REF, so the result stays a tiny manifest" },
+    { "capture": { "to": "input.captureStore", "var": "resultsDoc" } },
+    { "push": { "into": "pages", "value": "{ url: pageUrl(), captureRef: resultsDoc.contentId, sha256: resultsDoc.sha256, sizeBytes: resultsDoc.sizeBytes }" } },
+
+    { "comment": "capture just the grid subtree (its outerHTML) as a smaller, focused artifact next to the whole page" },
+    { "capture": { "to": "input.captureStore", "selector": { "css": "#resultsGrid" }, "var": "grid" } },
+    { "push": { "into": "pages", "value": "{ url: pageUrl(), captureRef: grid.contentId, sha256: grid.sha256, sizeBytes: grid.sizeBytes }" } }
+  ],
+  "result": "{ pages: pages }"
+}

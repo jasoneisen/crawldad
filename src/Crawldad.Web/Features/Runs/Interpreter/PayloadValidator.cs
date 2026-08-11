@@ -45,7 +45,7 @@ internal static class NodeHeads
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
         "comment", "goto", "waitForLoadState", "waitForRequest", "waitFor", "frame", "addStyleTag",
-        "click", "fill", "clear", "screenshot", "locate", "download", "set", "push", "log", "guard", "fail",
+        "click", "fill", "clear", "screenshot", "locate", "download", "capture", "set", "push", "log", "guard", "fail",
         "if", "switch", "loop", "forEach", "break", "continue", "checkpoint",
     };
 }

@@ -96,6 +96,25 @@ public class PayloadValidatorTests
     public void Screenshot_nodes_with_and_without_a_name_validate_clean() =>
         ValidateAll(Parse(Steps("""[ { "screenshot": {} }, { "screenshot": { "name": "shot-${input.tag}" } } ]"""))).ShouldBeEmpty();
 
+    // A capture node with no selector (full-document, the selector-absent walker branch), one with a structured selector
+    // resolved inside a bound frame (the selector-present branch, exercising CheckSel + CheckNodeIn), and a
+    // config.captureOnFailure target all validate clean through schema + semantic; each capture binds its ref var.
+    [Fact]
+    public void Capture_nodes_and_captureOnFailure_validate_clean()
+    {
+        const string Payload =
+            """
+            { "crawldad": "1", "name": "cap", "config": { "backend": "input.backend", "captureOnFailure": { "to": "input.store" } },
+              "steps": [
+                { "frame": { "var": "fr", "selector": "#f" } },
+                { "capture": { "to": "input.store", "var": "doc" } },
+                { "capture": { "to": "input.store", "selector": { "css": "#grid" }, "in": "fr", "var": "grid" } }
+              ],
+              "result": "{ doc: doc.contentId, grid: grid.contentId }" }
+            """;
+        ValidateAll(Parse(Payload)).ShouldBeEmpty();
+    }
+
     // loop.for from/to/step accept a typed JSON number as well as an Expr string. A numeric literal is checked
     // through the same parser as its Expr spelling but has no free identifiers, so a loop mixing typed bounds with a
     // computed Expr `to` (its `rows` reference in scope) validates clean.
@@ -178,6 +197,22 @@ public class PayloadValidatorTests
     {
         var issues = Semantic(Steps("""[ { "push": { "into": "notDefined", "value": "1" } } ]"""));
         issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/push/into");
+    }
+
+    [Fact]
+    public void An_undefined_capture_target_reference_is_rejected()
+    {
+        var issues = Semantic(Steps("""[ { "capture": { "to": "notDefined", "var": "c" } } ]"""));
+        issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/capture/to");
+    }
+
+    [Fact]
+    public void An_undefined_captureOnFailure_target_reference_is_rejected()
+    {
+        // config.captureOnFailure.to resolves against input only at setup, like backend — its undefined reference is caught here.
+        var issues = Semantic(
+            """{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend", "captureOnFailure": { "to": "notDefined" } }, "steps": [], "result": "null" }""");
+        issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/config/captureOnFailure/to");
     }
 
     // A typed numeric `from` (which parses to a bare literal with nothing to resolve) must not suppress checking

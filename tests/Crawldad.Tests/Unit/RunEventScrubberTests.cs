@@ -151,6 +151,16 @@ public class RunEventScrubberTests
     }
 
     [Fact]
+    public void Captured_scrubs_the_blob_ref() // a content-addressed hash ref, scrubbed defensively like Downloaded.BlobRef; the HTML is never in the event
+    {
+        var scrubbed = (Captured)RunEventScrubber.Scrub(new Captured($"{_secret}.html", 4096, "abc", _at), Scrubber());
+
+        scrubbed.BlobRef.ShouldBe($"{_redacted}.html");
+        scrubbed.Size.ShouldBe(4096);
+        scrubbed.Sha256.ShouldBe("abc"); // a content hash carries nothing to redact
+    }
+
+    [Fact]
     public void StepFailed_scrubs_the_error_and_keeps_the_screenshot_ref()
     {
         var scrubbed = (StepFailed)RunEventScrubber.Scrub(new StepFailed(3, $"boom-{_secret}", "screenshots/abc.png", _at), Scrubber());

@@ -1,0 +1,13 @@
+{
+  "manifest": "1",
+  "description": "Single-state parcel-detail page for the capture node + captureOnFailure tests. No transitions: a capture reads the CURRENT document (the whole document, or the #content subtree via a selector), and a run that fails after navigating here exercises captureOnFailure. The detail link carries a credential-SHAPED `token=` query param that a capture must preserve VERBATIM — the customer's own scraped content going to the customer's own storage must never be rewritten by the credential-param scrubber (issue #70). No Chromium, no live traffic.",
+  "initialState": "page",
+  "states": {
+    "page": {
+      "gotoUrl": "https://fixture.test/parcel/42",
+      "url": "https://fixture.test/parcel/42",
+      "html": "page.html"
+    }
+  },
+  "transitions": []
+}
