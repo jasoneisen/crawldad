@@ -309,6 +309,8 @@ data: {"index":4,"kind":"click"}
 id: 13
 event: Navigated
 data: {"url":"https://example.gov/portal/search"}
+
+: keepalive
 ```
 
 - `id` is the event's **stream version**. Reconnect with `Last-Event-ID: <version>` (or `?lastEventId=<version>`)
@@ -319,6 +321,12 @@ data: {"url":"https://example.gov/portal/search"}
   `RunFailed`, or `RunCancelled`.
 - `data` is the already-**scrubbed** event JSON — no credential ever streams. An unknown (or cross-tenant) run
   is `404` (checked before any SSE headers).
+- **Keepalive.** During an idle stretch (a long `waitFor`, a slow page, the gap between a queued run's steps) the
+  server emits an SSE **comment frame** — a line beginning with `:` (`: keepalive`) — roughly every **15 s**, so the
+  connection keeps flowing bytes and no intermediary (Front Door / Envoy / a corporate proxy) drops it on an idle
+  timeout. A real frame resets the timer, so keepalives appear only across a genuine gap. Comment frames carry **no
+  `id`** and no `data`, so they never affect `Last-Event-ID` resume; a spec-compliant consumer (e.g. the browser
+  `EventSource`) ignores them automatically.
 
 ---
 

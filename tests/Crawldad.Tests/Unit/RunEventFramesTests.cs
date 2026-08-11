@@ -30,6 +30,14 @@ public class RunEventFramesTests
     }
 
     [Fact]
+    public void Keepalive_is_a_comment_frame_carrying_no_id() // a leading ':' comment, so it never disturbs Last-Event-ID resume
+    {
+        RunEventFrames.Keepalive.ShouldStartWith(":");
+        RunEventFrames.Keepalive.ShouldNotContain("id:");
+        RunEventFrames.Keepalive.ShouldEndWith("\n\n"); // a well-formed, blank-line-terminated frame
+    }
+
+    [Fact]
     public void ParseLastEventId_prefers_the_header()
     {
         var context = new DefaultHttpContext();

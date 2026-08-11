@@ -180,18 +180,19 @@ public static class DurableHost
     /// outside the durable layer, large enough to avoid flaky contention failures, small enough to still catch a stuck pipeline.</summary>
     public static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(60);
 
-    /// <summary>Builds an Alba host on <paramref name="schema"/> with a frozen clock and the given <c>fake</c> backend
-    /// override. Set <paramref name="resetData"/> false for the SECOND host of a kill-and-restart, which must inherit the
-    /// first host's persisted checkpoint on the same schema.</summary>
+    /// <summary>Builds an Alba host on <paramref name="schema"/> with a frozen clock (override via <paramref name="clock"/>)
+    /// and the given <c>fake</c> backend override. Set <paramref name="resetData"/> false for the SECOND host of a
+    /// kill-and-restart, which must inherit the first host's persisted checkpoint on the same schema.</summary>
     public static Task<IAlbaHost> BuildAsync(
-        string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null) =>
-        BuildAsync(schema, (_, _) => fakeBackend, resetData, settings);
+        string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null, TimeProvider? clock = null) =>
+        BuildAsync(schema, (_, _) => fakeBackend, resetData, settings, clock);
 
-    /// <summary>As <see cref="BuildAsync(string, IBrowserBackend, bool, IEnumerable{KeyValuePair{string, string?}})"/>, but the
+    /// <summary>As <see cref="BuildAsync(string, IBrowserBackend, bool, IEnumerable{KeyValuePair{string, string?}}, TimeProvider)"/>, but the
     /// <c>fake</c> backend is built by a DI factory — so a backend can resolve a host service (e.g. the <c>IRunSecretScope</c> a
-    /// credential test's backend registers a secret into).</summary>
+    /// credential test's backend registers a secret into). Pass <paramref name="clock"/> to drive time (e.g. an
+    /// <see cref="AdvanceableClock"/> for the SSE keepalive tail); it defaults to the frozen <see cref="FakeClock"/>.</summary>
     public static async Task<IAlbaHost> BuildAsync(
-        string schema, Func<IServiceProvider, object?, IBrowserBackend> fakeBackendFactory, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null)
+        string schema, Func<IServiceProvider, object?, IBrowserBackend> fakeBackendFactory, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null, TimeProvider? clock = null)
     {
         var host = (await AlbaHost.For<Program>(builder =>
         {
@@ -203,7 +204,7 @@ public static class DurableHost
 
             builder.ConfigureServices(services =>
             {
-                services.AddSingleton<TimeProvider>(new FakeClock());
+                services.AddSingleton<TimeProvider>(clock ?? new FakeClock());
                 services.AddKeyedSingleton<IBrowserBackend>("fake", fakeBackendFactory);
             });
         })).AuthenticatedAsPrimaryTenant();
