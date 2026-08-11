@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Runs.Interpreter.Expressions;
@@ -58,11 +59,13 @@ internal sealed class RunInterpreter
     private int _requests;
     private int _downloads;
     private long _downloadedBytes;
+    private long _capturedBytes;
     private int _eventCount;
     private int _checkpointSeq;
     private bool _resumePending;
     private int _defaultTimeoutMs = 120000;
     private bool _screenshotOnFailure = true;
+    private IDownloadSink? _captureOnFailureSink; // config.captureOnFailure's resolved BYO sink, or null when disabled
     private int _currentStepIndex;
     private string _currentKind = "config";
 
@@ -141,6 +144,7 @@ internal sealed class RunInterpreter
             var sessionPolicy = SessionPolicy.FromConfig(_payload.GetProperty("config")); // launch/context/route
             _defaultTimeoutMs = sessionPolicy.DefaultTimeoutMs;
             _screenshotOnFailure = ReadScreenshotOnFailure(_payload.GetProperty("config")); // screenshot-on-failure toggle
+            await ResolveCaptureOnFailureAsync(ct); // resolve the capture-on-failure BYO sink up front (a bad target fails at setup, not silently at failure time)
 
             var binding = await ResolveBackendAsync(ct);
             if (!_registry.TryResolve(binding.Adapter, out var backend))
@@ -330,6 +334,21 @@ internal sealed class RunInterpreter
         return new BackendBinding(adapter, credentialRef, options, _tenant); // the run's tenant scopes credential resolution
     }
 
+    // Resolves config.captureOnFailure's BYO sink ONCE at setup, against the input-only scope (like config.backend), so a
+    // misconfigured target fails the run loudly at setup rather than silently at failure time. Absent ⇒ disabled: there is
+    // no default target, so — unlike screenshotOnFailure (default on, streaming to the operator's own screenshot store) —
+    // capture-on-failure is opt-in by supplying a tenant storageTarget for the failing page's HTML to land in.
+    private async ValueTask ResolveCaptureOnFailureAsync(CancellationToken ct)
+    {
+        if (NodeJson.OptionalObject(_payload.GetProperty("config"), "captureOnFailure") is not { } captureOnFailure)
+        {
+            return;
+        }
+
+        _captureOnFailureSink = ResolveSink(
+            await ExprAsync(captureOnFailure, "to", ct), InterpreterErrorCodes.InvalidCaptureTarget, InterpreterErrorCodes.UnknownCaptureSink, "captureOnFailure");
+    }
+
     private async ValueTask EvaluateVarsAsync(CancellationToken ct)
     {
         if (!_payload.TryGetProperty("vars", out var vars))
@@ -382,6 +401,7 @@ internal sealed class RunInterpreter
             ["screenshot"] = Effect(ScreenshotAsync),
             ["locate"] = Effect(LocateAsync),
             ["download"] = Effect(DownloadAsync),
+            ["capture"] = Effect(CaptureAsync),
             ["set"] = Effect(SetAsync),
             ["push"] = Effect(PushAsync),
             ["log"] = Effect(LogAsync),
@@ -639,14 +659,14 @@ internal sealed class RunInterpreter
         return await _scope.Sel.ResolveNodeAsync(NodeJson.RequireElement(body, "selector"), FrameArg(body), ct);
     }
 
-    // ----- download ---------------------------------------------------
+    // ----- download + capture (the BYO-storage artifact channels) -----
 
     // Runs the trigger, drains the download to compute the content identity, and streams it to the target sink —
     // idempotently: an already-present blob short-circuits to stored:true WITHOUT re-uploading. Binds
     // dl = { contentId, sha256, sizeBytes, storedAs, stored }; download failure/timeout is retryable.
     private async ValueTask DownloadAsync(JsonElement body, CancellationToken ct)
     {
-        var sink = ResolveSink(await ExprAsync(body, "to", ct));
+        var sink = ResolveSink(await ExprAsync(body, "to", ct), InterpreterErrorCodes.InvalidDownloadTarget, InterpreterErrorCodes.UnknownDownloadSink, "download");
         var trigger = NodeJson.RequireElement(body, "trigger");
         var download = await _scope.PageHandle.RunAndWaitForDownloadAsync(
             () => ExecuteBlockAsync(trigger, ct).AsTask(), Timeout(body), ct);
@@ -657,30 +677,80 @@ internal sealed class RunInterpreter
             data = await DrainWithinByteCapAsync(content, ct);
         }
 
+        var artifact = await StoreArtifactAsync(sink, data, download.SuggestedFilename, ct);
+        _downloads++;
+        _scope.Set(NodeJson.RequireString(body, "var"), artifact.Binding);
+
+        // Downloaded: metadata only (blob ref + guessed content type + size + hash) — the bytes streamed to the sink.
+        await StepAsync(new Downloaded(artifact.StoredAs, ContentTypes.ForFile(artifact.StoredAs), artifact.SizeBytes, artifact.Sha256, _clock.GetUtcNow()), ct);
+    }
+
+    // The content-addressed stored name a capture takes: capture bytes are always HTML, so the engine's own name is
+    // {contentId}.html for both a full-document and an element-subtree capture (content type text/html either way).
+    private const string _captureFileName = "capture.html";
+
+    // Serialises the current page's full document (doctype + <html>) or, with a `selector`, that element's subtree
+    // (its outerHTML) and streams the UTF-8 bytes to the `to` sink — content-addressed and idempotent exactly like
+    // download. The captured document NEVER routes through the credential scrubber (customer content → customer storage);
+    // only the resulting blob ref (a hash) is bound and traced. Binds cap = { contentId, sha256, sizeBytes, storedAs, stored }.
+    private async ValueTask CaptureAsync(JsonElement body, CancellationToken ct)
+    {
+        var sink = ResolveSink(await ExprAsync(body, "to", ct), InterpreterErrorCodes.InvalidCaptureTarget, InterpreterErrorCodes.UnknownCaptureSink, "capture");
+        var html = body.TryGetProperty("selector", out _)
+            ? await (await ResolveSelectorAsync(body, ct)).OuterHTMLAsync(ct) // the element's subtree: outerHTML (the element itself + descendants), not innerHTML
+            : await _scope.PageHandle.ContentAsync(ct);                       // the full serialised document: doctype + <html>, not innerHtml('html')
+
+        var artifact = await StoreArtifactAsync(sink, CaptureBytesWithinCap(html), _captureFileName, ct);
+        _scope.Set(NodeJson.RequireString(body, "var"), artifact.Binding);
+
+        // Captured: metadata only (blob ref + size + hash) — the HTML streamed straight to the sink, never into the event.
+        await StepAsync(new Captured(artifact.StoredAs, artifact.SizeBytes, artifact.Sha256, _clock.GetUtcNow()), ct);
+    }
+
+    // Encodes the serialised document to UTF-8 and enforces the run-wide captured-bytes cap on the cumulative total
+    // (across every capture in the run) — the sibling of the download cap. Unlike a streamed download, a serialised
+    // document is already materialised whole by the backend, so the cap is checked once here, before the upload.
+    private byte[] CaptureBytesWithinCap(string html)
+    {
+        var data = Encoding.UTF8.GetBytes(html);
+        _capturedBytes += data.Length;
+        if (_capturedBytes > _limits.MaxCapturedBytes)
+        {
+            throw new InterpreterException(
+                InterpreterErrorCodes.MaxCaptureBytesExceeded, $"run exceeded its {_limits.MaxCapturedBytes}-byte capture cap");
+        }
+
+        return data;
+    }
+
+    // Hashes the bytes to the engine-native content identity and streams them to the sink idempotently: an
+    // already-present blob short-circuits to stored:true WITHOUT re-uploading (else the sink's own success — false ⇒ a
+    // handling reject). Both calls carry the run's tenant so the sink partitions storage and probes existence per tenant.
+    // Shared by download and capture so the two BYO-storage channels compute identity and dedup byte-for-byte identically.
+    private async ValueTask<StoredArtifact> StoreArtifactAsync(IDownloadSink sink, byte[] data, string? suggestedFilename, CancellationToken ct)
+    {
         var hash = SHA256.HashData(data);
         var contentId = AttachmentContentId.FromHash(hash);
         var sha256 = Convert.ToHexStringLower(hash);
-        var storedAs = AttachmentContentId.BuildStoredName(contentId, download.SuggestedFilename);
+        var storedAs = AttachmentContentId.BuildStoredName(contentId, suggestedFilename);
         long sizeBytes = data.Length;
 
-        // exists ⇒ stored:true, no re-upload; else the sink's own success (false ⇒ the reference's handleDownload reject).
-        // Both calls carry the run's tenant so the sink partitions storage and probes existence per tenant.
         var stored = await sink.ExistsAsync(_tenant, contentId, ct)
             || await sink.StoreAsync(_tenant, new StoredDownload(contentId, storedAs, sizeBytes, sha256), new MemoryStream(data, writable: false), ct);
 
-        _downloads++;
-        _scope.Set(NodeJson.RequireString(body, "var"), new Dictionary<string, object?>(StringComparer.Ordinal)
+        var binding = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["contentId"] = contentId.ToString(),
             ["sha256"] = sha256,
             ["sizeBytes"] = sizeBytes,
             ["storedAs"] = storedAs,
             ["stored"] = stored,
-        });
-
-        // Downloaded: metadata only (blob ref + guessed content type + size + hash) — the bytes streamed to the sink.
-        await StepAsync(new Downloaded(storedAs, ContentTypes.ForFile(storedAs), sizeBytes, sha256, _clock.GetUtcNow()), ct);
+        };
+        return new StoredArtifact(storedAs, sizeBytes, sha256, binding);
     }
+
+    // The engine-side result of storing one artifact: the trace-event metadata plus the { … } map bound to the node's var.
+    private sealed record StoredArtifact(string StoredAs, long SizeBytes, string Sha256, Dictionary<string, object?> Binding);
 
     // Drains the download to bytes while enforcing the run-wide downloaded-bytes cap AS THE BYTES FLOW: each chunk
     // advances the cumulative total (across every download in the run), and an over-cap total aborts mid-stream — never
@@ -705,19 +775,22 @@ internal sealed class RunInterpreter
         return buffer.ToArray();
     }
 
-    private IDownloadSink ResolveSink(object? target)
+    // Resolves a storageTarget Expr value to its registered sink, surfacing the caller node's own failure slugs
+    // (download vs capture) so a target/kind fault names the node that raised it. Shared by download, capture, and
+    // config.captureOnFailure — the one storageTarget → IDownloadSink resolution the whole BYO-storage surface uses.
+    private IDownloadSink ResolveSink(object? target, string invalidCode, string unknownCode, string nodeLabel)
     {
         if (target is not Dictionary<string, object?> map)
         {
-            throw new InterpreterException(InterpreterErrorCodes.InvalidDownloadTarget, "download 'to' must resolve to a storageTarget { kind, name } object");
+            throw new InterpreterException(invalidCode, $"{nodeLabel} 'to' must resolve to a storageTarget {{ kind, name }} object");
         }
 
         var kind = map.GetValueOrDefault("kind") as string
-            ?? throw new InterpreterException(InterpreterErrorCodes.InvalidDownloadTarget, "a storageTarget requires a string 'kind'");
+            ?? throw new InterpreterException(invalidCode, "a storageTarget requires a string 'kind'");
 
         return _sinks.TryResolve(kind, out var sink)
             ? sink
-            : throw new InterpreterException(InterpreterErrorCodes.UnknownDownloadSink, $"no download sink is registered for kind '{kind}'");
+            : throw new InterpreterException(unknownCode, $"no download sink is registered for kind '{kind}'");
     }
 
     // ----- state + control flow ---------------------------------------------
@@ -1069,7 +1142,14 @@ internal sealed class RunInterpreter
     // builds the RunOutcome. On the synchronous path StepAsync no-ops and the screenshot is skipped — Failed() as before.
     private async Task<RunOutcome> ReportFailedAsync(string failureClass, string code, string message, DateTimeOffset startedAt, bool screenshot, CancellationToken ct)
     {
+        // `screenshot` is set only when a page is bound (the retry/exhaustion path), which is exactly the precondition
+        // both failure artifacts need — so the failing page's HTML lands next to its screenshot when both are enabled.
         var screenshotRef = screenshot ? await CaptureFailureScreenshotAsync(ct) : null;
+        if (screenshot)
+        {
+            await CaptureFailureHtmlAsync(ct);
+        }
+
         // The terminal StepFailed marker bypasses the event budget (like the RunFailed the executor appends after): a
         // max_events_exceeded failure must still be able to report itself, not re-trip the cap while emitting its own marker.
         await EmitTerminalStepAsync(new StepFailed(_currentStepIndex, code, screenshotRef, _clock.GetUtcNow()), ct);
@@ -1098,6 +1178,32 @@ internal sealed class RunInterpreter
         catch (BrowserException)
         {
             return null; // a crashed/torn-down page can fail to screenshot — tolerate it
+        }
+    }
+
+    // Captures the failing page's full HTML to the config.captureOnFailure BYO sink and records a Captured event with
+    // only its ref — the diagnostic companion to the failure screenshot (selector drift is easiest to read off the DOM).
+    // Durable path only: no observer (sync path) or no configured sink ⇒ nothing to do, like the failure screenshot.
+    // Reached only from the retry/exhaustion failure path (a page is bound), so the sink being set ⇒ a page to serialise.
+    // The failing page is exempt from the capture byte cap (one diagnostic page is not a runaway), and a crashed page's
+    // serialisation failure is tolerated so a failed capture never masks the run's own failure.
+    private async ValueTask CaptureFailureHtmlAsync(CancellationToken ct)
+    {
+        if (_observer is null || _captureOnFailureSink is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var data = Encoding.UTF8.GetBytes(await _scope.PageHandle.ContentAsync(ct));
+            var artifact = await StoreArtifactAsync(_captureOnFailureSink, data, _captureFileName, ct);
+            // Budget-exempt like the terminal StepFailed marker: a run that failed on max_events must still bank its failing page.
+            await EmitTerminalStepAsync(new Captured(artifact.StoredAs, artifact.SizeBytes, artifact.Sha256, _clock.GetUtcNow()), ct);
+        }
+        catch (BrowserException)
+        {
+            // a crashed/torn-down page can fail to serialise — tolerate it (best-effort, like the failure screenshot)
         }
     }
 

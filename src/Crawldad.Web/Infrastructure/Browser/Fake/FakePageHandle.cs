@@ -1,4 +1,5 @@
 using System.Text;
+using AngleSharp;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 
@@ -100,6 +101,12 @@ internal sealed class FakePageHandle : IPageHandle
     /// <param name="ct">Unused — the fake captures no real page.</param>
     public Task<byte[]> ScreenshotAsync(CancellationToken ct) =>
         Task.FromResult<byte[]>([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. Encoding.UTF8.GetBytes(_state.Name)]);
+
+    /// <summary>Serialises the current (possibly mutated) document to HTML — the whole document, so the doctype and the
+    /// <c>&lt;html&gt;</c> element are included (AngleSharp's <c>ToHtml</c> walks the document's child nodes, doctype
+    /// first), matching Playwright's <c>page.content()</c>. Read by a full-document <c>capture</c>.</summary>
+    /// <param name="ct">Unused — the fake serialises its in-memory document.</param>
+    public Task<string> ContentAsync(CancellationToken ct) => Task.FromResult(CurrentDocument.ToHtml());
 
     public async Task RunAndWaitForRequestAsync(Func<Task> trigger, string urlPrefix, string? method, int? timeoutMs, CancellationToken ct)
     {

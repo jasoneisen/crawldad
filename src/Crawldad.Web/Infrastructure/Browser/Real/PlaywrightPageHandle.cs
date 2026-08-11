@@ -51,4 +51,8 @@ internal sealed class PlaywrightPageHandle(IPage page) : IPageHandle
 
     public Task<byte[]> ScreenshotAsync(CancellationToken ct) =>
         PlaywrightFaults.RunAsync(() => page.ScreenshotAsync(new PageScreenshotOptions { FullPage = true }));
+
+    // page.ContentAsync() returns the full serialised document — the outer HTML of the document element with the
+    // doctype prepended — so a full-document capture gets the complete DOM (doctype + <html>), not innerHTML.
+    public Task<string> ContentAsync(CancellationToken ct) => PlaywrightFaults.RunAsync(() => page.ContentAsync());
 }

@@ -33,6 +33,7 @@ public class RunLimitsOptionsValidatorTests
     [Theory]
     [InlineData(nameof(RunLimitsOptions.MaxStepsPerRun))]
     [InlineData(nameof(RunLimitsOptions.MaxDownloadedBytesPerRun))]
+    [InlineData(nameof(RunLimitsOptions.MaxCapturedBytesPerRun))]
     [InlineData(nameof(RunLimitsOptions.MaxEventsPerRun))]
     [InlineData(nameof(RunLimitsOptions.ExpressionStepBudget))]
     [InlineData(nameof(RunLimitsOptions.MaxConcurrentRunsPerTenant))]
@@ -69,6 +70,7 @@ public class RunLimitsOptionsValidatorTests
     {
         nameof(RunLimitsOptions.MaxStepsPerRun) => new RunLimitsOptions { MaxStepsPerRun = 0 },
         nameof(RunLimitsOptions.MaxDownloadedBytesPerRun) => new RunLimitsOptions { MaxDownloadedBytesPerRun = 0 },
+        nameof(RunLimitsOptions.MaxCapturedBytesPerRun) => new RunLimitsOptions { MaxCapturedBytesPerRun = 0 },
         nameof(RunLimitsOptions.MaxEventsPerRun) => new RunLimitsOptions { MaxEventsPerRun = 0 },
         nameof(RunLimitsOptions.ExpressionStepBudget) => new RunLimitsOptions { ExpressionStepBudget = 0 },
         nameof(RunLimitsOptions.MaxConcurrentRunsPerTenant) => new RunLimitsOptions { MaxConcurrentRunsPerTenant = 0 },

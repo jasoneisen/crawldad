@@ -127,7 +127,7 @@ public static class OpenApiSpec
         new("get", "/runs/{id}/drift", "getRunDrift", "Report a run's payload drift.", _runs, Anonymous: false, [Id], null,
             [new("200", "The run's pinned revision vs the payload head.", Component: nameof(RunDriftResponse)), NotFound("run")]),
         new("get", "/runs/{id}/timeline", "getRunTimeline", "The run observability timeline.", _runs, Anonymous: false, [Id], null,
-            [new("200", "The run's ordered steps, extracts, downloads, screenshots, and failure.", Component: nameof(RunTimelineResponse)), NotFound("run")]),
+            [new("200", "The run's ordered steps, extracts, downloads, screenshots, captures, and failure.", Component: nameof(RunTimelineResponse)), NotFound("run")]),
         new("get", "/runs/{id}/screenshots/{reference}", "getRunScreenshot", "Retrieve a run's captured screenshot.", _runs, Anonymous: false, [Id, Reference], null,
             [
                 new("200", "The captured screenshot as PNG bytes (content-addressed, so privately cacheable with a digest ETag).", MediaType: "image/png", Schema: BinarySchema),

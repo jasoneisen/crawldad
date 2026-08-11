@@ -82,6 +82,8 @@ internal sealed class FakeLocatorHandle : ILocatorHandle
 
     public Task<string> InnerHTMLAsync(CancellationToken ct) => Task.FromResult(First0()?.InnerHtml ?? string.Empty);
 
+    public Task<string> OuterHTMLAsync(CancellationToken ct) => Task.FromResult(First0()?.OuterHtml ?? string.Empty);
+
     public Task<string?> GetAttributeAsync(string name, CancellationToken ct) => Task.FromResult(First0()?.GetAttribute(name));
 
     public Task ClickAsync(int? timeoutMs, CancellationToken ct)

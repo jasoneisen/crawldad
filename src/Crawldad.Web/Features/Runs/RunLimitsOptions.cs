@@ -35,6 +35,11 @@ public sealed class RunLimitsOptions
     /// <summary>The most bytes one execution may download in total — <c>max_download_bytes_exceeded</c> beyond it.</summary>
     public long MaxDownloadedBytesPerRun { get; init; } = RunLimits.DefaultMaxDownloadedBytes;
 
+    /// <summary>The most bytes one execution may <c>capture</c> (serialised documents streamed to tenant storage) in
+    /// total — <c>max_capture_bytes_exceeded</c> beyond it. A sibling of <see cref="MaxDownloadedBytesPerRun"/>: the two
+    /// channels are budgeted separately so a document-capture workload and a file-download workload tune independently.</summary>
+    public long MaxCapturedBytesPerRun { get; init; } = RunLimits.DefaultMaxCapturedBytes;
+
     /// <summary>The most trace events one execution may append to its run stream — <c>max_events_exceeded</c> beyond it.</summary>
     public int MaxEventsPerRun { get; init; } = RunLimits.DefaultMaxEvents;
 
@@ -61,7 +66,7 @@ public sealed class RunLimitsOptions
     /// polled thereafter). A run finishing inside the window keeps today's synchronous response, byte-for-byte. 0 upgrades every sync run immediately.</summary>
     public int SyncUpgradeThresholdMs { get; init; } = DefaultSyncUpgradeThresholdMs;
 
-    /// <summary>Projects the four mid-run caps into the interpreter's <see cref="RunLimits"/>.</summary>
+    /// <summary>Projects the mid-run caps into the interpreter's <see cref="RunLimits"/>.</summary>
     internal RunLimits ToRunLimits() =>
-        new(MaxStepsPerRun, MaxDownloadedBytesPerRun, MaxEventsPerRun, ExpressionStepBudget);
+        new(MaxStepsPerRun, MaxDownloadedBytesPerRun, MaxCapturedBytesPerRun, MaxEventsPerRun, ExpressionStepBudget);
 }

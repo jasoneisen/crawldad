@@ -82,6 +82,20 @@
           "type": "boolean",
           "description": "Whether the executor captures a page screenshot on a step failure, stored in deletable blob storage with only its ref in the trace; true when absent, set false to disable."
         },
+        "captureOnFailure": {
+          "type": "object",
+          "description": "On a step failure, serialise the failing page's full HTML and stream it — content-addressed, exactly like a `capture` node — to a tenant BYO `storageTarget`, recording a `Captured` event with only its blob ref (never the HTML). The diagnostic companion to `screenshotOnFailure`: the failing DOM is the clearest signal of selector drift. Absent ⇒ disabled (there is no default target; unlike `screenshotOnFailure`, which uses the operator's own screenshot store, this needs a customer target). Captured on the durable/async execution path, like `screenshotOnFailure`.",
+          "required": [
+            "to"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "to": {
+              "description": "An Expr (resolved against `input` at setup, like `config.backend`) resolving to the `storageTarget` the failing page's HTML streams to. A `to` that does not resolve to a registered sink fails the run at setup with `invalid_capture_target` / `unknown_capture_sink`.",
+              "type": "string"
+            }
+          }
+        },
         "launch": {
           "type": "object",
           "additionalProperties": false,
@@ -911,6 +925,41 @@
                 "timeoutMs": {
                   "description": "Per-node timeout override in milliseconds; falls back to `config.defaultTimeoutMs`.",
                   "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "capture"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "capture": {
+              "type": "object",
+              "required": [
+                "to",
+                "var"
+              ],
+              "additionalProperties": false,
+              "description": "Serialise the current page's full document (the doctype and the `<html>` element itself — the complete serialised DOM, NOT `innerHtml('html')`) or, with a `selector`, that element's subtree (its `outerHTML`), and stream the UTF-8 bytes to the `to` storageTarget under their content-addressed identity. Symmetric with `download`: idempotent by content hash (an already-present blob short-circuits to `stored:true` with no re-upload), and tenant-scoped. The captured document is the customer's OWN content going to the customer's OWN storage, so it NEVER passes through the credential-param scrubber (a `token=`/`apiKey=` substring in the page survives verbatim) — only the resulting blob ref (a hash) is bound and traced. Bind the REF, never the content, so `result` returns a compact manifest of refs instead of megabytes of HTML.",
+              "properties": {
+                "to": {
+                  "description": "An Expr resolving to the `storageTarget` the serialised HTML streams to.",
+                  "type": "string"
+                },
+                "selector": {
+                  "description": "Capture this element's subtree — its `outerHTML` (the element itself plus its descendants). When absent, the whole document is captured (doctype + `<html>`).",
+                  "$ref": "#/$defs/sel"
+                },
+                "in": {
+                  "description": "Resolve the `selector` inside a bound frame handle.",
+                  "type": "string"
+                },
+                "var": {
+                  "description": "The variable bound to the capture result `{ contentId, sha256, sizeBytes, storedAs, stored }` — the ref manifest entry.",
+                  "type": "string"
                 }
               }
             }

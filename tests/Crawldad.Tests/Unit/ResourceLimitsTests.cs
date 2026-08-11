@@ -15,6 +15,19 @@ public class ResourceLimitsTests
     private const string _downloadInputs =
         """{ "backend": { "adapter": "fake", "options": { "fixture": "download-sample" } }, "attachmentStore": { "kind": "fake", "name": "attachmentStore" } }""";
 
+    private const string _captureInputs =
+        """{ "backend": { "adapter": "fake", "options": { "fixture": "capture-sample" } }, "captureStore": { "kind": "fake", "name": "captureStore" } }""";
+
+    // A payload that captures the full document once (result = the capture's byte size) or twice (to prove accumulation).
+    private static string CapturePayload(int times) =>
+        $$"""
+        { "name": "t", "config": { "backend": "input.backend" }, "vars": {},
+          "steps": [ { "goto": { "url": "https://fixture.test/parcel/42" } },
+                     { "capture": { "to": "input.captureStore", "var": "a" } }
+                     {{(times > 1 ? """, { "capture": { "to": "input.captureStore", "var": "b" } }""" : "")}} ],
+          "result": "a.sizeBytes" }
+        """;
+
     private static string DownloadPayload() =>
         File.ReadAllText(Path.Combine(Runner.FixturesRoot, "Payloads", "download-fragment.json"));
 
@@ -78,6 +91,45 @@ public class ResourceLimitsTests
         outcome.Status.ShouldBe(RunStatus.Failed);
         outcome.Failure!.Code.ShouldBe(InterpreterErrorCodes.MaxDownloadBytesExceeded);
         outcome.Stats.Downloads.ShouldBe(1); // the first download completed; the second aborted mid-stream
+    }
+
+    // ----- limit 2b: max total captured bytes per run (the download cap's sibling) -----
+
+    [Fact]
+    public async Task A_single_capture_over_the_byte_cap_fails_terminally()
+    {
+        // A full-document capture is hundreds of bytes; a 10-byte cap trips on the first capture, before the upload.
+        var (outcome, _) = await Runner.RunWithFakeAsync(CapturePayload(1), _captureInputs, limits: RunLimits.Default with { MaxCapturedBytes = 10 });
+
+        outcome.Status.ShouldBe(RunStatus.Failed);
+        outcome.Failure!.Class.ShouldBe("terminal");
+        outcome.Failure.Code.ShouldBe(InterpreterErrorCodes.MaxCaptureBytesExceeded);
+    }
+
+    [Fact]
+    public async Task Captured_bytes_accumulate_across_captures_in_a_run()
+    {
+        // Phase 1 (generous cap): learn one full-document capture's exact byte size.
+        var (sized, _) = await Runner.RunWithFakeAsync(CapturePayload(2), _captureInputs);
+        sized.Status.ShouldBe(RunStatus.Succeeded, sized.Failure?.Code);
+        var one = sized.Result!.Value.GetInt64();
+
+        // Phase 2: cap = exactly one capture's size — the first fits (size ≤ cap), the second (same size) trips (2×size >
+        // cap), proving the cap is the run-wide total, not per-capture (a single capture under the same cap succeeded above).
+        var (outcome, _) = await Runner.RunWithFakeAsync(CapturePayload(2), _captureInputs, limits: RunLimits.Default with { MaxCapturedBytes = one });
+
+        outcome.Status.ShouldBe(RunStatus.Failed);
+        outcome.Failure!.Code.ShouldBe(InterpreterErrorCodes.MaxCaptureBytesExceeded);
+    }
+
+    [Fact]
+    public async Task The_capture_cap_is_a_sibling_of_the_download_cap_not_shared()
+    {
+        // A tiny download cap does NOT bite a capture-only run: the two channels are budgeted separately, so a capture
+        // under its own (default) cap succeeds even when the download cap is 1 byte.
+        var (outcome, _) = await Runner.RunWithFakeAsync(CapturePayload(1), _captureInputs, limits: RunLimits.Default with { MaxDownloadedBytes = 1 });
+
+        outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
     }
 
     // ----- limit 3: max event count per run ----------------------------------

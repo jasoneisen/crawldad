@@ -50,6 +50,11 @@ internal static class RunEventScrubber
             ScreenshotRef = scrubber.Scrub(shot.ScreenshotRef),
             Name = shot.Name is null ? null : scrubber.Scrub(shot.Name),
         },
+
+        // Captured carries a content-addressed blob ref (a credential-free hash), scrubbed defensively like
+        // Downloaded.BlobRef. The captured HTML is NEVER in the event (only the ref), so page content cannot leak here —
+        // and the bytes themselves never pass through this scrubber at all (they stream straight to the tenant's storage).
+        Captured captured => captured with { BlobRef = scrubber.Scrub(captured.BlobRef) },
         StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error) },
         RunSessionOpened opened => opened with { Region = scrubber.Scrub(opened.Region) },
 

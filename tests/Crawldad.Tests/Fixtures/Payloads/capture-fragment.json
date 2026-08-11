@@ -1,0 +1,29 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.parcel.capture",
+  "inputs": {
+    "backend":      { "type": "backend",       "required": true },
+    "captureStore": { "type": "storageTarget", "required": true }
+  },
+  "config": {
+    "backend": "input.backend",
+    "defaultTimeoutMs": 120000
+  },
+  "vars": { "pages": [] },
+  "steps": [
+    { "goto": { "url": "https://fixture.test/parcel/42" } },
+    { "waitForLoadState": { "state": "load" } },
+
+    { "comment": "capture the full serialised document (doctype + <html>) to BYO storage; bind the REF, never the HTML" },
+    { "capture": { "to": "input.captureStore", "var": "doc" } },
+
+    { "comment": "capture just the #content subtree (its outerHTML)" },
+    { "capture": { "to": "input.captureStore", "selector": "#content", "var": "content" } },
+
+    { "comment": "a second capture of the unchanged document short-circuits on exists() -> stored:true, no re-upload" },
+    { "capture": { "to": "input.captureStore", "var": "doc2" } },
+
+    { "push": { "into": "pages", "value": "{ url: pageUrl(), captureRef: doc.contentId, contentRef: content.contentId, sha256: doc.sha256, sizeBytes: doc.sizeBytes, storedAs: doc.storedAs, stored: doc.stored, reStored: doc2.stored }" } }
+  ],
+  "result": "{ pages: pages }"
+}

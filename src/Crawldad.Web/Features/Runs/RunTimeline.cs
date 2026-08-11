@@ -53,6 +53,10 @@ public sealed record RunTimeline
     /// <summary>The explicit <c>screenshot</c> captures (refs + metadata, never images), in capture order.</summary>
     public IReadOnlyList<RunTimelineScreenshot> Screenshots { get; init; } = [];
 
+    /// <summary>The documents a <c>capture</c> node (or capture-on-failure) streamed to tenant BYO storage (refs +
+    /// metadata, never the HTML), in capture order.</summary>
+    public IReadOnlyList<RunTimelineCapture> Captures { get; init; } = [];
+
     /// <summary>The failure screenshot's ref captured on the failing step, carried into <see cref="Failure"/> at the terminal event.</summary>
     public string? ScreenshotRef { get; init; }
 
@@ -61,8 +65,8 @@ public sealed record RunTimeline
 }
 
 /// <summary>Folds a run's trace events into its <see cref="RunTimeline"/>. Reacts only to the events it curates —
-/// <c>StepStarted</c> spines the step list, <c>Extracted</c>/<c>Downloaded</c>/<c>Screenshotted</c> collect artifacts,
-/// terminals close durations — and ignores the finer <c>Navigated</c>/<c>Clicked</c>/<c>Waited</c> events (those serve the live SSE tail).</summary>
+/// <c>StepStarted</c> spines the step list, <c>Extracted</c>/<c>Downloaded</c>/<c>Screenshotted</c>/<c>Captured</c> collect
+/// artifacts, terminals close durations — and ignores the finer <c>Navigated</c>/<c>Clicked</c>/<c>Waited</c> events (those serve the live SSE tail).</summary>
 public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTimeline, Guid>
 {
     /// <summary>Opens the timeline on the run's opening event (a run started immediately, under the cap).</summary>
@@ -115,6 +119,11 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
     /// artifact, unlike the finer per-node events the timeline drops.</summary>
     public RunTimeline Apply(Screenshotted shot, RunTimeline timeline) =>
         timeline with { Screenshots = [.. timeline.Screenshots, new RunTimelineScreenshot(shot.ScreenshotRef, shot.Name, shot.Size)] };
+
+    /// <summary>Records one capture's blob ref + metadata (from a <c>capture</c> node or capture-on-failure), curated
+    /// like a download — the ref manifest of documents banked to tenant storage.</summary>
+    public RunTimeline Apply(Captured captured, RunTimeline timeline) =>
+        timeline with { Captures = [.. timeline.Captures, new RunTimelineCapture(captured.BlobRef, captured.Size, captured.Sha256)] };
 
     /// <summary>Captures the failing step's screenshot ref (carried into the failure at the terminal event).</summary>
     public RunTimeline Apply(StepFailed failed, RunTimeline timeline) => timeline with { ScreenshotRef = failed.ScreenshotRef };

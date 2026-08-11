@@ -48,7 +48,14 @@ internal sealed class SemanticWalker
 
         // config.backend resolves before vars, so it may reference only input.
         _stepKind = "config";
-        CheckExpr(payload.GetProperty("config").GetProperty("backend").GetString()!, "/config/backend");
+        var config = payload.GetProperty("config");
+        CheckExpr(config.GetProperty("backend").GetString()!, "/config/backend");
+
+        // config.captureOnFailure.to resolves at setup against input only, exactly like backend — check its reference here.
+        if (config.TryGetProperty("captureOnFailure", out var captureOnFailure))
+        {
+            CheckExpr(captureOnFailure.GetProperty("to").GetString()!, "/config/captureOnFailure/to");
+        }
 
         _stepKind = "vars";
         if (payload.TryGetProperty("vars", out var vars))
@@ -115,6 +122,7 @@ internal sealed class SemanticWalker
                 break;
             case "locate":
             case "download":
+            case "capture":
             case "set":
             case "push":
             case "log":
@@ -200,6 +208,16 @@ internal sealed class SemanticWalker
             case "download":
                 CheckExpr(body.GetProperty("to").GetString()!, $"{p}/to");
                 WalkReestablishBlock(body.GetProperty("trigger"), $"{p}/trigger");
+                Define(body);
+                break;
+            case "capture":
+                CheckExpr(body.GetProperty("to").GetString()!, $"{p}/to");
+                if (body.TryGetProperty("selector", out var captureSelector))
+                {
+                    CheckSel(captureSelector, $"{p}/selector"); // optional: absent ⇒ full-document capture
+                    CheckNodeIn(body, p);
+                }
+
                 Define(body);
                 break;
             case "set":

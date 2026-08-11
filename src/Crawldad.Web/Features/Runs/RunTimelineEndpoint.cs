@@ -35,5 +35,6 @@ public static class RunTimelineEndpoint
         timeline.Extracted,
         timeline.Downloads,
         timeline.Screenshots,
+        timeline.Captures,
         timeline.Failure);
 }

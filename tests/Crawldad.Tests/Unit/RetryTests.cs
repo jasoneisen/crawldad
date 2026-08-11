@@ -169,5 +169,7 @@ public class RetryTests
         public Task CloseAsync(CancellationToken ct) => throw new BrowserPageCrashedException("cannot close a crashed page");
 
         public Task<byte[]> ScreenshotAsync(CancellationToken ct) => throw new NotSupportedException();
+
+        public Task<string> ContentAsync(CancellationToken ct) => throw new NotSupportedException();
     }
 }

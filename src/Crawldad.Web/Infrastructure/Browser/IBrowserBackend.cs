@@ -91,6 +91,13 @@ public interface IPageHandle
     /// Best-effort: a crashed/torn-down page may throw a <see cref="BrowserException"/>, which the capture path
     /// tolerates — a failed screenshot never masks the run's real failure. The fake serves deterministic bytes.</summary>
     Task<byte[]> ScreenshotAsync(CancellationToken ct);
+
+    /// <summary>Serialises the page's full document — the complete DOM including the doctype and the <c>&lt;html&gt;</c>
+    /// element itself (<c>page.content()</c>), NOT the inner HTML of <c>html</c> — for a <c>capture</c> node and for
+    /// capture-on-failure. The bytes stream content-addressed to a tenant BYO storage target and never route through the
+    /// credential scrubber. On a step failure it is best-effort: a crashed page may throw a <see cref="BrowserException"/>,
+    /// tolerated so a failed capture never masks the run's real failure. The fake serialises its fixture document.</summary>
+    Task<string> ContentAsync(CancellationToken ct);
 }
 
 /// <summary>A handle to one completed download. The engine reads the bytes to compute content identity and streams

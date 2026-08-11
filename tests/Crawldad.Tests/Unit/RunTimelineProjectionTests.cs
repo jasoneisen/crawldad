@@ -64,6 +64,23 @@ public class RunTimelineProjectionTests
     }
 
     [Fact]
+    public void A_run_folds_captures_in_capture_order() // capture-node + capture-on-failure artifacts, curated like downloads
+    {
+        var projection = new RunTimelineProjection();
+
+        var t = projection.Create(Started());
+        t = projection.Apply(new StepStarted(0, "capture", _t0), t);
+        t = projection.Apply(new Captured("aaa.html", 512, "sha-a", _t0), t);
+        t = projection.Apply(new Captured("bbb.html", 1024, "sha-b", _t0), t); // a second capture → non-empty spread
+        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
+
+        t.Captures.ShouldBe([
+            new RunTimelineCapture("aaa.html", 512, "sha-a"),
+            new RunTimelineCapture("bbb.html", 1024, "sha-b"),
+        ]);
+    }
+
+    [Fact]
     public void A_failed_run_carries_the_step_failure_and_its_screenshot_ref()
     {
         var projection = new RunTimelineProjection();

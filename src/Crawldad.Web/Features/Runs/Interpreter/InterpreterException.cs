@@ -27,6 +27,10 @@ internal static class InterpreterErrorCodes
     /// flow, so an over-cap download aborts mid-stream, never after buffering the whole body.</summary>
     public const string MaxDownloadBytesExceeded = "max_download_bytes_exceeded";
 
+    /// <summary>The run's total captured bytes crossed the server's max-capture-bytes cap — a sibling of the download
+    /// cap, bounding the serialised-document volume a <c>capture</c> channel may stream to tenant storage across a run.</summary>
+    public const string MaxCaptureBytesExceeded = "max_capture_bytes_exceeded";
+
     /// <summary>The run appended more trace events than the server's max-events cap — a fair-use guardrail on run
     /// stream volume no legitimate run reaches.</summary>
     public const string MaxEventsExceeded = "max_events_exceeded";
@@ -56,6 +60,14 @@ internal static class InterpreterErrorCodes
 
     /// <summary>A <c>download.to</c>'s <c>kind</c> has no registered <see cref="Crawldad.Web.Infrastructure.Storage.IDownloadSink"/>.</summary>
     public const string UnknownDownloadSink = "unknown_download_sink";
+
+    /// <summary>A <c>capture.to</c> (or <c>config.captureOnFailure.to</c>) did not resolve to a <c>storageTarget</c>
+    /// object with a string <c>kind</c> — the capture analogue of <see cref="InvalidDownloadTarget"/>.</summary>
+    public const string InvalidCaptureTarget = "invalid_capture_target";
+
+    /// <summary>A <c>capture.to</c> (or <c>config.captureOnFailure.to</c>)'s <c>kind</c> has no registered
+    /// <see cref="Crawldad.Web.Infrastructure.Storage.IDownloadSink"/> — the capture analogue of <see cref="UnknownDownloadSink"/>.</summary>
+    public const string UnknownCaptureSink = "unknown_capture_sink";
 
     /// <summary>Save-time: a <c>secretRef</c> input was referenced in an expression/template — a secretRef may be
     /// consumed only by <c>fill.secret</c>, keeping the secret structurally out of the expression value space.</summary>

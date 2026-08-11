@@ -32,6 +32,11 @@ public interface ILocatorHandle
     /// <summary>The first matched element's <c>innerHTML</c> (<c>InnerHTMLAsync</c>). Re-evaluates the DOM.</summary>
     Task<string> InnerHTMLAsync(CancellationToken ct);
 
+    /// <summary>The first matched element's <c>outerHTML</c> — the element itself plus its subtree — for a
+    /// <c>capture</c> node targeting an element (its serialised subtree, not just its children). Empty when no node
+    /// matches, matching <see cref="InnerHTMLAsync"/>'s zero-match short-circuit. Re-evaluates the DOM.</summary>
+    Task<string> OuterHTMLAsync(CancellationToken ct);
+
     /// <summary>The first matched element's attribute value (<c>GetAttributeAsync</c>), or null if the attribute is absent. Re-evaluates the DOM.</summary>
     Task<string?> GetAttributeAsync(string name, CancellationToken ct);
 

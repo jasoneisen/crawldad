@@ -15,6 +15,7 @@ public sealed class RunLimitsOptionsValidator : IValidateOptions<RunLimitsOption
 
         Require(failures, options.MaxStepsPerRun >= 1, nameof(options.MaxStepsPerRun), "at least 1");
         Require(failures, options.MaxDownloadedBytesPerRun >= 1, nameof(options.MaxDownloadedBytesPerRun), "at least 1");
+        Require(failures, options.MaxCapturedBytesPerRun >= 1, nameof(options.MaxCapturedBytesPerRun), "at least 1");
         Require(failures, options.MaxEventsPerRun >= 1, nameof(options.MaxEventsPerRun), "at least 1");
         Require(failures, options.ExpressionStepBudget >= 1, nameof(options.ExpressionStepBudget), "at least 1");
         Require(failures, options.MaxConcurrentRunsPerTenant >= 1, nameof(options.MaxConcurrentRunsPerTenant), "at least 1");

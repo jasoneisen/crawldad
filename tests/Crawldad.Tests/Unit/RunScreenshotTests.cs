@@ -128,6 +128,8 @@ public class RunScreenshotTests
             public Task CloseAsync(CancellationToken ct) => inner.CloseAsync(ct);
 
             public Task<byte[]> ScreenshotAsync(CancellationToken ct) => throw new BrowserPageCrashedException("cannot screenshot a crashed page");
+
+            public Task<string> ContentAsync(CancellationToken ct) => inner.ContentAsync(ct);
         }
     }
 }

@@ -30,6 +30,11 @@ internal sealed class PlaywrightLocatorHandle(ILocator locator) : ILocatorHandle
     public Task<string> InnerHTMLAsync(CancellationToken ct) =>
         PlaywrightFaults.RunAsync(async () => await locator.CountAsync() == 0 ? string.Empty : await locator.First.InnerHTMLAsync());
 
+    // Playwright's ILocator exposes innerHTML but not outerHTML, so read el.outerHTML in-page; short-circuits to empty
+    // on a zero match like InnerHTMLAsync, rather than blocking through the auto-wait timeout.
+    public Task<string> OuterHTMLAsync(CancellationToken ct) =>
+        PlaywrightFaults.RunAsync(async () => await locator.CountAsync() == 0 ? string.Empty : await locator.First.EvaluateAsync<string>("el => el.outerHTML"));
+
     public Task<string?> GetAttributeAsync(string name, CancellationToken ct) =>
         PlaywrightFaults.RunAsync(async () => await locator.CountAsync() == 0 ? null : await locator.First.GetAttributeAsync(name));
 

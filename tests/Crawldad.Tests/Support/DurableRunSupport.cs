@@ -167,6 +167,9 @@ internal sealed class GatedPage(IPageHandle inner, PageFetchRecorder recorder, R
 
     /// <inheritdoc />
     public Task<byte[]> ScreenshotAsync(CancellationToken ct) => inner.ScreenshotAsync(ct);
+
+    /// <inheritdoc />
+    public Task<string> ContentAsync(CancellationToken ct) => inner.ContentAsync(ct);
 }
 
 /// <summary>Builds and polls durable-run hosts for async/cancel/kill/deadline gates.</summary>

@@ -46,6 +46,11 @@ public sealed record Downloaded(string BlobRef, string ContentType, long Size, s
 /// never the image. Unlike the best-effort failure capture, a faulting explicit capture surfaces as the run's failure.</summary>
 public sealed record Screenshotted(string ScreenshotRef, string? Name, long Size, DateTimeOffset At);
 
+/// <summary>A <c>capture</c> node (or capture-on-failure) serialised a document to the tenant's BYO storage. Metadata
+/// only: the content-addressed blob ref, the byte size, and the SHA-256 — <b>never the HTML</b>, which streams straight
+/// to the customer's own storage target and never through the credential scrubber (so a captured page is byte-faithful).</summary>
+public sealed record Captured(string BlobRef, long Size, string Sha256, DateTimeOffset At);
+
 /// <summary>A step failed: emitted just before the run reports a terminal / retryable-exhausted failure, so the trace
 /// pinpoints the failing step and links its screenshot. <see cref="ScreenshotRef"/> is null when none was captured
 /// (disabled, no page bound, or a forcibly-cancelled deadline) — the image lives in blob storage, only the ref here.</summary>

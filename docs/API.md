@@ -122,8 +122,10 @@ Each step is `{ "<head>": { … } }`. The schema is the exhaustive reference; th
 
 - **Navigation / waits:** `goto`, `waitForLoadState`, `waitForRequest` (run a `trigger`, await the request it
   provokes), `waitFor` (await a selector state), `frame` (bind a frame handle), `addStyleTag`.
-- **Interaction:** `click`, `fill` (`value` **or** `secret`), `clear`, `screenshot` (full-page capture),
-  `download` (stream a provoked download to a `storageTarget`).
+- **Interaction:** `click`, `fill` (`value` **or** `secret`), `clear`, `screenshot` (full-page PNG),
+  `download` (stream a provoked download to a `storageTarget`), `capture` (serialize the full document — doctype +
+  `<html>`, not `innerHtml` — or an element subtree via `selector`, and stream it to a `storageTarget`; binds a
+  ref, never the HTML). `config.captureOnFailure` banks the failing page's HTML to a BYO target on a step failure.
 - **Data / control:** `locate` (bind a lazy locator handle), `set`, `push`, `log`, `guard`/`fail` (typed
   abort), `if`, `switch`, `loop` (`for` **or** `while`), `forEach`, `break`, `continue`, `checkpoint`.
 
@@ -365,11 +367,17 @@ inline run never drifts (`payloadId`/head fields `null`, `drifted:false`). `404`
 
 ### `GET /runs/{id}/timeline`
 The observability read model (the lag-tolerant cross-run view): ordered steps with per-step durations, the
-**redacted** input key *names*, extracted-value shape refs (never values), download and screenshot blob refs
-(never bytes), the terminal failure + its screenshot ref, the pinned revision + script hash, and the backend
-region. Everything derives from already-scrubbed trace events, so no raw credential or bulk PII surfaces.
+**redacted** input key *names*, extracted-value shape refs (never values), download, screenshot, and **capture**
+blob refs (never bytes), the terminal failure + its screenshot ref, the pinned revision + script hash, and the
+backend region. Everything derives from already-scrubbed trace events, so no raw credential or bulk PII surfaces.
 `404` for an unknown run. Each `screenshotRef` here (and `failure.screenshotRef`) is fetched as an actual PNG
 via [`GET /runs/{id}/screenshots/{ref}`](#get-runsidscreenshotsref) below.
+
+`captures[]` lists the documents a `capture` node (or `config.captureOnFailure`) streamed to the tenant's **BYO**
+storage — `{ blobRef, size, sha256 }`, never the HTML. Unlike screenshots, captured bytes live in the customer's
+own storage target under the customer's own retention, so Crawldad serves no read-back endpoint for them (the ref
+is resolved against the tenant's storage, not ours). A run that fails a selector wait with `captureOnFailure`
+configured leaves the failing page's HTML in `captures[]`, next to `failure.screenshotRef`.
 
 ### `GET /runs/{id}/screenshots/{ref}`
 Streams a captured screenshot — an authored `screenshot` node, or a screenshot-on-failure — back as
@@ -544,6 +552,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `max_iterations_exceeded` | terminal | a loop hit its own `maxIterations` |
 | `max_steps_exceeded` | terminal | server cap (knob below) |
 | `max_download_bytes_exceeded` | terminal | server cap (knob below) |
+| `max_capture_bytes_exceeded` | terminal | server cap (knob below) — the `capture` channel's sibling of the download cap |
 | `max_events_exceeded` | terminal | server cap (knob below) |
 | `expression_budget_exceeded` | terminal | server cap (knob below) |
 | `undefined_push_target` | terminal | `push` target is undefined / not an array |
@@ -552,6 +561,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `backend_unavailable` | terminal | the backend connect/setup faulted |
 | `malformed_node` | terminal | a node was structurally malformed at run time |
 | `invalid_download_target` / `unknown_download_sink` | terminal | `download.to` did not resolve to a registered sink |
+| `invalid_capture_target` / `unknown_capture_sink` | terminal | `capture.to` (or `config.captureOnFailure.to`) did not resolve to a registered sink |
 | `fill_secret_not_secret_ref` | terminal | `fill.secret` did not name a `secretRef` input (also save-time) |
 | `secret_ref_missing` | terminal | the `secretRef` input was not supplied |
 | `unknown_secret_vault` | terminal | the `secretRef`'s vault kind has no adapter |
@@ -585,6 +595,7 @@ equal the C# property names; defaults are generous so legitimate runs never trip
 |---|---|---|
 | `max_steps_exceeded` | `MaxStepsPerRun` | `100000` |
 | `max_download_bytes_exceeded` | `MaxDownloadedBytesPerRun` | `1073741824` (1 GiB) |
+| `max_capture_bytes_exceeded` | `MaxCapturedBytesPerRun` | `1073741824` (1 GiB) |
 | `max_events_exceeded` | `MaxEventsPerRun` | `100000` |
 | `expression_budget_exceeded` | `ExpressionStepBudget` | `1000000` |
 | `queue_depth_exceeded` (429) | `MaxQueueDepthPerTenant` | `1000` (per-tenant override) |
@@ -634,9 +645,9 @@ only anonymous ones.
 
 ## 16. Examples
 
-Six curated, schema-valid payloads live in [`docs/examples/`](examples/) (every one is validated against the
-schema in CI, so they never drift). Five are lifted verbatim from the tested acceptance fixtures; one
-(`login-and-search`) is authored to show the newer surface.
+Seven curated, schema-valid payloads live in [`docs/examples/`](examples/) (every one is validated against the
+schema in CI, so they never drift). Five are lifted verbatim from the tested acceptance fixtures; two
+(`login-and-search`, `capture-document`) are authored to show the newer surface.
 
 - **[`first-search.json`](examples/first-search.json)** — the gentle intro. Navigate, conditionally `fill`
   two date fields, fire the search via `waitForRequest` (click + await the postback), then `locate` the result
@@ -652,6 +663,13 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
   `trigger` (clicking a file link), streams the bytes to a `storageTarget` input, and reads back
   `{ contentId, sha256, sizeBytes, storedAs, stored }`. A second download of the same content short-circuits on
   `stored:true` (content-addressed dedup — no re-upload), which the payload branches on.
+
+- **[`capture-document.json`](examples/capture-document.json)** — the `capture` node, the document channel
+  symmetric with `download`. It captures the full rendered document (doctype + `<html>`) and, separately, a grid
+  subtree (`selector` → `outerHTML`), streaming each content-addressed to a `storageTarget` input and pushing only
+  `{ url, captureRef, sha256, sizeBytes }` into the result — a compact **manifest of refs**, never the HTML, which
+  bypasses the credential scrubber and Crawldad's own retention entirely. `config.captureOnFailure` banks the
+  failing page's HTML to the same BYO target for selector-drift diagnosis.
 
 - **[`login-and-search.json`](examples/login-and-search.json)** — the newer surface, all at once.
   `fill.secret` types a vault-resolved password that never touches an expression; a `screenshot` node captures
