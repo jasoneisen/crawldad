@@ -223,6 +223,17 @@ Failed run — still `200` (the request succeeded; the run faulted):
 (navigations + matched `waitForRequest`s), `cacheHits` (route cache; 0 until it lands), `downloads`
 (completed `download` nodes).
 
+**Scrubbing of your `result`.** Before it is returned (and persisted for the async poll), `result`/`partial`
+pass through the credential scrubber's **exact-secret** rule only: any credential *your run* registered — a
+backend `credentialRef`, a `fill.secret` — is redacted to `[redacted]` wherever it appears, so a scraped page
+that echoes your own token can never hand it back. The scrubber's *credential-param* rule (which elsewhere
+rewrites `apiKey=`/`token=`/`signingKey=` values — see [`THREAT_MODEL.md`](THREAT_MODEL.md)) is **deliberately
+not applied to `result`**: your extracted content is yours to receive **verbatim**, so a third-party
+`token=`-shaped param in a captured `innerHtml(...)` (a WebForms href, a hidden field, an inline script) survives
+unchanged — it is **not** rewritten to `[redacted]` (issue #70). That rule still applies in full to logs,
+trace/SSE/timeline events, and failure messages. For the raw document with *no* scrubbing at all (not even the
+exact-secret rule), use the `capture` node (§2.2), which streams bytes straight to your own storage.
+
 ---
 
 ## 4. The three run shapes: sync, async, queued
@@ -665,7 +676,9 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 - **[`extract-location.json`](examples/extract-location.json)** — the expression language doing real work. A
   `guard` aborts terminally if the page redirected; a `forEach` walks address rows; a `switch` over the address
   block's `<br>` count (`length(split(innerHtml(block), '<br>'))`) selects how to slice city/state/zip — the
-  chained `split`/`trim`/`coalesce` string surgery that motivated the sublanguage.
+  chained `split`/`trim`/`coalesce` string surgery that motivated the sublanguage. The `innerHtml(...)` markup
+  that lands in `result` is returned **verbatim** — a `token=`-shaped param in the scraped page is never
+  param-scrubbed to `[redacted]` (§3, issue #70).
 
 - **[`download-attachment.json`](examples/download-attachment.json)** — the `download` node. It runs a
   `trigger` (clicking a file link), streams the bytes to a `storageTarget` input, and reads back

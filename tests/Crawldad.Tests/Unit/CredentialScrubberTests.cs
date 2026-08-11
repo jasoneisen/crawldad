@@ -6,7 +6,8 @@ namespace Crawldad.Tests.Unit;
 
 /// <summary>Negative-space tests for the <see cref="CredentialScrubber"/> primitive: the known-param rule across
 /// name/case/encoding variants and wss URLs (Browserless, Browserbase, and ngrok/cloudflared tunnel shapes), the exact
-/// live-secret rule, the no-false-positive guarantee on ordinary text (so the acceptance goldens are untouched), and idempotence.</summary>
+/// live-secret rule, the no-false-positive guarantee on ordinary text (so the acceptance goldens are untouched), the
+/// result-channel carve-out (<c>ScrubJson</c> skips the param rule so caller-extracted content survives — issue #70), and idempotence.</summary>
 public class CredentialScrubberTests
 {
     private const string _redacted = CredentialScrubber.Redaction;
@@ -257,5 +258,52 @@ public class CredentialScrubberTests
 
         scrubbed.ShouldNotBeNull();
         scrubbed.Value.GetProperty("scraped").GetString().ShouldBe(_redacted);
+    }
+
+    [Fact]
+    public void ScrubJson_preserves_a_credential_shaped_param_in_caller_extracted_content() // issue #70
+    {
+        // A WebForms href in the customer's OWN scraped page carries a `token=`-shaped param that is NOT a run secret.
+        // On a leak-prone channel the param rule would rewrite it to `token=[redacted]`; the result channel must NOT —
+        // it is the caller's data, indistinguishable from the site actually serving `[redacted]`, and mangling it
+        // breaks downstream parsing (a redacted href no longer resolves).
+        using var doc = JsonDocument.Parse(
+            """{"html":"<a href=\"/Cap/CapDetail.aspx?token=abc123SHAPEDtoken&capId=24ENF-1\">detail</a>"}""");
+        var raw = doc.RootElement.GetRawText();
+
+        var scrubbed = Scrubber().ScrubJson(doc.RootElement);
+
+        scrubbed.ShouldNotBeNull();
+        scrubbed.Value.GetRawText().ShouldBe(raw); // byte-identical: the caller's content survives verbatim
+        scrubbed.Value.GetProperty("html").GetString()!.ShouldContain("token=abc123SHAPEDtoken");
+        scrubbed.Value.GetProperty("html").GetString()!.ShouldNotContain(_redacted);
+    }
+
+    [Fact]
+    public void Scrub_still_redacts_the_same_param_on_a_leak_prone_channel() // issue #70 — the carve-out is channel-specific
+    {
+        // The exact string the result channel now preserves is STILL redacted on a log/event/error channel: the param
+        // rule remains defence-in-depth wherever credential material could plausibly leak. Only ScrubJson opts out.
+        const string Href = "<a href=\"/Cap/CapDetail.aspx?token=abc123SHAPEDtoken&capId=24ENF-1\">detail</a>";
+
+        var scrubbed = Scrubber().Scrub(Href);
+
+        scrubbed.ShouldContain($"token={_redacted}");
+        scrubbed.ShouldNotContain("abc123SHAPEDtoken");
+    }
+
+    [Fact]
+    public void ScrubJson_still_redacts_a_registered_secret_in_a_param_position() // issue #70 — exact-scrub stays unconditional
+    {
+        // The run's OWN registered credential must never appear in a result, even after the param rule is dropped there:
+        // exact-secret scrubbing (unconditional on every channel) redacts it whether it sits raw or in a `token=` param.
+        const string Secret = "bb_live_LEAKCANARY_paramposition_0123456789";
+        using var doc = JsonDocument.Parse($$"""{"echoedUrl":"wss://x?token={{Secret}}"}""");
+
+        var scrubbed = Scrubber(Secret).ScrubJson(doc.RootElement);
+
+        scrubbed.ShouldNotBeNull();
+        scrubbed.Value.GetProperty("echoedUrl").GetString().ShouldBe($"wss://x?token={_redacted}");
+        scrubbed.Value.GetRawText().ShouldNotContain(Secret);
     }
 }

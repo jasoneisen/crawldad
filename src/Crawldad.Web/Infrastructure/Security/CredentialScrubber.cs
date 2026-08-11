@@ -4,8 +4,10 @@ using System.Text.RegularExpressions;
 namespace Crawldad.Web.Infrastructure.Security;
 
 /// <summary>The credential-scrubbing primitive every outbound sink (events, HTTP responses, logs) funnels text through:
-/// redacts exact registered run secrets, the always-on configured tenant API keys, and known credential query params
-/// (<c>apiKey</c>, <c>token</c>, <c>signingKey</c>). Idempotent; a no-op on already-clean text keeps goldens byte-identical.</summary>
+/// redacts exact registered run secrets, the always-on configured tenant API keys, and — on leak-prone channels (logs,
+/// trace/timeline events, errors) — known credential query params (<c>apiKey</c>, <c>token</c>, <c>signingKey</c>). The
+/// result channel (<see cref="ScrubJson"/>) exact-scrubs secrets but skips the param rule, so a customer's own extracted
+/// page content is never corrupted (issue #70). Idempotent; a no-op on already-clean text keeps goldens byte-identical.</summary>
 public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IReadOnlyCollection<string>? alwaysScrub = null)
 {
     private readonly IReadOnlyCollection<string> _alwaysScrub = alwaysScrub ?? [];
@@ -32,10 +34,21 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex CredentialParamRegex();
 
-    /// <summary>Scrubs credential material from <paramref name="text"/>. Returns the same string when nothing matched.</summary>
-    /// <param name="text">The outbound text (a log message, an event/response field, a serialised result).</param>
+    /// <summary>Scrubs credential material from <paramref name="text"/> for a leak-prone channel (a log message, a
+    /// trace/timeline event field, an error message): exact-scrubs the run's live secrets AND applies the known
+    /// credential-param rule. Returns the same string when nothing matched.</summary>
+    /// <param name="text">The outbound text (a log message, an event/response field).</param>
     /// <returns>The text with live secrets and known credential-param values redacted.</returns>
-    public string Scrub(string text)
+    public string Scrub(string text) => Scrub(text, scrubCredentialParams: true);
+
+    // The shared scrub core. The exact-secret rules (registered run secrets, form-fill secrets, the always-on tenant
+    // keys) ALWAYS run, so a registered credential is redacted on every channel. The credential-param regex runs only
+    // when scrubCredentialParams is set: every leak-prone channel (logs, trace/timeline events, errors) passes true, but
+    // the RESULT channel (ScrubJson) passes false — the param rule would rewrite a `token=`/`apiKey=`-shaped substring in
+    // the customer's OWN extracted page content to `[redacted]`, silently corrupting the data they asked for (issue #70).
+    // Their content is theirs to receive verbatim; only their run's own registered secrets stay redacted (the exact rules
+    // above). This mirrors the capture channel, which bypasses the param rule for the same reason (PR #78).
+    private string Scrub(string text, bool scrubCredentialParams)
     {
         ArgumentNullException.ThrowIfNull(text);
 
@@ -69,12 +82,19 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
         }
 
         // Redact known credential query-param values (apiKey/token/signingKey): a connectUrl can embed the apiKey as a
-        // query param, so scrubbing the param here is defence-in-depth on top of exact-secret redaction.
-        return CredentialParamRegex().Replace(result, static match => match.Groups["name"].Value + "=" + Redaction);
+        // query param, so scrubbing the param here is defence-in-depth on top of exact-secret redaction — but ONLY on a
+        // leak-prone channel. The result channel opts out (see ScrubJson) so it never corrupts caller-extracted content.
+        return scrubCredentialParams
+            ? CredentialParamRegex().Replace(result, static match => match.Groups["name"].Value + "=" + Redaction)
+            : result;
     }
 
-    /// <summary>Scrubs a JSON value (the payload's shaped <c>result</c>, whose caller data could echo a secret). Returns
-    /// the same element when scrubbing changes nothing, so a credential-free result is byte-identical to its golden.</summary>
+    /// <summary>Scrubs a JSON value (the payload's shaped <c>result</c>/<c>partial</c> — the customer's OWN extracted
+    /// content, which could echo a registered secret). Exact-scrubs the run's live secrets so a registered credential is
+    /// never returned, but deliberately does NOT apply the credential-param rule: a <c>token=</c>/<c>apiKey=</c>-shaped
+    /// substring in the scraped page (a WebForms href, a hidden field) is the caller's data and survives verbatim, never
+    /// rewritten to <c>[redacted]</c> (issue #70; the capture channel bypasses the param rule the same way, PR #78).
+    /// Returns the same element when scrubbing changes nothing, so a credential-free result is byte-identical to its golden.</summary>
     public JsonElement? ScrubJson(JsonElement? element)
     {
         if (element is null)
@@ -83,7 +103,7 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
         }
 
         var raw = element.Value.GetRawText();
-        var scrubbed = Scrub(raw);
+        var scrubbed = Scrub(raw, scrubCredentialParams: false);
         if (string.Equals(scrubbed, raw, StringComparison.Ordinal))
         {
             return element;
