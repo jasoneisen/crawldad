@@ -19,3 +19,18 @@ public sealed class MutableClock(DateTimeOffset start) : TimeProvider
 
     public override DateTimeOffset GetUtcNow() => Now;
 }
+
+/// <summary>A <b>thread-safe</b> advanceable <see cref="TimeProvider"/>: "now" is stored as interlocked ticks so one
+/// thread may <see cref="Advance"/> it while another reads it concurrently — the case a live server holds (e.g. the SSE
+/// tail's heartbeat check runs on the request thread while the test advances the clock). <see cref="MutableClock"/>'s
+/// plain property setter is unsafe under that concurrency.</summary>
+/// <param name="start">The initial "now".</param>
+public sealed class AdvanceableClock(DateTimeOffset start) : TimeProvider
+{
+    private long _ticks = start.UtcTicks;
+
+    public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
+
+    /// <summary>Moves "now" forward by <paramref name="by"/> (atomically).</summary>
+    public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
+}

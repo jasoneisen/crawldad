@@ -15,18 +15,25 @@ public static class RunEventsEndpoint
 {
     /// <summary>Handles <c>GET /runs/{id}/events</c> by returning the SSE streaming result.</summary>
     [WolverineGet("/runs/{id}/events")]
-    public static IResult Handle(Guid id, IDocumentStore store, RunEventSignals signals, TenantContext tenant) =>
-        new RunEventStream(id, store, signals, tenant.TenantId);
+    public static IResult Handle(Guid id, IDocumentStore store, RunEventSignals signals, TenantContext tenant, TimeProvider clock) =>
+        new RunEventStream(id, store, signals, tenant.TenantId, clock);
 }
 
 /// <summary>The SSE streaming result for one run: backfill-from-durable-stream then live-tail-until-terminal. Query
 /// sessions are scoped to <paramref name="tenantId"/>, so a run in another tenant fetches nothing and 404s exactly
 /// like an unknown run.</summary>
-internal sealed class RunEventStream(Guid runId, IDocumentStore store, RunEventSignals signals, string tenantId) : IResult
+internal sealed class RunEventStream(Guid runId, IDocumentStore store, RunEventSignals signals, string tenantId, TimeProvider clock) : IResult
 {
     // The tail poll backstop: a missed in-process wakeup only defers a re-read by at most this long — the durable re-read is
     // the correctness guarantee, this bounds latency (and lets a disconnect be noticed promptly).
     private static readonly TimeSpan _pollInterval = TimeSpan.FromMilliseconds(100);
+
+    // The SSE idle keepalive cadence: after this long with nothing written, the tail emits a comment frame so an
+    // intermediary's idle timeout (Azure Front Door / Container Apps Envoy / corporate proxies, commonly 60–240 s) never
+    // drops a quiet stream mid-run — the load-bearing 15 s heartbeat ARCHITECTURE.md §B.1 relies on. Hardcoded rather than
+    // an option: a single, rarely-tuned cadence with no natural home among the resource-limit knobs, pinned to the
+    // documented 15 s (a real frame resets it, so it fires only across a genuine gap between a run's events).
+    internal static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
 
     public async Task ExecuteAsync(HttpContext httpContext)
     {
@@ -60,10 +67,12 @@ internal sealed class RunEventStream(Guid runId, IDocumentStore store, RunEventS
     // in-process wakeup with a poll backstop — captured BEFORE the read so a notify during the read is never missed.
     private async Task TailAsync(HttpResponse response, long lastSent, RunSignal signal, CancellationToken ct)
     {
+        var heartbeat = new SseHeartbeat(clock, HeartbeatInterval);
         while (true)
         {
             var changed = signal.Changed;
             var events = await FetchAsync(ct);
+            var wroteFrame = false;
             foreach (var e in events)
             {
                 if (e.Version <= lastSent)
@@ -73,6 +82,19 @@ internal sealed class RunEventStream(Guid runId, IDocumentStore store, RunEventS
 
                 await response.WriteAsync(RunEventFrames.Format(e.Version, e.EventType.Name, e.Data), ct);
                 lastSent = e.Version;
+                wroteFrame = true;
+            }
+
+            // A real frame resets the idle window; an otherwise-silent pass emits a keepalive comment once the window
+            // elapses, so an intermediary's idle timeout never drops a quiet stream mid-run. The comment carries no id,
+            // so Last-Event-ID resume is untouched — and there is no background timer, so a teardown has nothing to leak.
+            if (wroteFrame)
+            {
+                heartbeat.MarkWritten();
+            }
+            else if (heartbeat.IsDue())
+            {
+                await response.WriteAsync(RunEventFrames.Keepalive, ct);
             }
 
             await response.Body.FlushAsync(ct);
@@ -125,6 +147,11 @@ internal static class RunEventFrames
 {
     private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
+    /// <summary>The idle keepalive: an SSE comment frame (leading <c>:</c>) carrying no <c>id</c>/<c>event</c>/<c>data</c>,
+    /// so it resets an intermediary's idle timer without disturbing <c>Last-Event-ID</c> resume or surfacing to an
+    /// EventSource consumer's message handlers.</summary>
+    public const string Keepalive = ": keepalive\n\n";
+
     /// <summary>The terminal trace events that close an SSE tail — the run reached one of these and there is nothing more to stream.</summary>
     public static bool IsTerminal(Type eventType) =>
         eventType == typeof(RunSucceeded) || eventType == typeof(RunFailed) || eventType == typeof(RunCancelled);
@@ -133,4 +160,31 @@ internal static class RunEventFrames
     /// exactly), the event's CLR type name as <c>event</c>, and the (already-scrubbed) event data as JSON <c>data</c>.</summary>
     public static string Format(long version, string eventName, object data) =>
         $"id: {version}\nevent: {eventName}\ndata: {JsonSerializer.Serialize(data, data.GetType(), _json)}\n\n";
+}
+
+/// <summary>The SSE tail's idle keepalive clock: decides when a comment frame is due so an intermediary's idle timeout
+/// never drops a quiet stream mid-run. Reset-on-traffic — a real frame pushes the next keepalive a full interval out,
+/// since an idle timer only needs resetting when nothing else is flowing. Driven purely off the injected
+/// <see cref="TimeProvider"/> (no background timer to leak on teardown), so it is deterministic under a controllable
+/// clock and inert under a frozen one.</summary>
+internal sealed class SseHeartbeat(TimeProvider clock, TimeSpan interval)
+{
+    private DateTimeOffset _lastWrite = clock.GetUtcNow();
+
+    /// <summary>Records a real frame write, resetting the idle window so the next keepalive is a full interval away.</summary>
+    public void MarkWritten() => _lastWrite = clock.GetUtcNow();
+
+    /// <summary>Whether a full idle interval has elapsed since the last write; when true it resets the window, so
+    /// keepalives pace at the interval rather than firing on every poll once overdue.</summary>
+    public bool IsDue()
+    {
+        var now = clock.GetUtcNow();
+        if (now - _lastWrite < interval)
+        {
+            return false;
+        }
+
+        _lastWrite = now;
+        return true;
+    }
 }
