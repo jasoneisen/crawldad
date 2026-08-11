@@ -1,0 +1,31 @@
+{
+  "crawldad": "1",
+  "name": "ljcmg.enforcement.detail.strict",
+  "inputs": {
+    "backend":      { "type": "backend",       "required": true },
+    "captureStore": { "type": "storageTarget", "required": true },
+    "link":         { "type": "string",        "required": true }
+  },
+  "config": {
+    "backend": "input.backend",
+    "defaultTimeoutMs": 120000,
+    "captureOnFailure": { "to": "input.captureStore" }
+  },
+  "vars": {},
+  "steps": [
+    { "goto": { "url": "${input.link}" } },
+    { "waitForLoadState": { "state": "load" } },
+    { "guard": { "cond": "contains(lower(pageUrl()), 'capdetail.aspx')",
+        "elseFail": { "class": "terminal", "code": "record_not_accessible",
+                      "message": "Record not accessible (redirected to ${urlPath(pageUrl())}): ${input.link}" } } },
+
+    { "comment": "===== REQUIRED anchor: the record number keys every downstream record. If Accela renames this label id, `require(...)` fails the run `selector_miss` (with the failing page's HTML banked by captureOnFailure) — NOT a page of empty records. Drop the require() to make it soft.===== " },
+    { "set": { "var": "recordNumber", "value": "trim(require(text('#ctl00_PlaceHolderMain_lblPermitNumber')))" } },
+
+    { "comment": "===== SOFT optional fields: a miss degrades to '' AND increments stats.selectorMisses / emits a SelectorMiss event, so a drifting county is visible to #47 drift monitoring while the run still succeeds. A matched-but-empty field is '' too but is NOT a miss. To make ALL of these terminal without per-field require(), set config.strictExtraction: true. =====" },
+    { "set": { "var": "status",   "value": "trim(coalesce(text('#ctl00_PlaceHolderMain_lblRecordStatus'), ''))" } },
+    { "set": { "var": "openedOn", "value": "trim(coalesce(text('#ctl00_PlaceHolderMain_lblFileDate'), ''))" } },
+    { "set": { "var": "recordType", "value": "trim(coalesce(text('#ctl00_PlaceHolderMain_lblRecordType'), ''))" } }
+  ],
+  "result": "{ recordNumber: recordNumber, recordType: recordType, status: status, openedOn: openedOn }"
+}

@@ -231,7 +231,7 @@ public sealed class RunQueue(
     }
 
     /// <summary>Stats for a run that never executed (queued-cancel / queue-wait-timeout): all zero.</summary>
-    internal static RunStats EmptyStats { get; } = new(0, 0, 0, 0, 0);
+    internal static RunStats EmptyStats { get; } = new(0, 0, 0, 0, 0, 0);
 
     // A per-tenant FIFO counter cell, mutated only through Interlocked so assignment is lock-free.
     private sealed class Sequence

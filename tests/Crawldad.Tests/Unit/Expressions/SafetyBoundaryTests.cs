@@ -8,13 +8,15 @@ namespace Crawldad.Tests.Unit.Expressions;
 public class SafetyBoundaryTests
 {
     [Theory]
-    // There is no eval / require / fs / import / spawn — these are just unknown functions, rejected before execution.
+    // There is no eval / module loader / fs / import / spawn — these are just unknown functions, rejected before
+    // execution. (Crawldad's own `require(...)` is unrelated: a safe extraction-severity wrapper, not a module loader —
+    // see SelectorMissTests — so it is deliberately absent here.)
     [InlineData("eval('1+1')")]
-    [InlineData("require('fs')")]
     [InlineData("fs('/etc/passwd')")]
     [InlineData("readFile('x')")]
     [InlineData("import('m')")]
     [InlineData("exec('sh')")]
+    [InlineData("spawn('sh')")]
     [InlineData("system('rm')")]
     [InlineData("fetch('http://x')")]
     public void No_escape_hatch_builtins_exist(string source) =>

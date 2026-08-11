@@ -162,7 +162,7 @@ public class OpenApiSpecTests
         ContractsJson.Configure(wire);
 
         var id = Guid.NewGuid();
-        var stats = new RunStats(12, 3, 4, 1, 0);
+        var stats = new RunStats(12, 3, 4, 1, 0, 2);
         var failure = new RunFailureDetail("terminal", "nav_failed", "boom", new RunStepRef(1, "navigate"));
         var result = JsonSerializer.SerializeToElement(new { rows = 2 });
         var scriptA = JsonSerializer.SerializeToElement(new { crawldad = 1 });

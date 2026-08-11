@@ -55,6 +55,10 @@ internal static class RunEventScrubber
         // Downloaded.BlobRef. The captured HTML is NEVER in the event (only the ref), so page content cannot leak here —
         // and the bytes themselves never pass through this scrubber at all (they stream straight to the tenant's storage).
         Captured captured => captured with { BlobRef = scrubber.Scrub(captured.BlobRef) },
+
+        // SelectorMiss carries the declared selector text (a payload identifier, never page content) — scrub it
+        // defensively like Clicked.SelectorText, since a selector template could interpolate a credential-shaped value.
+        SelectorMiss miss => miss with { Selector = scrubber.Scrub(miss.Selector) },
         StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error) },
         RunSessionOpened opened => opened with { Region = scrubber.Scrub(opened.Region) },
 

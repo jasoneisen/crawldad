@@ -37,6 +37,10 @@ public static class ExpressionErrorCodes
     /// <summary>A single expression evaluation spent its per-evaluation step budget — a fuel-metered abort of a
     /// pathological (breadth-heavy) expression, defence in depth beyond the parse-time depth cap. Terminal, never a spin.</summary>
     public const string ExpressionBudgetExceeded = "expression_budget_exceeded";
+    /// <summary>A required extraction selector matched no element — raised when a <c>require(...)</c>-wrapped extraction
+    /// (or any extraction under <c>config.strictExtraction</c>) misses. Terminal; a soft (unrequired) miss never raises,
+    /// it only increments <c>stats.selectorMisses</c> and emits a <c>SelectorMiss</c> event.</summary>
+    public const string SelectorMiss = "selector_miss";
 }
 
 /// <summary>A terminal failure raised while evaluating an expression. Never retried; surfaced to the caller with its

@@ -60,19 +60,39 @@ internal sealed class FakeDom : IDomAccess
     }
 }
 
-/// <summary>A flat <see cref="IEvalScope"/> over a mutable var bag, a fixed page URL, and a <see cref="FakeDom"/>.</summary>
+/// <summary>A scriptable <see cref="ISelectorMissSink"/> recording every reported miss, so builtin tests can assert the
+/// described selector and its required flag. <see cref="Strict"/> models <c>config.strictExtraction</c> (every miss
+/// terminal); otherwise a miss is terminal only when the extraction was <c>require(...)</c>-wrapped.</summary>
+internal sealed class RecordingMissSink : ISelectorMissSink
+{
+    public bool Strict { get; set; }
+
+    public List<(string Selector, bool Required)> Records { get; } = [];
+
+    public ValueTask<bool> RecordAsync(string selector, bool required, CancellationToken ct)
+    {
+        Records.Add((selector, required));
+        return new ValueTask<bool>(required || Strict);
+    }
+}
+
+/// <summary>A flat <see cref="IEvalScope"/> over a mutable var bag, a fixed page URL, a <see cref="FakeDom"/>, and a
+/// recording <see cref="ISelectorMissSink"/> (so selector-miss/require behaviour is testable without an interpreter).</summary>
 internal sealed class FakeScope : IEvalScope
 {
     private readonly Dictionary<string, object?> _vars = new(StringComparer.Ordinal);
     private readonly string _pageUrl;
 
-    public FakeScope(IDomAccess? dom = null, string pageUrl = "https://example.com/")
+    public FakeScope(IDomAccess? dom = null, string pageUrl = "https://example.com/", ISelectorMissSink? misses = null)
     {
         Dom = dom ?? new FakeDom();
         _pageUrl = pageUrl;
+        Misses = misses ?? new RecordingMissSink();
     }
 
     public IDomAccess Dom { get; }
+
+    public ISelectorMissSink Misses { get; }
 
     public string PageUrl() => _pageUrl;
 

@@ -4,8 +4,9 @@ using System.Text.Json.Serialization;
 namespace Crawldad.Contracts.Runs;
 
 /// <summary>Run counters (<c>stats</c>): <c>steps</c> counts loop bodies per iteration; <c>cacheHits</c> is always 0
-/// until the route cache lands.</summary>
-public sealed record RunStats(long DurationMs, int Steps, int Requests, int CacheHits, int Downloads);
+/// until the route cache lands; <c>selectorMisses</c> counts extraction selectors that matched no element
+/// (the soft-mode drift signal — a run can succeed while it is &gt; 0), distinct from a matched-but-empty element.</summary>
+public sealed record RunStats(long DurationMs, int Steps, int Requests, int CacheHits, int Downloads, int SelectorMisses);
 
 /// <summary>Where a failure occurred (<c>failure.atStep</c>).</summary>
 /// <param name="Index">The top-level step index being executed.</param>

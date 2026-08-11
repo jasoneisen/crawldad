@@ -55,3 +55,13 @@ public sealed record Captured(string BlobRef, long Size, string Sha256, DateTime
 /// pinpoints the failing step and links its screenshot. <see cref="ScreenshotRef"/> is null when none was captured
 /// (disabled, no page bound, or a forcibly-cancelled deadline) — the image lives in blob storage, only the ref here.</summary>
 public sealed record StepFailed(int Index, string Error, string? ScreenshotRef, DateTimeOffset At);
+
+/// <summary>An extraction selector matched no element (the soft-mode drift signal for #47): a <c>text</c>/<c>innerText</c>/
+/// <c>innerHtml</c>/<c>attr</c> whose target found zero matches — distinct from a matched-but-empty element (legitimately
+/// blank data, never a miss). Emitted once per distinct <see cref="Selector"/> per run (repeats only advance
+/// <c>stats.selectorMisses</c>), so a drifted selector hit across every row of a loop is one event, not thousands. The
+/// run stays <b>successful</b> — the counter/event are visible while it succeeds — unless the extraction was
+/// <c>require(...)</c>-wrapped or <c>config.strictExtraction</c> is set, which raise a terminal <c>selector_miss</c>
+/// (a <see cref="StepFailed"/>) instead. <see cref="Selector"/> is the declared selector text (scrubbed defensively),
+/// never page content; <see cref="StepIndex"/> is the enclosing top-level step.</summary>
+public sealed record SelectorMiss(string Selector, int StepIndex, DateTimeOffset At);

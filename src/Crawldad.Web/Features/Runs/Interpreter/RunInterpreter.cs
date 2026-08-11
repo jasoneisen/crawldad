@@ -52,12 +52,16 @@ internal sealed class RunInterpreter
     private readonly List<object> _events = [];
     private readonly Dictionary<string, Func<JsonElement, CancellationToken, ValueTask<Flow>>> _dispatch;
 
+    private readonly ISelectorMissSink _missSink;
+    private readonly HashSet<string> _seenMissSelectors = new(StringComparer.Ordinal); // dedupe: one SelectorMiss event per distinct selector per run
+
     private RunScope _scope;
     private IPageHandle _page = null!;
     private IBrowserSession? _session;
     private int _steps;
     private int _requests;
     private int _downloads;
+    private int _selectorMisses;
     private long _downloadedBytes;
     private long _capturedBytes;
     private int _eventCount;
@@ -65,6 +69,7 @@ internal sealed class RunInterpreter
     private bool _resumePending;
     private int _defaultTimeoutMs = 120000;
     private bool _screenshotOnFailure = true;
+    private bool _strictExtraction; // config.strictExtraction: when true, ANY selector miss is terminal (default false ⇒ soft)
     private IDownloadSink? _captureOnFailureSink; // config.captureOnFailure's resolved BYO sink, or null when disabled
     private int _currentStepIndex;
     private string _currentKind = "config";
@@ -106,7 +111,8 @@ internal sealed class RunInterpreter
         _secretRefNames = SecretRefInputs.Names(payload);
         _scopeInput = ScopeVisibleInput(input, _secretRefNames);
 
-        _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget); // input-only scope for backend resolution; execution rebuilds it per attempt
+        _missSink = new SelectorMissReporter(this); // one sink for the whole run; every RunScope (per attempt) reports through it
+        _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget, _missSink); // input-only scope for backend resolution; execution rebuilds it per attempt
         _dispatch = BuildDispatch();
     }
 
@@ -144,6 +150,7 @@ internal sealed class RunInterpreter
             var sessionPolicy = SessionPolicy.FromConfig(_payload.GetProperty("config")); // launch/context/route
             _defaultTimeoutMs = sessionPolicy.DefaultTimeoutMs;
             _screenshotOnFailure = ReadScreenshotOnFailure(_payload.GetProperty("config")); // screenshot-on-failure toggle
+            _strictExtraction = ReadStrictExtraction(_payload.GetProperty("config")); // strict-extraction toggle: every selector miss terminal
             await ResolveCaptureOnFailureAsync(ct); // resolve the capture-on-failure BYO sink up front (a bad target fails at setup, not silently at failure time)
 
             var binding = await ResolveBackendAsync(ct);
@@ -197,7 +204,7 @@ internal sealed class RunInterpreter
         {
             try
             {
-                _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget); // FRESH scope per attempt — re-evaluate vars, same session (secretRefs excluded)
+                _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget, _missSink); // FRESH scope per attempt — re-evaluate vars, same session (secretRefs excluded)
                 _scope.Bind(_page);
                 if (_resume is null)
                 {
@@ -1093,7 +1100,31 @@ internal sealed class RunInterpreter
     private int Timeout(JsonElement body) => NodeJson.OptionalInt(body, "timeoutMs", _defaultTimeoutMs);
 
     private RunStats Stats(DateTimeOffset startedAt) =>
-        new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, _session?.CacheHits ?? 0, _downloads);
+        new((long)(_clock.GetUtcNow() - startedAt).TotalMilliseconds, _steps, _requests, _session?.CacheHits ?? 0, _downloads, _selectorMisses);
+
+    // Records one selector miss reported by an extraction builtin (the ISelectorMissSink seam). Always counts it into
+    // stats.selectorMisses (the soft signal, present on both the sync and durable paths); on the FIRST miss of this exact
+    // selector emits a SelectorMiss trace event (durable path only, budget-counted like other step events — dedupe keeps
+    // a per-row drift from ever flooding the stream). Returns true when the miss must be terminal — the extraction was
+    // require()-wrapped (`required`) or config.strictExtraction promotes every miss — so the builtin raises selector_miss.
+    private async ValueTask<bool> RecordSelectorMissAsync(string selector, bool required, CancellationToken ct)
+    {
+        _selectorMisses++;
+        if (_seenMissSelectors.Add(selector))
+        {
+            await StepAsync(new SelectorMiss(selector, _currentStepIndex, _clock.GetUtcNow()), ct);
+        }
+
+        return required || _strictExtraction;
+    }
+
+    // The ISelectorMissSink the run scope hands the extraction builtins: a thin adapter so the miss recording reads the
+    // interpreter's LIVE state (current step, strict flag, counter) rather than a snapshot captured at scope-build time.
+    private sealed class SelectorMissReporter(RunInterpreter owner) : ISelectorMissSink
+    {
+        public ValueTask<bool> RecordAsync(string selector, bool required, CancellationToken ct) =>
+            owner.RecordSelectorMissAsync(selector, required, ct);
+    }
 
     private RunOutcome Failed(string failureClass, string code, string message, DateTimeOffset startedAt) =>
         new(RunStatus.Failed, null, new RunFailureDetail(failureClass, code, message, new RunStepRef(_currentStepIndex, _currentKind)), null, Stats(startedAt), _events);
@@ -1232,6 +1263,11 @@ internal sealed class RunInterpreter
     // screenshot-on-failure toggle: captured by default, suppressed by config.screenshotOnFailure:false.
     private static bool ReadScreenshotOnFailure(JsonElement config) =>
         NodeJson.OptionalBool(config, "screenshotOnFailure", true);
+
+    // strict-extraction toggle: soft by default (a selector miss only counts + emits), made terminal for every
+    // extraction by config.strictExtraction:true — the require()-wrapper severity applied as the default.
+    private static bool ReadStrictExtraction(JsonElement config) =>
+        NodeJson.OptionalBool(config, "strictExtraction", false);
 
     // A cooperative cancel stopped the run between steps. Salvage a partial result (the payload's `result` over the
     // accumulated vars) best-effort — a result expression that faults on the partial state yields no partial, not a crash.

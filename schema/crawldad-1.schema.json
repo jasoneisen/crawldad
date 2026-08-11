@@ -82,6 +82,10 @@
           "type": "boolean",
           "description": "Whether the executor captures a page screenshot on a step failure, stored in deletable blob storage with only its ref in the trace; true when absent, set false to disable."
         },
+        "strictExtraction": {
+          "type": "boolean",
+          "description": "When true, ANY extraction selector miss — a `text`/`innerText`/`innerHtml`/`attr` whose target matches no element — fails the run terminally with `selector_miss` (the default severity of a `require(...)`-wrapped extraction, applied to every extraction). When false (the default) a miss is soft: it increments `stats.selectorMisses` and emits a `SelectorMiss` event once per distinct selector, but the run still succeeds. A matched-but-empty element (or a matched element merely lacking the attribute) is legitimately blank data, never a miss."
+        },
         "captureOnFailure": {
           "type": "object",
           "description": "On a step failure, serialise the failing page's full HTML and stream it — content-addressed, exactly like a `capture` node — to a tenant BYO `storageTarget`, recording a `Captured` event with only its blob ref (never the HTML). The diagnostic companion to `screenshotOnFailure`: the failing DOM is the clearest signal of selector drift. Absent ⇒ disabled (there is no default target; unlike `screenshotOnFailure`, which uses the operator's own screenshot store, this needs a customer target). Captured on the durable/async execution path, like `screenshotOnFailure`.",

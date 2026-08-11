@@ -87,12 +87,30 @@ The expression sublanguage is modelled on **Google CEL**: a real, non-Turing-com
 - **Collection:** `count(x), length(x), first(x), last(x), nth(x,i), slice(x,a,b?), reverse(x), distinct(x), filter(list,v,pred), map(list,v,expr), any(list,v,pred), all(list,v,pred), min(x), max(x), sortBy(list,v,key), keys(map), get(map,key), coalesce(a,b…), toInt(s), isInt(s)`
 - **URL:** `urlScheme(u), urlHost(u), urlPath(u), pageUrl(), resolveUrl(base,rel)`
 - **DOM (read-only — the only page access an expression has):** `count(Sel|loc), exists(x[,css]), text(x[,css]), innerText(x[,css]), innerHtml(x[,css]), attr(x[,css],name)`
+- **Extraction severity:** `require(x)` — evaluates `x` with selector misses in its subtree promoted to a terminal `selector_miss` (see [Strict extraction](#strict-extraction--observable-selector-misses)).
 
 Two nuances worth knowing: **`count` on a structured `Sel` map counts map *entries*, not DOM matches** (its value-model overload wins for a `{base,css}` literal) — for a DOM existence check use `exists({base,css})`, and for a DOM count bind the locator first (`locate` then `count(var)`). And there are **two URL strategies**: naive `"${urlScheme(pageUrl())}://${urlHost(pageUrl())}${href}"` concatenation, or proper `resolveUrl(base, rel)` (`new Uri(base, rel)`) — the language expresses both.
 
 Explicitly **not** in the language: user functions, recursion, assignment/mutation (that is `set`/`push`), arbitrary iteration (only `map`/`filter`/`any`/`all` bounded by their input; unbounded iteration is a capped `loop`), date arithmetic beyond formatting, catastrophic-backreference regex (patterns are size- and time-guarded → `regex_too_large`/`regex_timeout`), and any network/filesystem/clock/randomness/`eval`. There is no `page.evaluate()` — `addStyleTag` (data) is shipped, arbitrary JS (code) is not, deliberately: it would forfeit the safety thesis and the drift-telemetry analysability.
 
 The expression parse/validation codes (`unknown_function`, `wrong_arity`, `syntax_error`, `expression_too_deep`, and the run-time `type_error`/`index_out_of_range`/`unknown_identifier`/`invalid_url`/`int_conversion_failed`) are tabulated in [`API.md` §12](API.md).
+
+## Strict extraction — observable selector misses
+
+The documented drift idiom `trim(coalesce(text(row,'td:nth-child(3) a'),''))` has a failure mode: when the site restructures (a column moves, a control id changes), every extraction quietly degrades to `''`, the run **succeeds**, and every field is empty — a drifted county is indistinguishable from a quiet one. **Selector-miss is therefore made observable and classifiable**, at the payload author's chosen severity.
+
+A **selector miss** is an *extraction* builtin — `text`/`innerText`/`innerHtml`/`attr` — whose target matched **zero elements**. The distinction that `coalesce` erases is preserved exactly:
+
+- **matched nothing → a miss** (the drift signal): the target found no element, so the read is `null`.
+- **matched an empty element → NOT a miss** (legitimately blank data): the element exists but its text is `''`, or `attr` names an attribute the matched element simply lacks. Blank ≠ absent.
+
+Only the four extraction builtins count. The **existence predicates `count`/`exists` never miss** — probing "is it there?" and getting "no" is their whole point; guard an optional region with `if (exists(...))` and its `text(...)` inside is never even evaluated when absent.
+
+**Soft mode (always on, the default).** A miss increments `stats.selectorMisses` and emits a `SelectorMiss(selector, stepIndex, at)` trace event, but the run **still succeeds** — so monitoring can alert on "canary succeeded but `selectorMisses > 0`" (issue #47) without the miss ever failing a healthy run. Events are **deduped by selector** (one per distinct selector per run) so a drifted selector across every row of a loop is one event, not thousands, while the counter still reflects the true magnitude.
+
+**Required extraction — `require(x)`.** Wrap an extraction to make its miss **terminal**: `require(text(row,'td.recordNumber a'))` fails the run `selector_miss` (class `terminal`, message naming the selector and step) the moment that selector matches nothing, instead of returning a blank field. `require` promotes miss-severity for its whole argument subtree, so it composes with `trim`/`coalesce`/`map`/… (`trim(require(text(...)))` and `require(trim(text(...)))` are equivalent); with no extraction inside it is a transparent passthrough. A required miss still increments the counter and emits its event before failing, and composes with `config.captureOnFailure` — the failing page's HTML is banked next to the failure screenshot, the clearest drift diagnostic.
+
+**`config.strictExtraction: true`.** Makes **every** miss terminal — the `require(...)` severity as the run-wide default (so a payload need not wrap each extraction). Default `false` (soft mode).
 
 ## Secrets
 
@@ -134,4 +152,4 @@ Every saved payload runs a two-stage gate: the **JSON Schema** (structure) and a
 
 ## Worked examples
 
-Seven curated, schema-valid payloads live in [`examples/`](examples/) (each validated against the schema in CI). They range from a gentle intro (`first-search.json`) through the expression language doing real string surgery (`extract-location.json`), the `download` node with content-addressed dedup (`download-attachment.json`), the `capture` node banking full documents + element subtrees to BYO storage with `captureOnFailure` (`capture-document.json`), the newer surface — `fill.secret` + `screenshot` + structured selectors + a checkpointed `while` loop (`login-and-search.json`) — a full checkpointed crawl (`search-pagination.json`), and a comprehensive end-to-end scrape building one nested result object (`scrape-record.json`). Per-example commentary is in [`API.md` §15](API.md).
+Eight curated, schema-valid payloads live in [`examples/`](examples/) (each validated against the schema in CI). They range from a gentle intro (`first-search.json`) through the expression language doing real string surgery (`extract-location.json`), the `download` node with content-addressed dedup (`download-attachment.json`), the `capture` node banking full documents + element subtrees to BYO storage with `captureOnFailure` (`capture-document.json`), strict extraction with a `require(...)` anchor + soft optional fields (`strict-extraction.json`), the newer surface — `fill.secret` + `screenshot` + structured selectors + a checkpointed `while` loop (`login-and-search.json`) — a full checkpointed crawl (`search-pagination.json`), and a comprehensive end-to-end scrape building one nested result object (`scrape-record.json`). Per-example commentary is in [`API.md` §15](API.md).
