@@ -164,12 +164,13 @@ A healthy tunnel returns the usual synchronous `200 { status: "succeeded", resul
 
 ## 6. Failure modes and what the API returns
 
-A backend connect happens **once** per run, before the interpreter's retry layer, and any connect fault is a
-**terminal** `backend_unavailable` ([`API.md` §13.3](API.md#133-run-failures--failurecode)) — HTTP `200` for a
-sync run (a failed *run* is not a failed *request*), or the terminal state of a `202` async run. No page is
-bound yet, so there is no failure screenshot. Connect-fault messages are **secret-free by construction**: the
-raw provider error (which can embed the URL) is never wrapped into it — a hand-written message is used instead
-([§8 security](#8-security-the-url-is-a-secret)).
+A backend connect happens before the interpreter's retry layer, and any connect fault is a **terminal**
+`backend_unavailable` ([`API.md` §13.3](API.md#133-run-failures--failurecode)) — HTTP `200` for a
+sync run (a failed *run* is not a failed *request*), or the terminal state of a `202` async run — once the
+bounded `config.connectRetry` ([§7](#7-connect-retry--backoff-under-tunnel-flakiness), off by default) is spent.
+No page is bound yet, so there is no failure screenshot. Connect-fault messages are **secret-free by
+construction**: the raw provider error (which can embed the URL) is never wrapped into it — a hand-written
+message is used instead ([§8 security](#8-security-the-url-is-a-secret)).
 
 | What went wrong | `failure.code` | `failure.message` |
 |---|---|---|
@@ -185,21 +186,33 @@ failure raised before connect is even attempted.
 
 The verified behavior, because a tunnel is the flakiest backend Crawldad supports:
 
-- **Connect is single-shot.** `ConnectAsync` is called once, *outside* the interpreter's retry loop. A connect
-  failure is terminal immediately — Crawldad does **not** retry the connect and applies **no** backoff to it. A
-  momentarily-flaky tunnel (an `ngrok` cold start, a paused laptop) fails the run with `backend_unavailable`; to
-  tolerate that, retry at the **caller** by re-issuing `POST /runs` once the tunnel is confirmed up. This is a
-  deliberate design choice (a connect fault is terminal, not a retryable page condition), not a tuning gap, so
-  it is left as-is.
-- **`config.retry` wraps only the post-connect program.** `maxAttempts` re-runs the steps on the **same**
-  already-established session — it never re-establishes the backend connection. `delayMs` is a **constant**
-  delay between attempts (there is no exponential backoff; the schema's `retry.backoff` field is accepted but
-  the engine applies a constant delay regardless of its value). Only `timeout` and `pageCrashed` are retryable
-  (`retryOn`, defaulting to both); every other fault — including a connect fault — is terminal.
-- **Consequence for a mid-run tunnel drop.** Because retries reuse the same session and never reconnect, a
-  tunnel that dies mid-run is not something `config.retry` can heal. Keep the laptop awake and the tunnel up for
-  the duration of a run; treat the public tunnel as an authoring topology and graduate to a managed backend for
-  anything long-running.
+- **Connect is single-shot by default, with an opt-in bounded retry.** `ConnectAsync` is called *outside* the
+  interpreter's program-retry loop. With no `config.connectRetry`, a connect failure is terminal immediately —
+  the pre-existing behavior. Supplying `config.connectRetry { maxAttempts, delayMs }` re-attempts the connect
+  under two rules (issue #76):
+  - **Only a transient fault is retried.** A refused/reset socket, a DNS failure, a WebSocket handshake failure,
+    or a `5xx` from a hosted session API is a transient blip worth a bounded retry — exactly the window a
+    cloudflared edge reconnect or the connector's own supervise/re-register cycle opens. An **auth-shaped**
+    fault — a rejected key, a `4xx` from the session API, or a `credentialRef` that resolves to nothing (a
+    deleted/never-registered credential) — **fails fast** with no retry: a retry cannot fix it.
+  - **Each attempt re-reads the credential.** A fresh `ConnectAsync` re-resolves the `credentialRef`, so a
+    connector that rotated its tunnel URL under a **stable registered name** mid-window is picked up on the next
+    attempt (the freshly re-registered `wss` secret), and the new secret is re-registered for scrubbing. The
+    per-attempt `RunConnectAttemptFailed` trace event records the retry (attempt number + the fixed
+    `backend_unavailable` slug — never the URL or key); exhausting `maxAttempts` stays terminal
+    `backend_unavailable`, its message reflecting the attempts made. `delayMs` is a **constant** backoff that
+    honours the run deadline (a wait that would outlive `config.deadlineMs` ends the run terminally). `maxAttempts`
+    is capped at 10 and `delayMs` at 60 s — the connect holds a backend admission slot across real network waits.
+- **`config.retry` wraps only the post-connect program** and never reaches the connect. `maxAttempts` re-runs
+  the steps on the **same** already-established session — it never re-establishes the backend connection.
+  `delayMs` is a **constant** delay between attempts (there is no exponential backoff; the schema's
+  `retry.backoff` field is accepted but the engine applies a constant delay regardless of its value). Only
+  `timeout` and `pageCrashed` are retryable (`retryOn`, defaulting to both); every other **post-connect** fault
+  is terminal. The connect boundary is `config.connectRetry`'s job, not this one's.
+- **Consequence for a mid-run tunnel drop.** `config.connectRetry` covers the connect **at run start**; a tunnel
+  that dies **mid-run** drops the already-established session, which neither retry knob re-establishes (the
+  program retry reuses the same session). Keep the laptop awake and the tunnel up for the duration of a run;
+  treat the public tunnel as an authoring topology and graduate to a managed backend for anything long-running.
 
 ## 8. Security: the URL is a secret
 

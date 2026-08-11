@@ -32,6 +32,10 @@ internal sealed class RunInterpreter
     /// node's <c>resume</c> sub-program can re-navigate to it. Shared with the semantic walker's scope rule.</summary>
     public const string CheckpointCursorVar = "checkpoint";
 
+    /// <summary>The terminal failure code for a backend that could not be connected/set up — the connect boundary's
+    /// single code, whether an auth-shaped fault failed fast or a transient one exhausted <c>config.connectRetry</c>.</summary>
+    private const string _backendUnavailableCode = "backend_unavailable";
+
     private static readonly IReadOnlySet<string> _defaultRetryOn =
         new HashSet<string>(StringComparer.Ordinal) { "timeout", "pageCrashed" };
 
@@ -147,6 +151,7 @@ internal sealed class RunInterpreter
         {
             ValidateProgram(); // reject unknown head keys / missing maxIterations before any side effect
             var retryPolicy = ParseRetryPolicy();
+            var connectRetryPolicy = ParseConnectRetryPolicy(); // bounded retry for the connect boundary (separate from the program retry)
             var sessionPolicy = SessionPolicy.FromConfig(_payload.GetProperty("config")); // launch/context/route
             _defaultTimeoutMs = sessionPolicy.DefaultTimeoutMs;
             _screenshotOnFailure = ReadScreenshotOnFailure(_payload.GetProperty("config")); // screenshot-on-failure toggle
@@ -159,7 +164,7 @@ internal sealed class RunInterpreter
                 throw new InterpreterException(InterpreterErrorCodes.UnknownBackendAdapter, $"no backend is registered for adapter '{binding.Adapter}'");
             }
 
-            await using var session = await backend.ConnectAsync(binding, sessionPolicy, ct);
+            await using var session = await ConnectWithRetryAsync(backend, binding, sessionPolicy, connectRetryPolicy, ct);
             _session = session; // surfaced for stats (region/cacheHits) and the RunTimeline region
             _page = await session.NewPageAsync(ct);
             await StepAsync(new RunSessionOpened(session.Region, _clock.GetUtcNow()), ct); // carries region to the timeline
@@ -182,13 +187,14 @@ internal sealed class RunInterpreter
         }
         catch (FakeBackendException ex)
         {
-            return await ReportFailedAsync("terminal", "backend_unavailable", ex.Message, startedAt, screenshot: false, ct);
+            return await ReportFailedAsync("terminal", _backendUnavailableCode, ex.Message, startedAt, screenshot: false, ct);
         }
         catch (BrowserConnectException ex)
         {
-            // A real adapter could not connect (bad/absent credential, connect failure). Terminal, like the fake's
-            // setup fault. The message is already secret-free by construction. No page bound ⇒ no screenshot.
-            return await ReportFailedAsync("terminal", "backend_unavailable", ex.Message, startedAt, screenshot: false, ct);
+            // A real adapter could not connect (bad/absent credential, or a transient fault that outlived connectRetry).
+            // Terminal, like the fake's setup fault — an auth-shaped fault fails fast, a transient one only after the
+            // bounded attempts are spent (its message then reflects them). Secret-free by construction; no page ⇒ no screenshot.
+            return await ReportFailedAsync("terminal", _backendUnavailableCode, ex.Message, startedAt, screenshot: false, ct);
         }
 
         return outcome;
@@ -304,6 +310,80 @@ internal sealed class RunInterpreter
     }
 
     private sealed record RetryPolicy(int MaxAttempts, int DelayMs, IReadOnlySet<string> RetryOn);
+
+    // ----- connect boundary (its own bounded retry) --------------------
+
+    // The connect happens ONCE per run, before the program — and config.retry never reaches it (that policy reuses an
+    // already-established session; it never reconnects). config.connectRetry is the separate knob for the connect
+    // boundary: a bounded, off-by-default retry so a run submitted during ordinary tunnel churn (a cloudflared edge
+    // reconnect, the connector's own re-register cycle) survives instead of failing outright on a transient blip.
+    private async Task<IBrowserSession> ConnectWithRetryAsync(
+        IBrowserBackend backend, BackendBinding binding, SessionPolicy sessionPolicy, ConnectRetryPolicy policy, CancellationToken ct)
+    {
+        var attempt = 0;
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                // A fresh ConnectAsync each attempt re-resolves the credentialRef (the adapter's own resolve step) — so a
+                // connector's mid-window re-registration (the tunnel URL rotated under a stable name) is picked up on the
+                // next try, and the newly-resolved secret is re-registered into the run's scrub scope. The raw secret is
+                // resolved and registered entirely inside the adapter; it never reaches this layer to be logged or emitted.
+                return await backend.ConnectAsync(binding, sessionPolicy, ct);
+            }
+            catch (BrowserConnectException ex)
+            {
+                // Fail fast on an auth-shaped/permanent fault, or once the bounded attempts are spent. The terminal
+                // classification stays backend_unavailable either way (RunAsync's catch); after ≥1 retry the message
+                // reflects the attempts made, while a single-shot failure surfaces the original (secret-free) message verbatim.
+                if (!ex.Retryable || attempt >= policy.MaxAttempts)
+                {
+                    throw attempt > 1
+                        ? new BrowserConnectException($"{ex.Message} (after {attempt} connect attempts)")
+                        : ex;
+                }
+
+                // Transient, attempts remain: record a secret-free attempt marker, back off on the injected clock
+                // (honouring run cancellation/deadline — a delay that would outlive the deadline throws here, terminal),
+                // then re-enter the loop for a fresh connect.
+                await EmitAsync(new RunConnectAttemptFailed(attempt, _backendUnavailableCode, _clock.GetUtcNow()), ct);
+                if (policy.DelayMs > 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(policy.DelayMs), _clock, ct);
+                }
+            }
+        }
+    }
+
+    // config.connectRetry drives the loop above. Absent ⇒ ConnectRetryPolicy.None (maxAttempts 1) — the pre-existing
+    // single-shot connect, so behaviour is unchanged unless a run opts in. Bounds are clamped here (a saved payload is
+    // additionally rejected out-of-range by the schema; an inline run skips the schema, so the clamp is its floor/cap):
+    // the connect holds a backend admission slot across REAL network waits, so — unlike config.retry, which reuses an
+    // in-hand session — an unbounded maxAttempts/delayMs could pin a slot far past reason, hence a deliberate cap.
+    private ConnectRetryPolicy ParseConnectRetryPolicy()
+    {
+        if (NodeJson.OptionalObject(_payload.GetProperty("config"), "connectRetry") is not { } connectRetry)
+        {
+            return ConnectRetryPolicy.None;
+        }
+
+        var maxAttempts = Math.Clamp(NodeJson.OptionalInt(connectRetry, "maxAttempts", 1), 1, ConnectRetryPolicy.MaxAttemptsCap);
+        var delayMs = Math.Clamp(NodeJson.OptionalInt(connectRetry, "delayMs", 0), 0, ConnectRetryPolicy.MaxDelayMsCap);
+        return new ConnectRetryPolicy(maxAttempts, delayMs);
+    }
+
+    private sealed record ConnectRetryPolicy(int MaxAttempts, int DelayMs)
+    {
+        /// <summary>The cap on attempts (a handful suffices — tunnel churn clears in seconds; more just burns the deadline).</summary>
+        public const int MaxAttemptsCap = 10;
+
+        /// <summary>The cap on the per-attempt backoff (60 s — a longer single connect wait is unreasonable; the run deadline still governs the total).</summary>
+        public const int MaxDelayMsCap = 60000;
+
+        /// <summary>Absent config.connectRetry ⇒ a single connect attempt, no backoff (the pre-existing single-shot behaviour).</summary>
+        public static ConnectRetryPolicy None { get; } = new(1, 0);
+    }
 
     // ----- parse-time validation ----------------------------
 

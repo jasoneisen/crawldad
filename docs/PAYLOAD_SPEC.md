@@ -17,7 +17,7 @@ A payload is composable, diffable JSON. Only **leaf expressions** are strings in
   "crawldad": "1",            // dialect version — v1 frozen at first ship
   "name": "example.search",   // logical identity of the managed payload
   "inputs": { "<name>": { "type": "…", "required": false, "default": <literal> } },
-  "config": { /* session config — see SPEC.md */ },
+  "config": { /* session config: backend, timeouts, route, retry (post-connect program) + connectRetry (connect boundary) — see SPEC.md */ },
   "vars":   { "<name>": <Expr> },  // initial bindings, evaluated once, in order
   "steps":  [ <Node> … ],          // the ordered program
   "result": <Expr>                 // final expression shaping the response body

@@ -20,14 +20,15 @@ The interpreter executes a payload's `steps` in order against one browser sessio
 
 - `backend` (an expression selecting the adapter + credential binding), `defaultTimeoutMs` (default 120 000), `launch`/`context` passthrough (e.g. `--disable-web-security`, `bypassCsp`) where the backend allows.
 - **Route policy** — request interception applied per page: `blockHosts` and `blockResourceTypes` abort matching requests; `cacheResourceTypes`/`cacheUrlSuffixes` fulfil from a cross-run, per-region asset cache keyed by URL (public web assets only — no tenant data is cached, so cache sharing does not cross the tenant boundary); `throttle.minIntervalMs` serializes one non-cached request per tick globally.
-- **Retry** — an operation-level policy wrapping the whole program: `maxAttempts`, `delayMs`, `backoff`, `retryOn` (only the retryable conditions), and `onPageCrashed`.
+- **Retry** — an operation-level policy wrapping the whole program (the **post-connect** steps on an already-established session): `maxAttempts`, `delayMs`, `backoff`, `retryOn` (only the retryable conditions), and `onPageCrashed`. It never re-establishes the connection.
+- **Connect retry** — `connectRetry { maxAttempts, delayMs }`, the separate knob for the **connect boundary** (which `retry` never reaches). Off by default (single-shot connect). Present ⇒ a **transient** connect fault (a refused/reset socket, DNS, a WebSocket handshake failure, a 5xx from a hosted session API) is retried, re-resolving the `credentialRef` each attempt so a connector's mid-window re-registration is picked up; an **auth-shaped** fault (a rejected key, a 4xx, an absent credential) fails fast. Bounded (`maxAttempts` ≤ 10, `delayMs` ≤ 60 s) and deadline-respecting; exhaustion stays terminal `backend_unavailable`.
 
 ## Error taxonomy
 
 The single most important operational distinction is **retryable vs terminal**.
 
 - **Retryable:** `timeout` and `pageCrashed` — and *only* these. They are retried per `config.retry`. On `pageCrashed` the engine closes and reopens a page on the same context and **rebinds it into the interpreter session**, then re-runs the operation from the top. A retryable condition that exhausts `config.retry` becomes a terminal failure of class `retryable-exhausted`.
-- **Terminal (never retried):** anything a `guard`/`fail` raises with `class:"terminal"`, and by default any non-retryable engine or expression error (type errors, out-of-range index, division by zero, unresolved secret, a server-limit breach, an unknown backend adapter, and so on).
+- **Terminal (never retried):** anything a `guard`/`fail` raises with `class:"terminal"`, and by default any non-retryable engine or expression error (type errors, out-of-range index, division by zero, unresolved secret, a server-limit breach, an unknown backend adapter, and so on). A connect fault (`backend_unavailable`) is terminal too — `config.connectRetry` gives a **transient** one bounded attempts before it lands here, but it is never a `retryable-exhausted` page condition.
 - **Warnings are not failures.** `log level:"warning"` emits a `LogEmitted` event and continues.
 - **A failed run is not a failed request.** A run that starts and faults is `HTTP 200` (sync) or reaches a terminal state pollable after a `202` — it carries a typed `failure { class, code, message, atStep }`. Requests that never start a run (bad input, an over-depth queue) are `4xx`/`429`.
 

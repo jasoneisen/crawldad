@@ -45,6 +45,14 @@ public sealed record LogEmitted(string Level, string Message, DateTimeOffset At)
 /// interpreter reopen the page before the next attempt.</summary>
 public sealed record RunAttemptFailed(int Attempt, string Code, DateTimeOffset At);
 
+/// <summary>A backend <b>connect</b> attempt failed transiently and is being retried under <c>config.connectRetry</c>:
+/// appended before the backoff wait, only when the connect fault was transient and attempts remain (the final attempt's
+/// exhaustion is the terminal <see cref="RunFailed"/> <c>backend_unavailable</c> instead). Distinct from
+/// <see cref="RunAttemptFailed"/>, which retries the post-connect program on an already-established session — this
+/// re-establishes the connection, re-reading the credentialRef so a connector's mid-window re-registration is picked up.
+/// PII-safe: <see cref="Code"/> is the fixed <c>backend_unavailable</c> slug, never the connect URL or key.</summary>
+public sealed record RunConnectAttemptFailed(int Attempt, string Code, DateTimeOffset At);
+
 /// <summary>The run passed a declared <c>checkpoint</c>: a metadata-only marker (name + sequence, never the cursor or
 /// var snapshot — those are bulk state in the executor's durable progress storage). Appended as the checkpoint is
 /// reached, so a killed run's progress is observable up to its last checkpoint.</summary>
