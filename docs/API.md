@@ -25,7 +25,7 @@ contracts and endpoints, not from older design notes.
 6. [Streaming trace (SSE) — `GET /runs/{id}/events`](#6-streaming-trace-sse--get-runsidevents)
 7. [Cancel — `POST /runs/{id}/cancel`](#7-cancel--post-runsidcancel)
 8. [Replay — `POST /runs/{id}/replay`](#8-replay--post-runsidreplay)
-9. [Drift, timeline & screenshots — `GET /runs/{id}/drift`, `/timeline`, `/screenshots/{ref}`](#9-drift-timeline--screenshots)
+9. [Drift, timeline, screenshots & erasure — `GET /runs/{id}/drift`, `/timeline`, `/screenshots/{ref}`, `DELETE /runs/{id}`](#9-drift-timeline-screenshots--erasure)
 10. [Queue stats — `GET /runs/queue-stats`](#10-queue-stats--get-runsqueue-stats)
 11. [Managed payloads — `/payloads`](#11-managed-payloads--payloads)
 12. [Browsers — `/browsers`](#12-browsers--browsers)
@@ -309,6 +309,14 @@ The state of a background (async / upgraded / queued) run, from the executor-own
 row (its result was returned inline). Read-your-writes: this reflects the latest committed state, not the
 lagging cross-run projection.
 
+**After result retention expires the body** (see [§9](#9-drift-timeline-screenshots--erasure)), the poll stays
+coherent rather than 404-ing: the run keeps its terminal `status` and `stats`, the `result`/`partial` body is gone,
+and a `resultExpiredAt` timestamp marks when it was aged out:
+
+```jsonc
+{ "runId": "…", "status": "succeeded", "stats": { /* … */ }, "resultExpiredAt": "2026-08-13T12:00:00+00:00" }
+```
+
 ---
 
 ## 6. Streaming trace (SSE) — `GET /runs/{id}/events`
@@ -377,7 +385,7 @@ an unknown run is `404`.
 
 ---
 
-## 9. Drift, timeline & screenshots
+## 9. Drift, timeline, screenshots & erasure
 
 ### `GET /runs/{id}/drift`
 A run's pinned revision vs the payload's current head. Drift = the pinned revision is no longer head.
@@ -424,6 +432,35 @@ Fetching **mid-run** works — the interpreter stores each capture's blob *befor
 visible in the trace already has its bytes. A `404` after the ref is authorized means the blob has **expired**:
 screenshots can show PII, so the retention janitor deletes them once past their (shorter) retention window,
 while the immutable trace keeps the ref forever. `404` also covers an unknown run or a malformed ref.
+
+### Result retention
+
+An **async** run's terminal `result`/`partial` is persisted (so the poll can serve it) and can carry PII — scraped
+page content. Like screenshots, it is aged out on the host retention policy: a scheduled sweep (the same
+`Crawldad:Storage:Retention` janitor, cadence `SweepInterval`) nulls the stored body once past **`ResultTtl` (default
+7 days**, the PII-grade window — the sync path never persists a result, so the stored async copy is only a poll
+convenience). `ResultTtl: 0` retains stored results indefinitely.
+
+What expires is the **body only**, not the run: after expiry `GET /runs/{id}` still returns `200` with the terminal
+`status` and `stats`, no `result`/`partial`, and a `resultExpiredAt` marker (see [§5](#5-polling--get-runsid)) — never
+a surprising `404`. The immutable event timeline is untouched by this sweep; erase it on demand with `DELETE` below.
+
+### `DELETE /runs/{id}` — erase result & timeline
+
+On-demand right-to-erasure for a **finished** run: hard-deletes, in one tenant-scoped transaction, the run's stored
+result (`RunProgress`), its `Run` snapshot and timeline read models, and its **event stream** — so both the bulk
+result body and the incidental PII a scrubbed timeline can still hold (a `LogEmitted` message, a `Navigated` URL) are
+gone, not merely archived. The response is `204` with no body (the erased content is never echoed).
+
+- **`404`** when this tenant has no such run — unknown, another tenant's, already-erased, or a purely-synchronous run
+  (which never wrote a progress row). No existence oracle, so a **repeated `DELETE` is idempotent** (`204` then `404`),
+  the same shape as `DELETE /browsers/{name}`.
+- **`409 run_still_active`** (a `RunRejection` body) when the run is still `running` or `queued`: a live run still has
+  an executor (or a queue entry) writing to it, so it is not erasable — **cancel it first** ([§7](#7-cancel--post-runsidcancel)),
+  then delete the settled run.
+
+After a successful erase, `GET /runs/{id}`, `/timeline`, `/drift`, and `/events` all `404` — the run is gone
+coherently.
 
 ---
 
@@ -534,11 +571,11 @@ A tenant registers its browser **connect credentials** through the API rather th
 
 ## 13. Wire codes
 
-Three surfaces carry stable slugs: **request rejections** (no run starts — `4xx`/`429`), **save-time
+Three surfaces carry stable slugs: **request & control rejections** (a `RunRejection` body — `4xx`/`429`), **save-time
 validation** (`400` on `/payloads`), and **run failures** (`failure.code`, `HTTP 200` sync or terminal after a
 `202`). Enum values below are exact.
 
-### 13.1 Request rejections — no run starts
+### 13.1 Request & control rejections — `RunRejection`
 
 | Code | HTTP | Where | Meaning |
 |---|---|---|---|
@@ -547,6 +584,7 @@ validation** (`400` on `/payloads`), and **run failures** (`failure.code`, `HTTP
 | `payload_archived` | 400 | `POST /runs`, `/replay` | the pinned payload is archived (cannot run) |
 | `inline_not_replayable` | 400 | `POST /runs/{id}/replay` | the run executed an inline payload (no stored revision to replay) |
 | `queue_depth_exceeded` | 429 | `POST /runs`, `/replay` | the tenant's admission queue is at its depth cap |
+| `run_still_active` | 409 | `DELETE /runs/{id}` | the run is still `running`/`queued`, so it cannot be erased — cancel it first |
 
 There is **no** `concurrent_runs_exceeded` — at the concurrent-run cap a run **queues** (`202`), it is not
 rejected. `queue_depth_exceeded` is the only `429`. (A malformed request body — both/neither payload source,
@@ -731,6 +769,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `POST /runs` | ✔ | `StartRunRequest` | `200 RunResponse` / `202 RunStateResponse` | `400`, `429 queue_depth_exceeded` |
 | `GET /runs/{id}` | ✔ | — | `200 RunStateResponse` | `404` |
 | `POST /runs/{id}/cancel` | ✔ | — | `202 RunStateResponse` | `404` |
+| `DELETE /runs/{id}` | ✔ | — | `204` | `404`, `409 run_still_active` |
 | `GET /runs/{id}/events` | ✔ | — (SSE) | `200 text/event-stream` | `404` |
 | `POST /runs/{id}/replay` | ✔ | `ReplayRunRequest` | `200 RunResponse` / `202 RunStateResponse` | `404`, `400 inline_not_replayable` |
 | `GET /runs/{id}/drift` | ✔ | — | `200 RunDriftResponse` | `404` |

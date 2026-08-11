@@ -3,6 +3,7 @@ using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
 using Crawldad.Web.Infrastructure.Browser.Real;
 using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Web.Infrastructure.Storage;
 using FluentValidation;
 using JasperFx.Events.Projections;
 using Marten;
@@ -87,6 +88,11 @@ public static class RunsModule
         // GET /runs/{id}/events endpoint. The failure-screenshot blob store and the download-sink seam are wired by
         // StorageModule, which selects the durable/fake provider from configuration.
         services.AddSingleton<RunEventSignals>();
+
+        // Result retention (issue #71): age an async run's stored result body out of RunProgress on the shared retention
+        // cadence. Registered as an IRetentionSweep so the host's RetentionJanitor drives it beside the blob stores —
+        // RunProgress is a Marten document, not a blob, so IRetentionStore never reached it.
+        services.AddSingleton<IRetentionSweep, RunResultRetentionSweep>();
 
         // The backend seam: a registry over keyed adapters. The record/replay fake reads shipped fixtures from the app's
         // output directory; the real adapters are registered beside it.

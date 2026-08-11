@@ -16,6 +16,7 @@ public sealed class StorageOptionsValidator : IValidateOptions<StorageOptions>
         Require(failures, options.Retention.SweepInterval > TimeSpan.Zero, "Retention:SweepInterval", "a positive duration");
         Require(failures, options.Retention.DownloadTtl >= TimeSpan.Zero, "Retention:DownloadTtl", "0 or greater (0 disables the sweep)");
         Require(failures, options.Retention.ScreenshotTtl >= TimeSpan.Zero, "Retention:ScreenshotTtl", "0 or greater (0 disables the sweep)");
+        Require(failures, options.Retention.ResultTtl >= TimeSpan.Zero, "Retention:ResultTtl", "0 or greater (0 disables the sweep)");
 
         if (string.Equals(options.Provider, StorageOptions.FileSystemProvider, StringComparison.Ordinal))
         {

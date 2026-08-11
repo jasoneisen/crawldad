@@ -66,6 +66,14 @@ public sealed class RetentionOptions
     /// <summary>How long a failure screenshot is kept — shorter, because it can show PII. Zero or less disables its sweep.</summary>
     public TimeSpan ScreenshotTtl { get; init; } = TimeSpan.FromDays(7);
 
+    /// <summary>How long an async run's stored result body (<c>RunProgress.ResultJson</c>/<c>PartialJson</c>) is kept
+    /// before the sweep nulls it. Defaults to the <b>7-day PII-grade window</b> — the same as screenshots, not the 30-day
+    /// download window: a stored async result can carry scraped page content, and it is only a poll convenience (the
+    /// synchronous path returns the result inline and never persists it), so it is aged out conservatively. Zero or less
+    /// disables the result sweep (retain stored results indefinitely). Swept by <c>RunResultRetentionSweep</c>, not a
+    /// blob store, since <c>RunProgress</c> is a Marten document.</summary>
+    public TimeSpan ResultTtl { get; init; } = TimeSpan.FromDays(7);
+
     /// <summary>How often the janitor sweeps for expired blobs. Must be positive.</summary>
     public TimeSpan SweepInterval { get; init; } = TimeSpan.FromHours(1);
 
@@ -77,4 +85,9 @@ public sealed class RetentionOptions
         var ttl = kind == BlobKind.Download ? DownloadTtl : ScreenshotTtl;
         return ttl > TimeSpan.Zero ? ttl : null;
     }
+
+    /// <summary>The stored-result retention TTL, or <see langword="null"/> when the result sweep is disabled
+    /// (<see cref="ResultTtl"/> ≤ 0 — retain stored results indefinitely). The same ≤0-disables convention as
+    /// <see cref="TtlFor"/>, so <c>RunResultRetentionSweep</c> reads it exactly as the janitor reads a blob category.</summary>
+    public TimeSpan? ResultTtlOrNull => ResultTtl > TimeSpan.Zero ? ResultTtl : null;
 }

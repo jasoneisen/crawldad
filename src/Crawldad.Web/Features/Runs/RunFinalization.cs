@@ -62,6 +62,11 @@ internal static class RunFinalization
                 break;
         }
 
+        // Stamp the terminal instant: the retention sweep ages the stored result/partial body against this (a RunProgress
+        // has no mt_last_modified the sweep can trust under a frozen clock). Set here, at the one finaliser every executed
+        // run passes through, so every result-bearing terminal row carries the retention clock.
+        progress.FinishedAt = clock.GetUtcNow();
+
         // Free the admission slot as the run finalises — BEFORE the terminal status commits — so a caller that then
         // observes "terminal" can immediately start another run without a transient false 429. Idempotent (callers repeat it).
         gate.Release(tenantId, runId);
