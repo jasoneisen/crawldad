@@ -27,7 +27,7 @@ public static class RunsModule
         // the schema knows the types and old streams stay readable. RunCancelled/RunQueued/RunDequeued DO have an Apply
         // but are listed too, for parity, so the whole terminal/queue event set is explicit.
         options.Events.AddEventTypes([
-            typeof(LogEmitted), typeof(RunAttemptFailed),
+            typeof(LogEmitted), typeof(RunAttemptFailed), typeof(RunConnectAttemptFailed),
             typeof(RunCheckpointReached), typeof(RunResumed), typeof(RunCancellationRequested), typeof(RunCancelled),
             typeof(RunQueued), typeof(RunDequeued),
         ]);

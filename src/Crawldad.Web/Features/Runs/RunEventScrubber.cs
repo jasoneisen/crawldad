@@ -62,8 +62,9 @@ internal static class RunEventScrubber
         StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error) },
         RunSessionOpened opened => opened with { Region = scrubber.Scrub(opened.Region) },
 
-        // RunSucceeded/RunAttemptFailed (stats + fixed slug), and StepStarted/Waited (index/kind/ms only) carry no
-        // credential-prone free text — pass through unchanged (same instance) so nothing new is allocated.
+        // RunSucceeded/RunAttemptFailed/RunConnectAttemptFailed (stats or attempt-number + fixed slug), and StepStarted/
+        // Waited (index/kind/ms only) carry no credential-prone free text — pass through unchanged (same instance) so
+        // nothing new is allocated.
         _ => traceEvent,
     };
 

@@ -45,7 +45,9 @@ internal sealed class BrowserlessBackend(
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not BrowserConnectException)
         {
-            throw new BrowserConnectException("failed to establish a 'browserless' backend session");
+            // Flatten to a secret-free message, but classify the raw fault first so a bounded connectRetry can tell a
+            // transient tunnel/handshake blip from an auth-shaped rejection (the raw fault is inspected, never surfaced).
+            throw new BrowserConnectException("failed to establish a 'browserless' backend session", ConnectFaultClassifier.IsTransient(ex));
         }
 
         return new PlaywrightBrowserSession(context, browser, policy, cache, throttle, region);

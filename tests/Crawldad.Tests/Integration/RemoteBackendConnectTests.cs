@@ -73,6 +73,7 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
 
         ex.Message.ShouldNotContain("SECRET_TOKEN_XYZ"); // the token never surfaces
         ex.Message.ShouldNotContain("127.0.0.1");        // nor the connect URL
+        ex.Retryable.ShouldBeTrue();                     // a refused socket is a transient blip — retryable under connectRetry
     }
 
     [Fact]
@@ -180,8 +181,33 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
         using var api = new LocalSite().Map("/v1/sessions", "application/json", "null"); // JSON null ⇒ empty session
         var backend = Browserbase("bb_live_apikey", api.BaseUrl.TrimEnd('/'));
 
-        await Should.ThrowAsync<BrowserConnectException>(
+        var ex = await Should.ThrowAsync<BrowserConnectException>(
             () => backend.ConnectAsync(new BackendBinding("browserbase", "cred-ref"), SessionPolicy.Default, _ct));
+        ex.Retryable.ShouldBeFalse(); // a 200 with an empty body is a permanent contract fault, not a transient blip
+    }
+
+    [Fact]
+    public async Task Browserbase_apiKey_mode_4xx_from_the_session_api_is_a_non_retryable_terminal()
+    {
+        // A rejected key: the session API answers 4xx BEFORE any CDP connect — an auth-shaped fault that fails fast.
+        using var api = new LocalSite().Map("/v1/sessions", "application/json", "{}", status: 401);
+        var backend = Browserbase("bb_live_rejected", api.BaseUrl.TrimEnd('/'));
+
+        var ex = await Should.ThrowAsync<BrowserConnectException>(
+            () => backend.ConnectAsync(new BackendBinding("browserbase", "cred-ref"), SessionPolicy.Default, _ct));
+        ex.Retryable.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Browserbase_apiKey_mode_5xx_from_the_session_api_is_a_retryable_terminal()
+    {
+        // A transient server-side fault from the session API — retryable under connectRetry.
+        using var api = new LocalSite().Map("/v1/sessions", "application/json", "{}", status: 503);
+        var backend = Browserbase("bb_live_apikey", api.BaseUrl.TrimEnd('/'));
+
+        var ex = await Should.ThrowAsync<BrowserConnectException>(
+            () => backend.ConnectAsync(new BackendBinding("browserbase", "cred-ref"), SessionPolicy.Default, _ct));
+        ex.Retryable.ShouldBeTrue();
     }
 
     [Fact]

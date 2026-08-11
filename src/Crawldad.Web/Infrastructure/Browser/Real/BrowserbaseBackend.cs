@@ -61,7 +61,10 @@ internal sealed class BrowserbaseBackend(
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not BrowserConnectException)
         {
-            throw new BrowserConnectException("failed to establish a 'browserbase' backend session");
+            // Flatten to a secret-free message, but classify the raw fault first so a bounded connectRetry can tell a
+            // transient network/5xx/CDP-handshake blip from an auth-shaped rejection (a 4xx from the session API, an
+            // absent credential). The raw fault — which can embed the CDP URL — is inspected here, never surfaced.
+            throw new BrowserConnectException("failed to establish a 'browserbase' backend session", ConnectFaultClassifier.IsTransient(ex));
         }
 
         return new PlaywrightBrowserSession(context, browser, policy, cache, throttle, region);

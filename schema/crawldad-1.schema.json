@@ -203,6 +203,25 @@
               "description": "Page-crash handling (reopenPage → close+reopen on the same context)."
             }
           }
+        },
+        "connectRetry": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Bounded retry for the backend CONNECT boundary — distinct from `retry`, which wraps only the post-connect program on an already-established session and never reconnects. Absent ⇒ the connect is single-shot (a connect fault is immediately terminal `backend_unavailable`). Present ⇒ a transient connect fault (a refused/reset socket, DNS, a WebSocket handshake failure, or a 5xx from a hosted session API) is retried up to `maxAttempts` with a `delayMs` backoff; an auth-shaped fault (a rejected key, a 4xx from the session API, or a credentialRef that resolves to nothing) fails fast with no retry. Each attempt re-resolves the `credentialRef`, so a connector's mid-window re-registration (a rotated tunnel URL under a stable name) is picked up. Backoff waits honour the run deadline.",
+          "properties": {
+            "maxAttempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "description": "Maximum connect attempts including the first; 1 (or absent) keeps the single-shot connect. Capped at 10 — the connect holds a backend slot across real network waits."
+            },
+            "delayMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 60000,
+              "description": "Constant backoff between connect attempts; 0 retries with no wait. Capped at 60000 (60 s) — the run deadline governs the total elapsed."
+            }
+          }
         }
       }
     },
