@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Crawldad.Contracts;
+using Crawldad.Contracts.Drift;
 using Crawldad.Contracts.Payloads;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Features.Docs;
@@ -167,6 +168,7 @@ public class OpenApiSpecTests
         var result = JsonSerializer.SerializeToElement(new { rows = 2 });
         var scriptA = JsonSerializer.SerializeToElement(new { crawldad = 1 });
         var scriptB = JsonSerializer.SerializeToElement(new { crawldad = 1, name = "x" });
+        var observedAt = new DateTimeOffset(2026, 8, 12, 9, 0, 0, TimeSpan.Zero);
 
         var cases = new (string Component, object Body)[]
         {
@@ -180,6 +182,10 @@ public class OpenApiSpecTests
                     new PayloadDiffEntry("/steps/0", PayloadDiffKind.Added, null, JsonSerializer.SerializeToElement("added")),
                     new PayloadDiffEntry("/name", PayloadDiffKind.Removed, JsonSerializer.SerializeToElement("old"), null),
                 ])),
+            (nameof(PayloadDriftStatus), new PayloadDriftStatus(id, "ljcmg.canary", null, DriftState.NoData, false, 0, 3, 0, 0, null, null, [], null)), // omits pinnedRevision/timestamps/evidence
+            (nameof(PayloadDriftStatus), new PayloadDriftStatus(id, "ljcmg.canary", 4, DriftState.Drifted, true, 5, 3, 1, 0, observedAt, observedAt,
+                [new SelectorDriftDetail("#title", true, false, true)],
+                new DriftEvidence(id, RunStatus.Failed, observedAt, "screenshots/boom.png", ["captures/page.html"], ["screenshots/x.png"]))),
         };
 
         foreach (var (component, body) in cases)

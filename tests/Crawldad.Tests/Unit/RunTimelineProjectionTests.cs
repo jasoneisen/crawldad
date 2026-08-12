@@ -81,6 +81,41 @@ public class RunTimelineProjectionTests
     }
 
     [Fact]
+    public void A_run_folds_missed_selectors_deduped_in_first_seen_order() // the per-run drift signal (issue #47)
+    {
+        var projection = new RunTimelineProjection();
+
+        var t = projection.Create(Started());
+        t = projection.Apply(new StepStarted(0, "loop", _t0), t);
+        t = projection.Apply(new SelectorMiss("#title", 0, _t0), t);
+        t = projection.Apply(new SelectorMiss("#owner", 0, _t0), t);
+        t = projection.Apply(new SelectorMiss("#title", 0, _t0), t); // a repeat (e.g. a rebuild) — folded once
+        t = projection.Apply(new RunSucceeded(new RunStats(0, 0, 0, 0, 0, 2), _t0.AddSeconds(1)), t);
+
+        t.MissedSelectors.ShouldBe(["#title", "#owner"]); // first-seen order, deduped
+        t.Status.ShouldBe(RunStatus.Succeeded); // a soft miss does not fail the run
+    }
+
+    [Fact]
+    public void A_required_miss_failure_still_records_the_missed_selector()
+    {
+        // A require()/strictExtraction miss emits the SelectorMiss trace event AND then fails the run — the drift signal
+        // is on the timeline even for the failed canary that the miss brought down.
+        var projection = new RunTimelineProjection();
+        var failure = new RunFailureDetail("terminal", "selector_miss", "required extraction found no element", new RunStepRef(0, "set"));
+
+        var t = projection.Create(Started());
+        t = projection.Apply(new StepStarted(0, "set", _t0), t);
+        t = projection.Apply(new SelectorMiss("#recordNumber", 0, _t0), t);
+        t = projection.Apply(new StepFailed(0, "selector_miss", "screenshots/miss.png", _t0), t);
+        t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0, 1), _t0.AddSeconds(1)), t);
+
+        t.MissedSelectors.ShouldBe(["#recordNumber"]);
+        t.Status.ShouldBe(RunStatus.Failed);
+        t.Failure!.ScreenshotRef.ShouldBe("screenshots/miss.png");
+    }
+
+    [Fact]
     public void A_failed_run_carries_the_step_failure_and_its_screenshot_ref()
     {
         var projection = new RunTimelineProjection();

@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Crawldad.Contracts;
 using Crawldad.Contracts.Browsers;
+using Crawldad.Contracts.Drift;
 using Crawldad.Contracts.Fixtures;
 using Crawldad.Contracts.Payloads;
 using Crawldad.Contracts.Runs;
@@ -69,6 +70,7 @@ public static class OpenApiSpec
         new(nameof(PayloadRevisionResponse), typeof(PayloadRevisionResponse)),
         new(nameof(PayloadDiffResponse), typeof(PayloadDiffResponse)),
         new(nameof(PayloadValidationProblem), typeof(PayloadValidationProblem)),
+        new(nameof(PayloadDriftStatus), typeof(PayloadDriftStatus)),
         new(nameof(RunResponse), typeof(RunResponse)),
         new(nameof(RunStateResponse), typeof(RunStateResponse)),
         new(nameof(RunRejection), typeof(RunRejection)),
@@ -175,6 +177,9 @@ public static class OpenApiSpec
             [new("200", "The historical revision's script and metadata.", Component: nameof(PayloadRevisionResponse)), NotFound("payload/revision")]),
         new("get", "/payloads/{id}/diff/{from}/{to}", "getPayloadDiff", "Diff two payload revisions.", _payloads, Anonymous: false, [Id, From, To], null,
             [new("200", "Both revisions' scripts and a minimal structural diff.", Component: nameof(PayloadDiffResponse)), NotFound("payload/either revision")]),
+        new("get", "/payloads/{id}/drift-status", "getPayloadDriftStatus", "A payload canary's selector-drift status.", _payloads, Anonymous: false, [Id], null,
+            [new("200", "The payload's baseline/delta selector-drift assessment (state, drifted selectors, and latest-run evidence).", Component: nameof(PayloadDriftStatus)), NotFound("payload")],
+            Description: "Reports whether a payload's canary has drifted (issue #47): computed on read from the payload's runs under a baseline/delta model, where the baseline is the miss floor of the earliest healthy runs and drift is a selector that matched at baseline but is newly missing in the latest completed run — never a naive selectorMisses > 0, which a legitimate multi-selector fallback trips every run. Optional `?threshold=N` tolerates N new misses before `drifted` is set (default 0). Evidence carries the latest run's capture/screenshot refs so an alert arrives with the changed page. Reads the same async RunTimeline observations the run timeline exposes; only durable (async) runs emit the selector-miss trace, so only they are observed. Distinct from GET /runs/{id}/drift, which reports one run's payload-revision drift."),
 
         // Browser connect credentials (tenant self-service; the registered name becomes a payload's credentialRef).
         new("put", "/browsers/{name}", "registerBrowser", "Register or replace a browser connect credential.", _browsers, Anonymous: false, [Name],
