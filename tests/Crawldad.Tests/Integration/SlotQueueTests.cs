@@ -334,8 +334,10 @@ public class SlotQueueTests
         // Fire the still-pending deadline exactly as Wolverine would: it must no-op cleanly, not NRE on the absent RunProgress
         // (before the null-guard this threw, so the durable message retried then dead-lettered).
         var queue = host.Services.GetRequiredService<RunQueue>();
+        await using var scope = host.Services.CreateAsyncScope();
+        var bus = scope.ServiceProvider.GetRequiredService<IMessageBus>();
         await Should.NotThrowAsync(async () =>
-            await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(queued), queue, new Envelope { TenantId = TestTenants.PrimaryId }, CancellationToken.None));
+            await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(queued), queue, bus, new Envelope { TenantId = TestTenants.PrimaryId }, CancellationToken.None));
 
         gate.Release();
         await DrainAsync(host, blocked);
@@ -525,10 +527,10 @@ public class SlotQueueTests
 
         // The handlers fail closed without a tenant on the envelope; the wait timeout is a no-op for a run that already left the queue.
         await PromoteQueuedHandler.Handle(new PromoteQueued(), queue, bus, new Envelope(), CancellationToken.None);
-        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(Guid.NewGuid()), queue, new Envelope(), CancellationToken.None);
+        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(Guid.NewGuid()), queue, bus, new Envelope(), CancellationToken.None);
         var promoted = await SeedQueuedAsync(store, clock, RunStatus.Running); // not queued
         (await queue.TimeoutQueuedAsync(TestTenants.PrimaryId, promoted, CancellationToken.None)).ShouldBeFalse();
-        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(promoted), queue, new Envelope { TenantId = TestTenants.PrimaryId }, CancellationToken.None);
+        await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(promoted), queue, bus, new Envelope { TenantId = TestTenants.PrimaryId }, CancellationToken.None);
         (await StateAsync(host, promoted)).GetProperty("status").GetString().ShouldBe("running"); // untouched by the spent timeout
     }
 

@@ -294,13 +294,19 @@ public static class PromoteQueuedHandler
 public static class QueueWaitDeadlineHandler
 {
     /// <summary>Times out one queued run for the message's tenant, or no-ops if it already left the queue.</summary>
-    public static async Task Handle(QueueWaitDeadline command, RunQueue queue, Envelope envelope, CancellationToken ct)
+    public static async Task Handle(QueueWaitDeadline command, RunQueue queue, IMessageBus bus, Envelope envelope, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(envelope.TenantId))
         {
             return; // no tenant — fail closed (never touch the default partition)
         }
 
-        await queue.TimeoutQueuedAsync(envelope.TenantId, command.RunId, ct);
+        // Only notify downstream subscribers (webhook fan-out) when THIS deadline actually drove the run terminal — a
+        // stale deadline for an already-promoted/cancelled/erased run wins nothing and must not re-notify (its real
+        // terminal notifies on its own path).
+        if (await queue.TimeoutQueuedAsync(envelope.TenantId, command.RunId, ct))
+        {
+            await bus.PublishAsync(new RunFinalized(command.RunId), new DeliveryOptions { TenantId = envelope.TenantId });
+        }
     }
 }
