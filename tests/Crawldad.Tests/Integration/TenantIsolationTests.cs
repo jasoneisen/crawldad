@@ -187,6 +187,14 @@ public class TenantIsolationTests(TenantIsolationFixture fixture)
         await ExpectStatusAsync("POST", $"/runs/{fixture.SucceededRunA}/cancel", HttpStatusCode.NotFound);
 
     [Fact]
+    public async Task Tenant_B_cannot_erase_tenant_As_run()
+    {
+        // B's DELETE finds nothing in its own partition — a plain 404, no oracle — and A's run is untouched by it.
+        await ExpectStatusAsync("DELETE", $"/runs/{fixture.SucceededRunA}", HttpStatusCode.NotFound);
+        await ExpectStatusAsync("GET", $"/runs/{fixture.SucceededRunA}", HttpStatusCode.OK, apiKey: TestTenants.PrimaryKey);
+    }
+
+    [Fact]
     public async Task Tenant_B_cannot_read_tenant_As_timeline() =>
         await ExpectStatusAsync("GET", $"/runs/{fixture.SucceededRunA}/timeline", HttpStatusCode.NotFound);
 
@@ -282,6 +290,10 @@ public class TenantIsolationTests(TenantIsolationFixture fixture)
             if (string.Equals(method, "GET", StringComparison.Ordinal))
             {
                 x.Get.Url(url);
+            }
+            else if (string.Equals(method, "DELETE", StringComparison.Ordinal))
+            {
+                x.Delete.Url(url);
             }
             else
             {

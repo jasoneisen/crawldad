@@ -6,29 +6,34 @@ using Microsoft.Extensions.Options;
 namespace Crawldad.Web.Infrastructure.Storage;
 
 /// <summary>The retention/lifecycle janitor: a host-enforced scheduled sweep that deletes durable blobs past their
-/// category's TTL, per <see cref="RetentionOptions"/>. Sweeps every registered <see cref="IRetentionStore"/>; under
-/// the in-memory fake provider none is registered, so the janitor is a harmless no-op.</summary>
+/// category's TTL, per <see cref="RetentionOptions"/>. Sweeps every registered <see cref="IRetentionStore"/> (blobs) and
+/// every registered <see cref="IRetentionSweep"/> (non-blob durable rows, e.g. an async run's stored result in
+/// <c>RunProgress</c>) on the same cadence; under the in-memory fake provider no store is registered, so the blob leg is
+/// a harmless no-op.</summary>
 public sealed class RetentionJanitor : BackgroundService
 {
     private readonly IRetentionStore[] _stores;
+    private readonly IRetentionSweep[] _sweeps;
     private readonly RetentionOptions _retention;
     private readonly TimeProvider _clock;
     private readonly ILogger<RetentionJanitor> _logger;
 
-    /// <summary>Wires the janitor to the durable stores it sweeps and the retention policy it enforces.</summary>
-    public RetentionJanitor(IEnumerable<IRetentionStore> stores, IOptions<StorageOptions> options, TimeProvider clock, ILogger<RetentionJanitor> logger)
+    /// <summary>Wires the janitor to the durable blob stores + non-blob sweeps it drives and the retention policy it enforces.</summary>
+    public RetentionJanitor(IEnumerable<IRetentionStore> stores, IEnumerable<IRetentionSweep> sweeps, IOptions<StorageOptions> options, TimeProvider clock, ILogger<RetentionJanitor> logger)
     {
         ArgumentNullException.ThrowIfNull(stores);
+        ArgumentNullException.ThrowIfNull(sweeps);
         ArgumentNullException.ThrowIfNull(options);
         _stores = [.. stores];
+        _sweeps = [.. sweeps];
         _retention = options.Value.Retention;
         _clock = clock;
         _logger = logger;
     }
 
     /// <summary>Sweeps every durable store once, deleting each blob older than its category's TTL (a TTL of ≤ 0
-    /// retains that category indefinitely). Pure with respect to <paramref name="now"/> so a test drives expiry
-    /// deterministically.</summary>
+    /// retains that category indefinitely), then runs every non-blob <see cref="IRetentionSweep"/>. Pure with respect to
+    /// <paramref name="now"/> so a test drives expiry deterministically.</summary>
     public async Task<int> SweepOnceAsync(DateTimeOffset now, CancellationToken ct)
     {
         var deleted = 0;
@@ -53,9 +58,15 @@ public sealed class RetentionJanitor : BackgroundService
             }
         }
 
+        // The non-blob sweeps (each owns its own TTL check and per-pass bound): a run's stored result in RunProgress, etc.
+        foreach (var sweep in _sweeps)
+        {
+            deleted += await TrySweepAsync(sweep, now, ct);
+        }
+
         if (deleted > 0)
         {
-            _logger.LogInformation("Retention janitor deleted {Count} expired blob(s).", deleted);
+            _logger.LogInformation("Retention janitor expired {Count} item(s).", deleted);
         }
 
         return deleted;
@@ -74,6 +85,23 @@ public sealed class RetentionJanitor : BackgroundService
         {
             _logger.LogError(ex, "Retention janitor failed to delete {Kind} blob {Tenant}/{Key}; continuing.", blob.Kind, blob.Tenant, blob.Key);
             return false;
+        }
+    }
+
+    // A non-blob sweep's failure (a DB blip, a Marten "global lock" wait, a transient tenant query error) must not abort
+    // the rest of the pass — log it and move on, returning zero for this sweep. Cancellation propagates so shutdown stops
+    // promptly, exactly like TryDeleteAsync.
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "A retention pass must tolerate any transient per-sweep failure and continue; cancellation is re-thrown by the exception filter.")]
+    private async Task<int> TrySweepAsync(IRetentionSweep sweep, DateTimeOffset now, CancellationToken ct)
+    {
+        try
+        {
+            return await sweep.SweepAsync(now, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Retention janitor sweep {Sweep} failed; continuing.", sweep.GetType().Name);
+            return 0;
         }
     }
 

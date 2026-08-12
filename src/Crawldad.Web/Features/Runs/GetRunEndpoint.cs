@@ -26,7 +26,7 @@ public static class GetRunEndpoint
     }
 
     /// <summary>Maps the stored progress to the wire state, re-parsing the scrubbed result/partial raw JSON and attaching
-    /// the live queue position and the recorded queue wait.</summary>
+    /// the live queue position, the recorded queue wait, and the result-expiry marker (set once retention aged the body out).</summary>
     internal static RunStateResponse ToResponse(RunProgress progress, int? position = null) => new(
         progress.Id,
         progress.Status,
@@ -35,7 +35,8 @@ public static class GetRunEndpoint
         Parse(progress.PartialJson),
         progress.Stats,
         Position: position,
-        QueueWaitMs: progress.QueueWaitMs);
+        QueueWaitMs: progress.QueueWaitMs,
+        ResultExpiredAt: progress.ResultExpiredAt);
 
     private static JsonElement? Parse(string? json)
     {

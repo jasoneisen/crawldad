@@ -113,6 +113,13 @@ public static class OpenApiSpec
             [new("200", "The run's current state (queued/running/terminal).", Component: nameof(RunStateResponse)), NotFound("run")]),
         new("post", "/runs/{id}/cancel", "cancelRun", "Cancel a run.", _runs, Anonymous: false, [Id], null,
             [new("202", "Cancellation was accepted; the pre-cancel state is returned.", Component: nameof(RunStateResponse)), NotFound("run")]),
+        new("delete", "/runs/{id}", "eraseRun", "Erase a finished run's result and timeline.", _runs, Anonymous: false, [Id], null,
+            [
+                new("204", "The finished run's result, read models, and event timeline were erased."),
+                NotFound("run"),
+                new("409", "The run is still running or queued and cannot be erased; cancel it first (run_still_active).", Component: nameof(RunRejection)),
+            ],
+            Description: "On-demand right-to-erasure for a FINISHED run (issue #71): hard-deletes the run's stored result (RunProgress), its Run snapshot and timeline read models, and its event stream — the bulk result body plus the incidental PII a scrubbed timeline can still hold (a log message, a navigated URL). Tenant-scoped: an unknown, foreign, already-erased, or purely-synchronous run (which stores no progress row) is a 404 with no existence oracle, so a repeated DELETE is idempotent (204 then 404). A still-active run (running/queued) is a 409 run_still_active — cancel it first."),
         new("get", "/runs/{id}/events", "streamRunEvents", "Stream a run's trace as Server-Sent Events.", _runs, Anonymous: false, [Id], null,
             [new("200", "An SSE stream of the run's (scrubbed) trace, backfilled from the durable stream then live-tailed until terminal.", MediaType: "text/event-stream", Schema: PlainTextSchema), NotFound("run")]),
         new("post", "/runs/{id}/replay", "replayRun", "Replay a pinned run.", _runs, Anonymous: false, [Id],

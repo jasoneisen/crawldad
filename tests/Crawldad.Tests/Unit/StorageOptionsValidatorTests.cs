@@ -79,12 +79,14 @@ public class StorageOptionsValidatorTests
             {
                 DownloadTtl = TimeSpan.FromDays(-1),
                 ScreenshotTtl = TimeSpan.FromMinutes(-1),
+                ResultTtl = TimeSpan.FromHours(-1),
             },
         });
 
         result.Failed.ShouldBeTrue();
         result.FailureMessage.ShouldContain("Retention:DownloadTtl");
         result.FailureMessage.ShouldContain("Retention:ScreenshotTtl");
+        result.FailureMessage.ShouldContain("Retention:ResultTtl");
     }
 
     [Fact]
@@ -92,7 +94,7 @@ public class StorageOptionsValidatorTests
         Validate(new StorageOptions
         {
             Provider = StorageOptions.FakeProvider,
-            Retention = new RetentionOptions { DownloadTtl = TimeSpan.Zero, ScreenshotTtl = TimeSpan.Zero },
+            Retention = new RetentionOptions { DownloadTtl = TimeSpan.Zero, ScreenshotTtl = TimeSpan.Zero, ResultTtl = TimeSpan.Zero },
         }).Succeeded.ShouldBeTrue();
 
     [Fact]

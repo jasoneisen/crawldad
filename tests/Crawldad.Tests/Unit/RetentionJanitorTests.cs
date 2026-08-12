@@ -13,7 +13,10 @@ public class RetentionJanitorTests
     private static readonly DateTimeOffset _now = new(2026, 8, 8, 12, 0, 0, TimeSpan.Zero);
 
     private static RetentionJanitor Janitor(RetentionOptions retention, params IRetentionStore[] stores) =>
-        new(stores, Options.Create(new StorageOptions { Retention = retention }), TimeProvider.System, NullLogger<RetentionJanitor>.Instance);
+        new(stores, [], Options.Create(new StorageOptions { Retention = retention }), TimeProvider.System, NullLogger<RetentionJanitor>.Instance);
+
+    private static RetentionJanitor JanitorWith(RetentionOptions retention, IRetentionSweep[] sweeps, params IRetentionStore[] stores) =>
+        new(stores, sweeps, Options.Create(new StorageOptions { Retention = retention }), TimeProvider.System, NullLogger<RetentionJanitor>.Instance);
 
     [Fact]
     public async Task Sweep_deletes_expired_keeps_fresh_and_skips_a_disabled_category()
@@ -125,6 +128,62 @@ public class RetentionJanitorTests
 
         store.SweptTwice.Task.IsCompletedSuccessfully.ShouldBeTrue();
         store.Enumerations.ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task A_sweep_runs_beside_the_blob_stores_and_its_count_is_folded_in()
+    {
+        var store = new FakeRetentionStore();
+        store.Blobs.Add(new StoredBlob(BlobKind.Download, "t", "old", _now.AddDays(-40), 10)); // one expired blob → deleted
+        var sweep = new FakeRetentionSweep { Result = 3 };
+
+        var deleted = await JanitorWith(new RetentionOptions { DownloadTtl = TimeSpan.FromDays(30) }, [sweep], store)
+            .SweepOnceAsync(_now, CancellationToken.None);
+
+        deleted.ShouldBe(4); // 1 blob + 3 rows the sweep expired
+        sweep.Now.ShouldBe(_now); // the janitor's `now` is threaded through so expiry is deterministic
+    }
+
+    [Fact]
+    public async Task A_failing_sweep_is_logged_and_the_pass_continues()
+    {
+        var store = new FakeRetentionStore();
+        store.Blobs.Add(new StoredBlob(BlobKind.Download, "t", "old", _now.AddDays(-40), 10));
+        var faulting = new FakeRetentionSweep { Fault = new InvalidOperationException("db 500") };
+        var healthy = new FakeRetentionSweep { Result = 2 };
+
+        // The first sweep throws, but the janitor swallows it (counting zero for it) and still runs the blob leg and the
+        // healthy sweep — a broken category never aborts the rest of the pass.
+        var deleted = await JanitorWith(new RetentionOptions { DownloadTtl = TimeSpan.FromDays(30) }, [faulting, healthy], store)
+            .SweepOnceAsync(_now, CancellationToken.None);
+
+        deleted.ShouldBe(3); // 1 blob + 0 (faulted) + 2 (healthy)
+    }
+
+    [Fact]
+    public async Task Cancellation_from_a_sweep_is_not_swallowed()
+    {
+        var sweep = new FakeRetentionSweep { Fault = new OperationCanceledException() };
+
+        // Cancellation is not a transient error — it propagates so shutdown stops the pass promptly.
+        await Should.ThrowAsync<OperationCanceledException>(async () =>
+            await JanitorWith(new RetentionOptions(), [sweep]).SweepOnceAsync(_now, CancellationToken.None));
+    }
+
+    // A controllable non-blob sweep: returns a scripted expiry count (or faults), recording the `now` it was driven with.
+    private sealed class FakeRetentionSweep : IRetentionSweep
+    {
+        public int Result { get; init; }
+
+        public Exception? Fault { get; init; }
+
+        public DateTimeOffset? Now { get; private set; }
+
+        public Task<int> SweepAsync(DateTimeOffset now, CancellationToken ct)
+        {
+            Now = now;
+            return Fault is not null ? Task.FromException<int>(Fault) : Task.FromResult(Result);
+        }
     }
 
     // A controllable retention store: yields a scripted blob set, records deletes, and signals after two sweeps so the loop

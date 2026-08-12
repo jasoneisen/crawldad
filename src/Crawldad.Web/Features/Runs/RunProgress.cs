@@ -33,6 +33,19 @@ public sealed class RunProgress
     /// <summary>The run counters (set at any terminal status), else null.</summary>
     public RunStats? Stats { get; set; }
 
+    /// <summary>When the run's result body was persisted at finalisation — the clock the result-retention sweep ages a
+    /// stored <see cref="ResultJson"/>/<see cref="PartialJson"/> against (the <see cref="RunProgress"/> analogue of a
+    /// blob's last-modified). Set for every run that reached terminal through the executor/finaliser
+    /// (<see cref="RunFinalization"/>); null while <c>running</c>/<c>queued</c>, and for a run that terminated while
+    /// still queued (cancel/timeout), which persists no result body to expire.</summary>
+    public DateTimeOffset? FinishedAt { get; set; }
+
+    /// <summary>When the result-retention sweep aged this run's stored <see cref="ResultJson"/>/<see cref="PartialJson"/>
+    /// body out (nulling it), else null. The terminal status + stats stay queryable via <c>GET /runs/{id}</c>, so this is
+    /// the clear "the result body expired" marker the poll surfaces instead of a bare null or a 404. Never set by the
+    /// on-demand <c>DELETE /runs/{id}</c> erasure, which removes the whole document (the poll then 404s).</summary>
+    public DateTimeOffset? ResultExpiredAt { get; set; }
+
     /// <summary>How long the run waited in the admission queue before it started, in milliseconds: set at promotion for
     /// a run that was <see cref="RunStatus.Queued"/>, null for a run started immediately. A plain, queryable document
     /// field, so a tenant's p95 queue wait is computable from stored data without a metrics library.</summary>

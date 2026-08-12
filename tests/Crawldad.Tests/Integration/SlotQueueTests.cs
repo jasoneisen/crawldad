@@ -306,6 +306,41 @@ public class SlotQueueTests
         await DrainAsync(host, blocked);
     }
 
+    // ----- erasing a queued-then-terminal run survives its still-pending deadline ---
+
+    [Fact]
+    public async Task Erasing_a_queued_then_terminal_run_survives_its_pending_queue_wait_deadline()
+    {
+        var holder = new GateHolder();
+        var gate = new RunGate("CapHome");
+        // MaxQueueWaitMs > 0 so enqueue schedules a durable QueueWaitDeadline (large enough not to fire on its own here);
+        // Wolverine cannot un-schedule it, so it will still arrive after the run is gone — the case #71 erasure introduces.
+        await using var host = await HostAsync("crawldad_erase_deadline", holder, ("Crawldad:Limits:MaxQueueWaitMs", "60000"));
+
+        var blocked = await StartBlockedAsync(host, holder, gate);
+        var (queued, _) = await StartQueuedAsync(host);
+
+        // Cancel-while-queued drives it to terminal (cancelled) without consuming a slot; its scheduled deadline still pends.
+        await CancelAsync(host, queued);
+        (await DurableHost.PollUntilTerminalAsync(host, queued, DurableHost.PollTimeout)).GetProperty("status").GetString().ShouldBe("cancelled");
+
+        // Erase the settled run: RunProgress (and its stream) are gone — invalidating the "never deleted" load the deadline relies on.
+        await host.Scenario(x =>
+        {
+            x.Delete.Url($"/runs/{queued}");
+            x.StatusCodeShouldBe(204);
+        });
+
+        // Fire the still-pending deadline exactly as Wolverine would: it must no-op cleanly, not NRE on the absent RunProgress
+        // (before the null-guard this threw, so the durable message retried then dead-lettered).
+        var queue = host.Services.GetRequiredService<RunQueue>();
+        await Should.NotThrowAsync(async () =>
+            await QueueWaitDeadlineHandler.Handle(new QueueWaitDeadline(queued), queue, new Envelope { TenantId = TestTenants.PrimaryId }, CancellationToken.None));
+
+        gate.Release();
+        await DrainAsync(host, blocked);
+    }
+
     // ----- crash/restart with a non-empty queue (durable, FIFO) --------------------
 
     [Fact]
