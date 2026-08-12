@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Crawldad.Web.Features.Fixtures;
 using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
@@ -86,6 +87,24 @@ internal static class Runner
             secretStores,
             secretScope);
         return (await interpreter.RunAsync(CancellationToken.None), observer, screenshots);
+    }
+
+    /// <summary>Drives a record-mode interpreter over the fake backend, banking the run into <paramref name="recorder"/> —
+    /// the white-box path for the recorder's own branches (caps, dedup, unrecordable ops). Returns the outcome.</summary>
+    public static async Task<RunOutcome> RunWithRecorderAsync(string payloadJson, string inputsJson, FixtureRecorder recorder)
+    {
+        using var payloadDoc = JsonDocument.Parse(payloadJson);
+        using var inputsDoc = JsonDocument.Parse(inputsJson);
+        var input = JsonValues.FromJson(inputsDoc.RootElement) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
+        var interpreter = new RunInterpreter(
+            payloadDoc.RootElement.Clone(),
+            input,
+            new SingleBackendRegistry("fake", new FakeBrowserBackend(FixturesRoot)),
+            new SingleSinkRegistry("fake", new FakeDownloadSink()),
+            new FakeClock(),
+            TestTenants.InterpreterTenant,
+            recorder: recorder);
+        return await interpreter.RunAsync(CancellationToken.None);
     }
 
     /// <summary>A registry with only the fake adapter over the test fixtures root.</summary>

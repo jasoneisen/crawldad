@@ -26,16 +26,19 @@ internal sealed record FakeDownload(string File, string SuggestedFilename);
 /// (<c>to == from</c>) — and optionally emits <see cref="Emit"/> or yields <see cref="Download"/> bytes.</summary>
 internal sealed record FakeTransition(string From, string ClickSelector, string? In, string To, FakeEmit? Emit, FakeInject? Inject, FakeDownload? Download);
 
-/// <summary>The loaded, validated <c>manifest.json</c> plus the fixture directory it was loaded from, so the page can
-/// read each state's HTML on demand.</summary>
+/// <summary>The loaded, validated manifest plus the content source its states' HTML is read from — a shipped fixture
+/// directory (the internal acceptance fixtures) or an in-memory content-addressed page map (a tenant's recorded set).
+/// <see cref="Strict"/> is set for a tenant replay so an unrecorded navigation/click fails classified instead of the
+/// lenient fallback the internal fixtures keep.</summary>
 internal sealed class FakeManifest
 {
-    private readonly string _fixtureDir;
+    private readonly IFixtureContent _content;
     private readonly IReadOnlyDictionary<string, FakeState> _states;
 
-    private FakeManifest(string fixtureDir, string initialState, IReadOnlyDictionary<string, FakeState> states, IReadOnlyList<FakeTransition> transitions)
+    private FakeManifest(IFixtureContent content, bool strict, string initialState, IReadOnlyDictionary<string, FakeState> states, IReadOnlyList<FakeTransition> transitions)
     {
-        _fixtureDir = fixtureDir;
+        _content = content;
+        Strict = strict;
         _states = states;
         InitialState = states[initialState];
         Transitions = transitions;
@@ -46,6 +49,10 @@ internal sealed class FakeManifest
 
     /// <summary>All transitions, in declaration order.</summary>
     public IReadOnlyList<FakeTransition> Transitions { get; }
+
+    /// <summary>Whether this is a strict tenant-replay manifest: an unrecorded goto/click is a terminal
+    /// <see cref="FixtureDivergenceException"/>, not the lenient internal fallback (initial state / silent no-op).</summary>
+    public bool Strict { get; }
 
     /// <summary>Resolves a state by name (used when applying a transition's target).</summary>
     public FakeState State(string name) => _states[name];
@@ -64,16 +71,22 @@ internal sealed class FakeManifest
         return InitialState;
     }
 
-    /// <summary>Reads the HTML served for <paramref name="state"/> from the fixture directory.</summary>
+    /// <summary>Whether any state records a <c>gotoUrl</c> exactly matching <paramref name="url"/> — the strict-replay
+    /// guard for an unrecorded navigation (the lenient path falls back to <see cref="InitialState"/> regardless).</summary>
+    public bool HasGotoMatch(string url) =>
+        _states.Values.Any(state => string.Equals(state.GotoUrl, url, StringComparison.Ordinal));
+
+    /// <summary>Reads the HTML served for <paramref name="state"/> from the content source.</summary>
     public string ReadHtml(FakeState state) => ReadTextFile(state.HtmlFile);
 
-    /// <summary>Reads a fixture HTML file's text — the body of a state's DOM or one of its frames' documents.</summary>
-    public string ReadTextFile(string relativePath) => File.ReadAllText(Path.Combine(_fixtureDir, relativePath));
+    /// <summary>Reads a fixture HTML text — the body of a state's DOM or one of its frames' documents.</summary>
+    public string ReadTextFile(string key) => _content.ReadText(key);
 
     /// <summary>Reads a fixture file's raw bytes — the body a <see cref="FakeDownload"/> transition serves.</summary>
-    public byte[] ReadFile(string relativePath) => File.ReadAllBytes(Path.Combine(_fixtureDir, relativePath));
+    public byte[] ReadFile(string key) => _content.ReadBytes(key);
 
-    /// <summary>Loads and validates <c>manifest.json</c> from <paramref name="fixtureDir"/>.</summary>
+    /// <summary>Loads and validates <c>manifest.json</c> from a shipped <paramref name="fixtureDir"/> (the internal
+    /// acceptance fixtures — never strict).</summary>
     /// <exception cref="FakeBackendException">When the directory or manifest is missing or malformed.</exception>
     public static FakeManifest Load(string fixtureDir)
     {
@@ -83,9 +96,17 @@ internal sealed class FakeManifest
             throw new FakeBackendException($"fixture manifest not found: {manifestPath}");
         }
 
-        // The manifest is an authored fixture, not user input: an empty deserialize or an initialState that names no
-        // declared state faults with a plain CLR error here rather than adding untested defensive branches.
-        var dto = JsonSerializer.Deserialize<ManifestDto>(File.ReadAllText(manifestPath), _serializerOptions)!;
+        return Parse(File.ReadAllText(manifestPath), new DirectoryFixtureContent(fixtureDir), strict: false);
+    }
+
+    /// <summary>Builds a manifest from its JSON plus a <paramref name="content"/> source — shared by the directory load
+    /// (internal fixtures) and a tenant recorded set (in-memory pages, <paramref name="strict"/>).</summary>
+    public static FakeManifest Parse(string manifestJson, IFixtureContent content, bool strict)
+    {
+        // The manifest is an authored fixture or an engine-produced recording, not free user input: an empty deserialize
+        // or an initialState that names no declared state faults with a plain CLR error here rather than adding untested
+        // defensive branches.
+        var dto = JsonSerializer.Deserialize<ManifestDto>(manifestJson, _serializerOptions)!;
 
         var states = dto.States.ToDictionary(
             static kvp => kvp.Key,
@@ -106,7 +127,7 @@ internal sealed class FakeManifest
                 t.Download is null ? null : new FakeDownload(t.Download.File, t.Download.SuggestedFilename)))
             .ToList();
 
-        return new FakeManifest(fixtureDir, dto.InitialState, states, transitions);
+        return new FakeManifest(content, strict, dto.InitialState, states, transitions);
     }
 
     private static readonly JsonSerializerOptions _serializerOptions = new(JsonSerializerDefaults.Web);

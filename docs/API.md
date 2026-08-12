@@ -10,8 +10,9 @@ contracts and endpoints, not from older design notes.
   in a small, pure expression language. The full grammar is the JSON Schema — served live at
   `GET /schema/crawldad-1.schema.json`, where every node and field carries a `description`.
 - **The HTTP surface is small.** Runs (`/runs`, plus SSE / cancel / replay / drift / timeline / screenshots /
-  queue-stats) and managed payloads (`/payloads`, plus revisions / diff). Everything is JSON (except a screenshot,
-  which streams as `image/png`); enums serialize camelCase.
+  queue-stats), managed payloads (`/payloads`, plus revisions / diff), registered browsers (`/browsers`), and
+  record/replay fixture sets (`/fixtures`, for offline payload-regression CI). Everything is JSON (except a
+  screenshot, which streams as `image/png`); enums serialize camelCase.
 - **A failed *run* is not a failed *request*.** A run that starts and faults is `HTTP 200` with a typed
   `failure`. `4xx`/`429` are reserved for requests that never start a run (bad input, an over-depth queue).
 
@@ -29,17 +30,18 @@ contracts and endpoints, not from older design notes.
 10. [Queue stats — `GET /runs/queue-stats`](#10-queue-stats--get-runsqueue-stats)
 11. [Managed payloads — `/payloads`](#11-managed-payloads--payloads)
 12. [Browsers — `/browsers`](#12-browsers--browsers)
-13. [Wire codes](#13-wire-codes)
-14. [Reading validation errors](#14-reading-validation-errors)
-15. [Served docs & health](#15-served-docs--health)
-16. [Examples](#16-examples)
-17. [Endpoint quick reference](#17-endpoint-quick-reference)
+13. [Fixtures — record/replay for payload regression testing — `/fixtures`](#13-fixtures--recordreplay-for-payload-regression-testing--fixtures)
+14. [Wire codes](#14-wire-codes)
+15. [Reading validation errors](#15-reading-validation-errors)
+16. [Served docs & health](#16-served-docs--health)
+17. [Examples](#17-examples)
+18. [Endpoint quick reference](#18-endpoint-quick-reference)
 
 ---
 
 ## 1. Authentication
 
-Every route except the anonymous ones ([§15](#15-served-docs--health)) requires a per-tenant API key,
+Every route except the anonymous ones ([§16](#16-served-docs--health)) requires a per-tenant API key,
 presented **either** way:
 
 ```http
@@ -211,7 +213,7 @@ Failed run — still `200` (the request succeeded; the run faulted):
   "status": "failed",
   "failure": {
     "class": "terminal",                     // terminal | retryable-exhausted
-    "code": "record_not_accessible",         // a stable slug — see §13
+    "code": "record_not_accessible",         // a stable slug — see §14
     "message": "Record not accessible (redirected to /Login.aspx)",
     "atStep": { "index": 2, "kind": "guard" }
   },
@@ -496,7 +498,7 @@ Body `{ "payload": { /* crawldad document */ } }`. Drafts revision 1. Response (
 { "payloadId": "…", "name": "example.title", "revision": 1, "scriptHash": "…", "status": "active" }
 ```
 
-A schema/semantic failure is `400` with the full structured error list ([§14](#14-reading-validation-errors)):
+A schema/semantic failure is `400` with the full structured error list ([§15](#15-reading-validation-errors)):
 
 ```jsonc
 { "errors": [ { "path": "/steps/6/loop", "code": "missing_max_iterations", "message": "…" } ] }
@@ -575,13 +577,98 @@ A tenant registers its browser **connect credentials** through the API rather th
 
 `204` on success; `404` when this tenant has no such name — a name owned by another tenant is simply absent here, so a cross-tenant delete is a plain not-found with no existence oracle.
 
-## 13. Wire codes
+## 13. Fixtures — record/replay for payload regression testing — `/fixtures`
+
+A **payload revision is executable logic**, and a fixture set is how a tenant tests it **offline before it runs against a live site** — the same architecture Crawldad's own acceptance suite uses, generalized to tenants. You **record** a representative live session into a named, tenant-scoped set (each visited page's URL + serialized DOM plus the interactions between them), then **replay** any payload against that set through `POST /runs` — deterministically, with **zero live traffic** — so an external CI job can golden-gate a revision before promoting it. Sets are **tenant-isolated** (a name owned by another tenant is simply absent here) and **managed** resources: they persist until you re-record or delete them (no retention TTL).
+
+Recording captures a **deliberately linear subset**: state-per-navigation/click, page-level **CSS** clicks, and postback emits. That faithfully replays a search/detail extraction session — the phase-2 workload — while staying honest about its limits: a `download`, an in-frame click, or a non-CSS (structured) click selector is **not recorded** and fails the record run classified (`fixture_unrecordable`), rather than banking a set that cannot replay.
+
+### `POST /fixtures/{name}/record` — record a set
+
+`{name}` is a slug (lowercase letters, digits, hyphens; 1–64 chars; no leading/trailing hyphen). The body is a run request — an inline `payload` plus its `inputs` (the **live** backend binding the session runs against, credentialRefs, parameters):
+
+```jsonc
+{
+  "payload": { "crawldad": "1", "name": "county.parcel.search-detail", "config": { "backend": "input.backend" }, "steps": [ … ], "result": "…" },
+  "inputs":  { "backend": { "adapter": "browserless", "credentialRef": "prod-bl" }, "query": "100 Main St" }
+}
+```
+
+The run executes **inline** (a record-once setup step, not a queued run) against its configured backend, banking each settled page state and click. On success the set is stored (**replacing** any prior set of that name) and `200` returns the recorded summary + the run's own `result`:
+
+```jsonc
+{
+  "runId": "9c…",
+  "status": "succeeded",
+  "fixture": { "name": "accela-search", "pageCount": 3, "transitionCount": 2, "totalBytes": 4821,
+               "runId": "9c…", "createdAt": "2026-08-12T12:00:00Z" },
+  "result": { … the payload's result, from the recorded pages … },
+  "stats":  { … }
+}
+```
+
+A record run that **fails** — a run failure, or an unrecordable operation — is `HTTP 200` with a typed `failure` (`status: "failed"`) and **persists no set**, exactly like a failed `POST /runs`. `400` when the name is not a valid slug.
+
+### `GET /fixtures` — list
+
+`200 { "fixtures": [ { name, pageCount, transitionCount, totalBytes, runId, createdAt }, … ] }` — every set this tenant has recorded, ordered by name. Page HTML is never included.
+
+### `GET /fixtures/{name}` — inspect
+
+`200 { "summary": { … }, "manifest": { "initialState", "states": { … url + content-hash … }, "transitions": [ … ] } }` — the recorded state machine, so you can see exactly what coverage a replay has. Page HTML is referenced only by hash, never surfaced. `404` when this tenant has no such set.
+
+### `DELETE /fixtures/{name}` — erase
+
+`204` on success (the manifest and all its page HTML, in one tenant-scoped transaction); `404` when this tenant has no such name.
+
+### Replay — a normal run against the set
+
+Replay is not a new endpoint: `POST /runs` with the payload and a backend input naming the set — `{ "adapter": "fixture", "options": { "fixtureSet": "accela-search" } }`. The run pipeline is unchanged (SSE, stats, timeline all apply); only the backend is the recorded set instead of a live browser. Replay is **strict**: a `goto` to a URL the set never recorded fails `fixture_state_miss` (naming the URL), and a click with no recorded transition fails `fixture_transition_miss` — a divergence from recorded coverage fails **classified**, never a hang or a silent mis-replay. Naming a set that does not exist (or another tenant's) is `backend_unavailable`.
+
+### Golden-gating a revision in CI
+
+The full loop an external pipeline runs — record once, then gate every revision on a green, golden-matching replay before promoting it:
+
+```yaml
+# .github/workflows/gate-payload.yml
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # One-time (or when the site's shape changes): record a representative session.
+      - name: Record fixture set
+        run: |
+          curl -fsS -X POST "$CRAWLDAD/fixtures/accela-search/record" \
+            -H "X-Api-Key: ${{ secrets.CRAWLDAD_KEY }}" -H 'Content-Type: application/json' \
+            --data @record-request.json
+      # Per revision: replay the candidate payload against the set and diff its result against the golden.
+      - name: Replay + golden-compare
+        run: |
+          jq -n --slurpfile p payload.json \
+            '{ payload: $p[0], inputs: { backend: { adapter: "fixture", options: { fixtureSet: "accela-search" } } } }' \
+            > replay.json
+          curl -fsS -X POST "$CRAWLDAD/runs" \
+            -H "X-Api-Key: ${{ secrets.CRAWLDAD_KEY }}" -H 'Content-Type: application/json' \
+            --data @replay.json | jq -e '.status == "succeeded"' > /dev/null
+          # …and diff `.result` against golden.json with your differ of choice (jq, etc.).
+      # Only a green gate promotes the revision production runs:
+      - name: Promote
+        run: curl -fsS -X POST "$CRAWLDAD/payloads/$PAYLOAD_ID/revise" -H "X-Api-Key: ${{ secrets.CRAWLDAD_KEY }}" --data @payload.json
+    env:
+      CRAWLDAD: https://api.crawldad.dev
+      PAYLOAD_ID: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
+```
+
+Crawldad returns the replay `result` normally; the **golden comparison stays external** (your CI owns the golden and the diff) — there is no server-side diff endpoint for this. The candidate `payload.json` you replay is exactly what you promote with `POST /payloads/{id}/revise`, so a green gate proves the revision that production will run.
+
+## 14. Wire codes
 
 Three surfaces carry stable slugs: **request & control rejections** (a `RunRejection` body — `4xx`/`429`), **save-time
 validation** (`400` on `/payloads`), and **run failures** (`failure.code`, `HTTP 200` sync or terminal after a
 `202`). Enum values below are exact.
 
-### 13.1 Request & control rejections — `RunRejection`
+### 14.1 Request & control rejections — `RunRejection`
 
 | Code | HTTP | Where | Meaning |
 |---|---|---|---|
@@ -597,7 +684,7 @@ rejected. `queue_depth_exceeded` is the only `429`. (A malformed request body �
 non-object `inputs`, a non-object payload — is a `400 ProblemDetails` from the boundary validator, not one of
 these slugs.)
 
-### 13.2 Save-time payload validation — `400 PayloadValidationProblem`
+### 14.2 Save-time payload validation — `400 PayloadValidationProblem`
 
 Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two kinds of `code`:
 
@@ -610,7 +697,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 - `payload_archived` is also returned here (as a `PayloadValidationProblem`) by revise/rename/archive on an
   archived payload.
 
-### 13.3 Run failures — `failure.code`
+### 14.3 Run failures — `failure.code`
 
 `failure.class` is `terminal` (never retried) or `retryable-exhausted` (a retryable condition that exhausted
 `config.retry`). Engine and expression failures:
@@ -643,6 +730,9 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `int_conversion_failed` | terminal | a required integer conversion (`toInt`) failed |
 | `invalid_url` | terminal | a URL builtin got a non-absolute URL |
 | `selector_miss` | terminal | a `require(...)`-wrapped extraction (or any extraction under `config.strictExtraction`) matched no element |
+| `fixture_state_miss` | terminal | (replay, [§13](#13-fixtures--recordreplay-for-payload-regression-testing--fixtures)) a `goto` reached a URL the tenant fixture set never recorded — the message names it |
+| `fixture_transition_miss` | terminal | (replay, [§13](#13-fixtures--recordreplay-for-payload-regression-testing--fixtures)) a click had no recorded transition from the current fixture state |
+| `fixture_unrecordable` | terminal | (record, [§13](#13-fixtures--recordreplay-for-payload-regression-testing--fixtures)) `POST /fixtures/{name}/record` hit an operation it cannot capture (a download, an in-frame or non-CSS click, or a session that never navigated) — no set is persisted |
 | `unknown_identifier` | terminal | a bare identifier was unbound at evaluation |
 | `regex_too_large` / `regex_timeout` | terminal | a regex exceeded the size / time guard |
 | `timeout` / `pageCrashed` | retryable-exhausted | the two retryable conditions, after `config.retry` exhausted |
@@ -677,7 +767,7 @@ equal the C# property names; defaults are generous so legitimate runs never trip
 
 ---
 
-## 14. Reading validation errors
+## 15. Reading validation errors
 
 Save-time errors are reported **per (JSON-Pointer location, keyword)**. The one wart to know: a bad node fails
 the schema's `oneOf` over the node vocabulary, and the JSON Schema library reports **every** non-matching
@@ -697,7 +787,7 @@ the reliable anchor.
 
 ---
 
-## 15. Served docs & health
+## 16. Served docs & health
 
 Four routes are deliberately **anonymous** (no key), because each is a public, tenant-independent artifact:
 
@@ -713,7 +803,7 @@ only anonymous ones.
 
 ---
 
-## 16. Examples
+## 17. Examples
 
 Eight curated, schema-valid payloads live in [`docs/examples/`](examples/) (every one is validated against the
 schema in CI, so they never drift). Five are lifted verbatim from the tested acceptance fixtures; three
@@ -768,7 +858,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 
 ---
 
-## 17. Endpoint quick reference
+## 18. Endpoint quick reference
 
 | Method + route | Auth | Body | Success | Errors |
 |---|---|---|---|---|
@@ -793,6 +883,10 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `PUT /browsers/{name}` | ✔ | `RegisterBrowserRequest` | `200 BrowserSummary` | `400` |
 | `GET /browsers` | ✔ | — | `200 BrowserListResponse` | — |
 | `DELETE /browsers/{name}` | ✔ | — | `204` | `404` |
+| `POST /fixtures/{name}/record` | ✔ | `RecordFixtureRequest` | `200 RecordFixtureResponse` | `400` |
+| `GET /fixtures` | ✔ | — | `200 FixtureListResponse` | — |
+| `GET /fixtures/{name}` | ✔ | — | `200 FixtureDetailResponse` | `404` |
+| `DELETE /fixtures/{name}` | ✔ | — | `204` | `404` |
 | `GET /health` | — | — | `200` | — |
 | `GET /schema/crawldad-1.schema.json` | — | — | `200 application/schema+json` | — |
 | `GET /llms.txt` | — | — | `200 text/plain` | — |

@@ -1,0 +1,33 @@
+{
+  "manifest": "1",
+  "description": "The search+detail 'site' served to the record run for the issue #74 acceptance test: form --click(#searchBtn), POST emit--> results --click(#detailLink)--> detail. This drives the FakeBrowserBackend during recording; the recorder banks these three page states + two transitions into a tenant fixture set that then replays a payload deterministically. No Chromium, no live traffic.",
+  "initialState": "form",
+  "states": {
+    "form": {
+      "gotoUrl": "https://county.example/search",
+      "url": "https://county.example/search",
+      "html": "form.html"
+    },
+    "results": {
+      "url": "https://county.example/search",
+      "html": "results.html"
+    },
+    "detail": {
+      "url": "https://county.example/parcel/42",
+      "html": "detail.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "form",
+      "on": { "click": "#searchBtn" },
+      "to": "results",
+      "emit": { "url": "https://county.example/search", "method": "POST" }
+    },
+    {
+      "from": "results",
+      "on": { "click": "#detailLink" },
+      "to": "detail"
+    }
+  ]
+}
