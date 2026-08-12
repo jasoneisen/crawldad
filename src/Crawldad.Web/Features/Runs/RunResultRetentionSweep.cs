@@ -12,9 +12,11 @@ namespace Crawldad.Web.Features.Runs;
 ///
 /// <para><b>What expires:</b> the terminal run's <see cref="RunProgress.ResultJson"/>/<see cref="RunProgress.PartialJson"/>
 /// body is nulled and a <see cref="RunProgress.ResultExpiredAt"/> marker stamped — <b>not</b> the whole document. The run's
-/// status/stats stay queryable via <c>GET /runs/{id}</c> (a coherent "result aged out" shape, not a surprise 404), and the
-/// immutable event timeline is left untouched (its bulk-PII lives in the result body, not the ref-only trace; timeline
-/// archival at expiry is issue #46's concern). On-demand full erasure is the separate <c>DELETE /runs/{id}</c> path.</para>
+/// status/stats stay queryable via <c>GET /runs/{id}</c> (a coherent "result aged out" shape, not a surprise 404). The bulk
+/// PII is that result body (nulled here); the immutable event timeline is left untouched — its narrower residual PII
+/// (scrubbed-but-not-PII-free navigated URLs / log text) is issue #46's archival concern, not this sweep's. On-demand full
+/// erasure is the separate <c>DELETE /runs/{id}</c> path. Blob artifacts (screenshots/downloads/captures) are unaffected —
+/// they age out on their own blob TTLs.</para>
 ///
 /// <para><b>Tenant-correct:</b> under conjoined multi-tenancy every row is tenant-qualified, so the sweep fans out over
 /// each configured tenant under its own session (the same pattern as <c>RunRecoveryService</c>), never a cross-tenant
@@ -36,6 +38,11 @@ public sealed class RunResultRetentionSweep(IDocumentStore store, TenantRegistry
 
         var cutoff = now - ttl;
         var expired = 0;
+
+        // Fan out over the CONFIGURED tenants only (conjoined tenancy needs a tenant to scope each session). Known
+        // limitation, shared with RunRecoveryService: a tenant removed from Crawldad:Tenants is no longer enumerated, so
+        // its stored result bodies are orphaned (retained indefinitely) — unlike blobs, which the janitor enumerates
+        // physically across all tenants. De-provisioning must therefore erase a departing tenant's results out of band.
         foreach (var tenantId in tenants.TenantIds)
         {
             expired += await SweepTenantAsync(tenantId, now, cutoff, ct);

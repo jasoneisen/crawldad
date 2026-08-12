@@ -143,11 +143,25 @@ public sealed class RunQueue(
         TryClaimTerminalAsync(tenantId, runId, new RunCancelled(EmptyStats, clock.GetUtcNow()), static p => p.Status = RunStatus.Cancelled, ct);
 
     /// <summary>Times out a run that has waited past its max queue wait: drives it to a terminal
-    /// <c>queue_wait_exceeded</c> failure under the exclusive lock, or no-ops when it already left the queue.</summary>
-    public Task<bool> TimeoutQueuedAsync(string tenantId, Guid runId, CancellationToken ct)
+    /// <c>queue_wait_exceeded</c> failure under the exclusive lock, or no-ops when it already left the queue — including
+    /// when it was <b>erased</b> on demand (<c>DELETE /runs/{id}</c>) after finishing but before this durable deadline fired.</summary>
+    public async Task<bool> TimeoutQueuedAsync(string tenantId, Guid runId, CancellationToken ct)
     {
+        // The max-wait deadline is a durable message Wolverine cannot un-schedule, so it can fire AFTER its run reached
+        // terminal and was then erased (DELETE /runs/{id} deletes RunProgress AND its event stream, #71). An erased run has
+        // nothing to time out, and the claim's AppendExclusive would throw NonExistentStreamException on the gone stream —
+        // so screen it out first. Only this deadline path can meet an erased run: a queued run can't be erased (409), so
+        // promotion/cancel never do, and their genuinely-corrupt states must still surface through the claim, not here.
+        await using (var probe = store.QuerySession(tenantId))
+        {
+            if (await probe.LoadAsync<RunProgress>(runId, ct) is null)
+            {
+                return false;
+            }
+        }
+
         var failure = new RunFailureDetail("terminal", QueueWaitExceededCode, "the run exceeded its maximum queue wait", new RunStepRef(0, "queue"));
-        return TryClaimTerminalAsync(tenantId, runId, new RunFailed(failure, EmptyStats, clock.GetUtcNow()), p =>
+        return await TryClaimTerminalAsync(tenantId, runId, new RunFailed(failure, EmptyStats, clock.GetUtcNow()), p =>
         {
             p.Status = RunStatus.Failed;
             p.Failure = failure;
@@ -211,7 +225,11 @@ public sealed class RunQueue(
 
     // The single mutual-exclusion point for a queued run's competing writers (promotion, cancel, wait-timeout):
     // AppendExclusive holds the stream's advisory lock while it re-reads RunProgress and commits IFF still queued, so
-    // exactly one wins. RunProgress is created at enqueue and only updated (never deleted), so it is present under the lock.
+    // exactly one wins. AppendExclusive requires the stream to EXIST (it throws NonExistentStreamException otherwise); since
+    // DELETE /runs/{id} erasure (#71) deletes RunProgress and its event stream together, reaching the load means the stream
+    // — and so RunProgress — is present, so the ! is safe. A durable QueueWaitDeadline that fires after its run was erased
+    // is screened out by TimeoutQueuedAsync before it reaches here; promotion/cancel never target an erased run (a queued
+    // run can't be erased — DELETE 409s it). A genuinely corrupt QueuedRun-without-stream throws here, as it should.
     private async Task<bool> TryClaimTerminalAsync(string tenantId, Guid runId, object transition, Action<RunProgress> applyWon, CancellationToken ct)
     {
         await using var session = store.LightweightSession(tenantId);

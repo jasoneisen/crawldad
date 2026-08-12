@@ -462,6 +462,12 @@ gone, not merely archived. The response is `204` with no body (the erased conten
 After a successful erase, `GET /runs/{id}`, `/timeline`, `/drift`, and `/events` all `404` — the run is gone
 coherently.
 
+**Scope — what this does not delete.** The run's **blob artifacts** (its `screenshot`/`download`/`capture` files) are
+*not* removed by `DELETE`; they age out on their own retention (screenshots/downloads on `ScreenshotTtl`/`DownloadTtl` via
+the blob janitor, or never if that TTL is `0`; captures live in the tenant's own storage under the tenant's own retention).
+This erases the run's stored **result body and event/timeline state**; blob-level on-demand erasure is separate
+(THREAT_MODEL.md, future work).
+
 ---
 
 ## 10. Queue stats — `GET /runs/queue-stats`
