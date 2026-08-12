@@ -51,6 +51,16 @@ internal sealed class FakePageHandle : IPageHandle
 
     public Task GotoAsync(string url, string? waitUntil, int? timeoutMs, CancellationToken ct)
     {
+        // Strict tenant replay: a navigation to a URL the set never recorded is a classified divergence (naming the
+        // URL), never the lenient fall-back to the initial state — so a payload revision that reaches an uncaptured page
+        // fails loud instead of silently replaying the wrong DOM. The internal fixtures keep the lenient fallback.
+        if (_manifest.Strict && !_manifest.HasGotoMatch(url))
+        {
+            throw new FixtureDivergenceException(
+                FixtureDivergenceException.StateMissCode,
+                $"the payload navigated to '{url}', which this fixture set never recorded");
+        }
+
         _state = _manifest.ResolveGoto(url);
         return Task.CompletedTask;
     }
@@ -139,41 +149,49 @@ internal sealed class FakePageHandle : IPageHandle
     /// <paramref name="frame"/> not matching the transition's own scope is a no-op.</summary>
     internal void HandleClick(IElement? element, string? frame)
     {
-        if (element is null)
+        if (element is not null)
         {
-            return;
+            foreach (var transition in _manifest.Transitions)
+            {
+                if (!string.Equals(transition.From, _state.Name, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(transition.In, frame, StringComparison.Ordinal))
+                {
+                    continue; // the click's frame scope must match the transition's
+                }
+
+                var document = frame is null ? CurrentDocument : FrameDocument(frame);
+                if (ReferenceEquals(document.QuerySelector(transition.ClickSelector), element))
+                {
+                    MaybeInject(transition); // a scripted fault throws here for its leading attempts
+
+                    if (transition.Download is { } download)
+                    {
+                        _pendingDownload = new FakeDownloadHandle(_manifest.ReadFile(download.File), download.SuggestedFilename);
+                    }
+
+                    if (transition.Emit is { } emit)
+                    {
+                        _recentRequests.Add(emit);
+                    }
+
+                    _state = _manifest.State(transition.To);
+                    return;
+                }
+            }
         }
 
-        foreach (var transition in _manifest.Transitions)
+        // Strict tenant replay: no recorded transition fired for this click (an unmatched element, or a click the
+        // recording never made from this state) — a classified divergence naming the current state, so a divergent
+        // payload fails loud rather than silently continuing on the wrong DOM. The internal fixtures no-op, as before.
+        if (_manifest.Strict)
         {
-            if (!string.Equals(transition.From, _state.Name, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (!string.Equals(transition.In, frame, StringComparison.Ordinal))
-            {
-                continue; // the click's frame scope must match the transition's
-            }
-
-            var document = frame is null ? CurrentDocument : FrameDocument(frame);
-            if (ReferenceEquals(document.QuerySelector(transition.ClickSelector), element))
-            {
-                MaybeInject(transition); // a scripted fault throws here for its leading attempts
-
-                if (transition.Download is { } download)
-                {
-                    _pendingDownload = new FakeDownloadHandle(_manifest.ReadFile(download.File), download.SuggestedFilename);
-                }
-
-                if (transition.Emit is { } emit)
-                {
-                    _recentRequests.Add(emit);
-                }
-
-                _state = _manifest.State(transition.To);
-                return;
-            }
+            throw new FixtureDivergenceException(
+                FixtureDivergenceException.TransitionMissCode,
+                $"the payload clicked an element in fixture state '{_state.Name}' with no recorded transition — the fixture set did not record this interaction");
         }
     }
 

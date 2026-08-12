@@ -1,0 +1,23 @@
+{
+  "crawldad": "1",
+  "name": "county.parcel.search-detail",
+  "inputs": {
+    "backend": { "type": "backend", "required": true },
+    "query": { "type": "string", "required": false }
+  },
+  "config": { "backend": "input.backend", "defaultTimeoutMs": 120000 },
+  "steps": [
+    { "goto": { "url": "https://county.example/search" } },
+    { "waitForLoadState": { "state": "networkidle" } },
+    { "if": { "cond": "!isNullOrWhitespace(input.query)", "then": [
+        { "fill": { "selector": "#query", "value": "input.query" } }
+    ] } },
+    { "waitForRequest": {
+        "urlPrefix": "https://county.example/search", "method": "POST",
+        "trigger": [ { "click": { "selector": "#searchBtn" } } ] } },
+    { "waitFor": { "selector": "#loading", "state": "hidden" } },
+    { "click": { "selector": "#detailLink" } },
+    { "waitForLoadState": { "state": "networkidle" } }
+  ],
+  "result": "{ parcelId: trim(text('#parcelId')), owner: trim(text('#owner')), address: trim(text('#address')), status: trim(text('#status')) }"
+}

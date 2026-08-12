@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Crawldad.Contracts;
 using Crawldad.Contracts.Browsers;
+using Crawldad.Contracts.Fixtures;
 using Crawldad.Contracts.Payloads;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Infrastructure.Security;
@@ -28,6 +29,7 @@ public static class OpenApiSpec
     private const string _runs = "Runs";
     private const string _payloads = "Payloads";
     private const string _browsers = "Browsers";
+    private const string _fixtures = "Fixtures";
     private const string _docs = "Docs";
 
     private const string _infoDescription =
@@ -81,6 +83,10 @@ public static class OpenApiSpec
         new(nameof(RegisterBrowserRequest), typeof(RegisterBrowserRequest)),
         new(nameof(BrowserSummary), typeof(BrowserSummary)),
         new(nameof(BrowserListResponse), typeof(BrowserListResponse)),
+        new(nameof(RecordFixtureRequest), typeof(RecordFixtureRequest), SwapPayload: true),
+        new(nameof(RecordFixtureResponse), typeof(RecordFixtureResponse)),
+        new(nameof(FixtureListResponse), typeof(FixtureListResponse)),
+        new(nameof(FixtureDetailResponse), typeof(FixtureDetailResponse)),
     ];
 
     // The single source of truth for the envelope. The drift test asserts this set of (method, path) equals the live route
@@ -182,6 +188,24 @@ public static class OpenApiSpec
             [new("200", "Every browser the tenant has registered — name, adapter, mode, options, and timestamps; secrets omitted.", Component: nameof(BrowserListResponse))]),
         new("delete", "/browsers/{name}", "unregisterBrowser", "Unregister a browser credential.", _browsers, Anonymous: false, [Name], null,
             [new("204", "The registration was removed."), NotFound("browser")]),
+
+        // Tenant fixture record/replay (offline payload-regression testing; a recorded set replays via a config.backend "fixture" binding).
+        new("post", "/fixtures/{name}/record", "recordFixture", "Record a session into a tenant fixture set.", _fixtures, Anonymous: false, [FixtureName],
+            new(nameof(RecordFixtureRequest), "A run request — an inline payload plus its inputs (the live backend the session runs against, credentialRefs, parameters) — executed while banking each page state into the named set."),
+            [
+                new("200", "The record run's disposition: on success the recorded set summary + the run's own result; on failure (a divergence, an unrecordable operation, or any run failure) a typed failure and no set persisted — a failed record run is still HTTP 200.", Component: nameof(RecordFixtureResponse)),
+                new("400", "The set name is not a valid slug — an RFC 7807 problem+json."),
+            ],
+            Description: "Executes the payload inline against its configured backend, banking each settled page (URL + serialized DOM) and interaction into a named, tenant-scoped fixture set that POST /runs can then replay deterministically with zero live traffic. On success the set is stored (replacing any prior set of that name). The recorded subset is linear (state-per-navigation/click, page-level CSS clicks, postback emits); a download, an in-frame click, or a non-CSS click selector fails the record run classified (fixture_unrecordable) and persists nothing."),
+        new("get", "/fixtures", "listFixtures", "List recorded fixture sets.", _fixtures, Anonymous: false, [], null,
+            [new("200", "Every fixture set the tenant has recorded — name, page/transition counts, byte size, source run, and timestamp; page HTML omitted.", Component: nameof(FixtureListResponse))]),
+        new("get", "/fixtures/{name}", "getFixture", "Inspect a fixture set's manifest.", _fixtures, Anonymous: false, [FixtureName], null,
+            [
+                new("200", "The set summary plus the recorded manifest (initial state, each state's URL + content-hash, the transition graph); page HTML referenced only by hash.", Component: nameof(FixtureDetailResponse)),
+                NotFound("fixture set"),
+            ]),
+        new("delete", "/fixtures/{name}", "deleteFixture", "Erase a fixture set.", _fixtures, Anonymous: false, [FixtureName], null,
+            [new("204", "The set (manifest + page HTML) was erased."), NotFound("fixture set")]),
     ];
 
     /// <summary>The generated OpenAPI 3.1 document, as indented JSON. Built once — deterministic, like the embedded schema.</summary>
@@ -191,6 +215,8 @@ public static class OpenApiSpec
     private static Param Id => new("id", Integer: false, "The resource id (UUID).");
 
     private static Param Name => new("name", Integer: false, "The registered browser name (a lowercase slug).", Uuid: false);
+
+    private static Param FixtureName => new("name", Integer: false, "The fixture-set name (a lowercase slug).", Uuid: false);
 
     private static Param Reference => new("reference", Integer: false, "The screenshot ref's {sha256}.png tail (the timeline's screenshotRef without its screenshots/ prefix).", Uuid: false);
 
@@ -248,6 +274,7 @@ public static class OpenApiSpec
         new JsonObject { ["name"] = _runs, ["description"] = "Start, poll, stream, cancel, replay, and inspect runs." },
         new JsonObject { ["name"] = _payloads, ["description"] = "Draft, revise, rename, archive, list, and diff managed payloads." },
         new JsonObject { ["name"] = _browsers, ["description"] = "Register, list, and unregister tenant browser connect credentials." },
+        new JsonObject { ["name"] = _fixtures, ["description"] = "Record, list, inspect, and erase tenant fixture sets for offline payload-regression testing." },
         new JsonObject { ["name"] = _docs, ["description"] = "Anonymous, tenant-independent product artifacts (health, schema, discovery, this document)." },
     ];
 

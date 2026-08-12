@@ -52,6 +52,7 @@ internal sealed class RunInterpreter
     private readonly IRunObserver? _observer;
     private readonly ResumeState? _resume;
     private readonly IScreenshotStore? _screenshots;
+    private readonly IFixtureRecorder? _recorder; // record mode: banks page states + transitions into a fixture set; null on every ordinary run
     private readonly RunLimits _limits;
     private readonly List<object> _events = [];
     private readonly Dictionary<string, Func<JsonElement, CancellationToken, ValueTask<Flow>>> _dispatch;
@@ -80,7 +81,8 @@ internal sealed class RunInterpreter
 
     /// <summary>Creates an interpreter for one run (or one resume). <paramref name="tenant"/> partitions download/
     /// screenshot storage; <paramref name="observer"/>/<paramref name="resume"/>/<paramref name="screenshots"/> are null
-    /// on the synchronous path; <paramref name="limits"/> defaults to <see cref="RunLimits.Default"/> when null.</summary>
+    /// on the synchronous path; <paramref name="limits"/> defaults to <see cref="RunLimits.Default"/> when null;
+    /// <paramref name="recorder"/> is non-null only on the record-mode path and banks page states/transitions as the run executes.</summary>
     public RunInterpreter(
         JsonElement payload,
         IReadOnlyDictionary<string, object?> input,
@@ -93,7 +95,8 @@ internal sealed class RunInterpreter
         IScreenshotStore? screenshots = null,
         RunLimits? limits = null,
         ISecretStoreRegistry? secretStores = null,
-        IRunSecretScope? secretScope = null)
+        IRunSecretScope? secretScope = null,
+        IFixtureRecorder? recorder = null)
     {
         _payload = payload;
         _input = input;
@@ -106,6 +109,7 @@ internal sealed class RunInterpreter
         _observer = observer;
         _resume = resume;
         _screenshots = screenshots;
+        _recorder = recorder;
         _limits = limits ?? RunLimits.Default;
         _checkpointSeq = resume?.Sequence ?? 0; // keep checkpoint sequence monotonic across a resume
 
@@ -189,6 +193,11 @@ internal sealed class RunInterpreter
         {
             return await ReportFailedAsync("terminal", _backendUnavailableCode, ex.Message, startedAt, screenshot: false, ct);
         }
+        catch (FixtureDivergenceException ex)
+        {
+            // A strict tenant fixture replay diverged (unrecorded goto/click): terminal, classified by the exception's own code, naming the miss; no page screenshot.
+            return await ReportFailedAsync("terminal", ex.Code, ex.Message, startedAt, screenshot: false, ct);
+        }
         catch (BrowserConnectException ex)
         {
             // A real adapter could not connect (bad/absent credential, or a transient fault that outlived connectRetry).
@@ -210,8 +219,9 @@ internal sealed class RunInterpreter
         {
             try
             {
-                _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget, _missSink); // FRESH scope per attempt — re-evaluate vars, same session (secretRefs excluded)
+                _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget, _missSink); // FRESH scope per attempt (secretRefs excluded)
                 _scope.Bind(_page);
+                _recorder?.Reset(); // discard any partial recording from a prior (retried) attempt — bank only the successful pass
                 if (_resume is null)
                 {
                     await EvaluateVarsAsync(ct);
@@ -223,6 +233,7 @@ internal sealed class RunInterpreter
                 }
 
                 var result = JsonValues.ToJson(await EvaluateResultAsync(ct));
+                await FinalizeRecordingAsync(ct); // settle the final DOM into the recorded manifest (a no-op on every ordinary run)
                 return new RunOutcome(RunStatus.Succeeded, result, null, null, Stats(startedAt), _events);
             }
             catch (RunCancelledSignal)
@@ -274,6 +285,11 @@ internal sealed class RunInterpreter
         ExpressionEvaluationException e => (e.Code, false, false),
         _ => (((ExpressionParseException)ex).Code, false, false),
     };
+
+    // Settles the final DOM into the recorder on a successful run (closing the last open transition); a no-op on every
+    // ordinary run, so behaviour and goldens are unchanged unless record mode is active.
+    private ValueTask FinalizeRecordingAsync(CancellationToken ct) =>
+        _recorder is null ? ValueTask.CompletedTask : _recorder.FinalizeAsync(_scope.PageHandle, ct);
 
     private async ValueTask ReopenPageAsync(IBrowserSession session, CancellationToken ct)
     {
@@ -553,6 +569,11 @@ internal sealed class RunInterpreter
         var url = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "url")).RenderAsync(_scope, ct);
         await _scope.PageHandle.GotoAsync(url, OptString(body, "waitUntil"), Timeout(body), ct);
         _requests++;
+        if (_recorder is not null)
+        {
+            await _recorder.OnNavigatedAsync(url, _scope.PageHandle, ct); // bank the landing DOM as a gotoUrl state
+        }
+
         await StepAsync(new Navigated(url, _clock.GetUtcNow()), ct); // the URL is scrubbed at the sink
     }
 
@@ -584,12 +605,17 @@ internal sealed class RunInterpreter
         var urlPrefix = await CrawldadTemplate.Parse(NodeJson.RequireString(body, "urlPrefix")).RenderAsync(_scope, ct);
         var trigger = NodeJson.RequireElement(body, "trigger");
         var start = _clock.GetUtcNow();
+
+        // Arm the emit the trigger's click will record (so a strict replay's postback wait matches), disarming once the
+        // wait completes. Null recorder ⇒ both are no-ops and the wait is byte-identical to an ordinary run.
+        _recorder?.SetPendingEmit(urlPrefix, OptString(body, "method"));
         await _scope.PageHandle.RunAndWaitForRequestAsync(
             () => ExecuteBlockAsync(trigger, ct).AsTask(),
             urlPrefix,
             OptString(body, "method"),
             Timeout(body),
             ct);
+        _recorder?.ClearPendingEmit();
         _requests++;
         await StepAsync(new Waited("request", ElapsedMs(start), _clock.GetUtcNow()), ct);
     }
@@ -608,6 +634,15 @@ internal sealed class RunInterpreter
     private async ValueTask ClickAsync(JsonElement body, CancellationToken ct)
     {
         var handle = await ResolveSelectorAsync(body, ct);
+        if (_recorder is not null)
+        {
+            // Record the click's from-state and open a transition BEFORE the click fires — a string CSS selector is the
+            // recordable form; a structured/non-CSS selector (css null) or an in-frame click is rejected by the recorder.
+            var selector = body.GetProperty("selector");
+            var css = selector.ValueKind == JsonValueKind.String ? selector.GetString() : null;
+            await _recorder.OnClickAsync(css, body.TryGetProperty("in", out _), _scope.PageHandle, ct);
+        }
+
         await handle.ClickAsync(Timeout(body), ct);
         await StepAsync(new Clicked(SelectorLabel(body), _clock.GetUtcNow()), ct); // selector text scrubbed at the sink
     }
@@ -753,6 +788,7 @@ internal sealed class RunInterpreter
     // dl = { contentId, sha256, sizeBytes, storedAs, stored }; download failure/timeout is retryable.
     private async ValueTask DownloadAsync(JsonElement body, CancellationToken ct)
     {
+        _recorder?.RejectUnrecordable("download"); // record mode does not capture downloads in v1 — fail the record run classified
         var sink = ResolveSink(await ExprAsync(body, "to", ct), InterpreterErrorCodes.InvalidDownloadTarget, InterpreterErrorCodes.UnknownDownloadSink, "download");
         var trigger = NodeJson.RequireElement(body, "trigger");
         var download = await _scope.PageHandle.RunAndWaitForDownloadAsync(

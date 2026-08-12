@@ -1,5 +1,6 @@
 using Crawldad.Contracts;
 using Crawldad.Web.Features.Browsers;
+using Crawldad.Web.Features.Fixtures;
 using Crawldad.Web.Features.Payloads;
 using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Security;
@@ -43,17 +44,16 @@ public static class HostConfiguration
                 options.DatabaseSchemaName = "crawldad";
 
                 // Per-tenant data isolation via Marten's native conjoined multi-tenancy: one shared schema with every
-                // event stream and document row qualified by a tenant_id, every session opened for a tenant. Event
-                // tenancy covers the Payload/Run aggregates; AllDocuments extends it to the read-model docs.
+                // event stream and document row qualified by a tenant_id, every session opened for a tenant.
                 options.Policies.AllDocumentsAreMultiTenanted();
                 options.Events.TenancyStyle = TenancyStyle.Conjoined;
 
-                // Each vertical slice self-registers its events/projections on the shared lifecycle: the Payloads
-                // aggregate + summary read model, and the Run aggregate + step-trace/timeline read models — each
-                // filling its module in place exactly as IncidentModule does in the foundation.
+                // Each vertical slice self-registers its events/projections on the shared lifecycle (Payloads + Run
+                // aggregates and their read models), filling its module in place exactly as IncidentModule does.
                 PayloadsModule.ConfigureMarten(options, projectionLifecycle);
                 RunsModule.ConfigureMarten(options, projectionLifecycle);
                 BrowsersModule.ConfigureMarten(options); // the tenant-scoped browser-credential document (no projection)
+                FixturesModule.ConfigureMarten(options); // the tenant-scoped recorded fixture-set document (no projection)
             })
             .IntegrateWithWolverine()           // transactional outbox/inbox + aggregate handlers
             .AddAsyncDaemon(DaemonMode.HotCold);
@@ -86,6 +86,7 @@ public static class HostConfiguration
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
         BrowsersModule.AddBrowsersServices(builder.Services); // browser-registration store + encrypting resolver
+        FixturesModule.AddFixturesServices(builder.Services); // tenant fixture-set store + the `fixture` replay backend
         StorageModule.AddStorage(builder.Services, builder.Configuration); // durable download sink + screenshot store + retention janitor
         DataProtectionModule.AddKeyRingProtection(builder.Services, builder.Configuration); // the at-rest secret cipher + its persisted key ring
         AddTenantSecurity(builder);

@@ -66,7 +66,7 @@
       "properties": {
         "backend": {
           "type": "string",
-          "description": "Expr resolving to the { adapter, options } backend binding."
+          "description": "Expr resolving to the { adapter, options } backend binding. A real adapter (browserless/browserbase/local) drives a live browser; the tenant fixture-replay adapter `{ adapter: \"fixture\", options: { fixtureSet: \"<name>\" } }` replays a previously recorded, tenant-scoped fixture set deterministically with zero live traffic — the offline path for golden-gating a payload revision in CI. Record a set with `POST /fixtures/{name}/record`; a replay that navigates to a URL the set never recorded, or clicks off the recorded path, fails classified (`fixture_state_miss` / `fixture_transition_miss`) rather than mis-replaying. An unknown set is `backend_unavailable`."
         },
         "defaultTimeoutMs": {
           "type": "integer",
