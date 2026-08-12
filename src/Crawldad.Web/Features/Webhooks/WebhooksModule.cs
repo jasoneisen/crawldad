@@ -1,0 +1,32 @@
+using Crawldad.Contracts.Webhooks;
+using FluentValidation;
+using Marten;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+
+namespace Crawldad.Web.Features.Webhooks;
+
+/// <summary>Self-registration for the Webhooks slice: the tenant-scoped <see cref="WebhookEndpoint"/> registration
+/// document, the register-request validator, the encrypting endpoint store, the outbound-HTTP sender seam, and the bound,
+/// boot-validated delivery options. Mirrors the Browsers/Runs module shape. The delivery + fan-out message handlers are
+/// discovered by Wolverine; the durable outbox/retry needs no explicit registration here.</summary>
+public static class WebhooksModule
+{
+    /// <summary>Registers the plain, tenant-scoped <see cref="WebhookEndpoint"/> document (secret encrypted at rest; no
+    /// event stream carries the secret). Multi-tenancy comes from the shared <c>AllDocumentsAreMultiTenanted</c> policy.</summary>
+    public static void ConfigureMarten(StoreOptions options) => options.Schema.For<WebhookEndpoint>();
+
+    /// <summary>Registers the slice's services: the register validator, the encrypting endpoint store, the HTTP sender,
+    /// and the bound delivery options with their boot-time validator. Data Protection (the at-rest cipher) and the
+    /// <c>IHttpClientFactory</c> are host-wide seams the slice leans on.</summary>
+    public static void AddWebhooksServices(IServiceCollection services)
+    {
+        services.AddScoped<IValidator<RegisterWebhookRequest>, RegisterWebhookRequestValidator>();
+        services.AddSingleton<IWebhookEndpointStore, MartenWebhookEndpointStore>();
+        services.AddSingleton<IWebhookSender, HttpWebhookSender>();
+        services.AddHttpClient(); // IHttpClientFactory for the delivery POST (idempotent if another slice added it)
+
+        services.AddOptions<WebhookOptions>().BindConfiguration(WebhookOptions.Section).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<WebhookOptions>, WebhookOptionsValidator>();
+    }
+}

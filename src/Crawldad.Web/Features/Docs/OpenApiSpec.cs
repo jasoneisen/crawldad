@@ -11,6 +11,7 @@ using Crawldad.Contracts.Drift;
 using Crawldad.Contracts.Fixtures;
 using Crawldad.Contracts.Payloads;
 using Crawldad.Contracts.Runs;
+using Crawldad.Contracts.Webhooks;
 using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Web.Features.Docs;
@@ -31,6 +32,7 @@ public static class OpenApiSpec
     private const string _payloads = "Payloads";
     private const string _browsers = "Browsers";
     private const string _fixtures = "Fixtures";
+    private const string _webhooks = "Webhooks";
     private const string _docs = "Docs";
 
     private const string _infoDescription =
@@ -89,6 +91,10 @@ public static class OpenApiSpec
         new(nameof(RecordFixtureResponse), typeof(RecordFixtureResponse)),
         new(nameof(FixtureListResponse), typeof(FixtureListResponse)),
         new(nameof(FixtureDetailResponse), typeof(FixtureDetailResponse)),
+        new(nameof(RegisterWebhookRequest), typeof(RegisterWebhookRequest)),
+        new(nameof(WebhookSummary), typeof(WebhookSummary)),
+        new(nameof(WebhookListResponse), typeof(WebhookListResponse)),
+        new(nameof(WebhookEventEnvelope), typeof(WebhookEventEnvelope)),
     ];
 
     // The single source of truth for the envelope. The drift test asserts this set of (method, path) equals the live route
@@ -211,6 +217,19 @@ public static class OpenApiSpec
             ]),
         new("delete", "/fixtures/{name}", "deleteFixture", "Erase a fixture set.", _fixtures, Anonymous: false, [FixtureName], null,
             [new("204", "The set (manifest + page HTML) was erased."), NotFound("fixture set")]),
+
+        // Webhook endpoints (tenant self-service; a run's terminal disposition is signed and POSTed to the registered URL).
+        new("put", "/webhooks/{name}", "registerWebhook", "Register or replace a webhook endpoint.", _webhooks, Anonymous: false, [WebhookName],
+            new(nameof(RegisterWebhookRequest), "The delivery URL, the HMAC signing secret, and the subscribed event types (empty = all). The secret is encrypted at rest and never returned."),
+            [
+                new("200", "The registered webhook's metadata — never the secret.", Component: nameof(WebhookSummary)),
+                new("400", "The name is not a valid slug, or the body failed validation (a non-https/private/loopback URL, an empty or too-short secret, or an unknown event type) — an RFC 7807 problem+json."),
+            ],
+            Description: "Registers (or replaces) a webhook endpoint for the authenticated tenant under {name}. When a run reaches a terminal disposition (succeeded/failed/cancelled), a small ref-only JSON envelope (WebhookEventEnvelope — never result content) is POSTed to the URL, signed with an HMAC-SHA256 X-Crawldad-Signature over the raw body under the endpoint's secret plus an X-Crawldad-Timestamp (replay bound). The secret is caller-supplied, encrypted at rest (ASP.NET Data Protection), and never echoed in any response, event, or log; rotate it by re-registering. The URL must be https and must not target a loopback, link-local, or private (RFC 1918 / unique-local) address (SSRF guard). Delivery is durable and at-least-once with bounded exponential-backoff retry; a down receiver never affects run execution. Empty events subscribes to all terminal-run types."),
+        new("get", "/webhooks", "listWebhooks", "List registered webhook endpoints.", _webhooks, Anonymous: false, [], null,
+            [new("200", "Every webhook endpoint the tenant has registered — name, url, events, and timestamps; secrets omitted.", Component: nameof(WebhookListResponse))]),
+        new("delete", "/webhooks/{name}", "unregisterWebhook", "Unregister a webhook endpoint.", _webhooks, Anonymous: false, [WebhookName], null,
+            [new("204", "The registration was removed."), NotFound("webhook")]),
     ];
 
     /// <summary>The generated OpenAPI 3.1 document, as indented JSON. Built once — deterministic, like the embedded schema.</summary>
@@ -222,6 +241,8 @@ public static class OpenApiSpec
     private static Param Name => new("name", Integer: false, "The registered browser name (a lowercase slug).", Uuid: false);
 
     private static Param FixtureName => new("name", Integer: false, "The fixture-set name (a lowercase slug).", Uuid: false);
+
+    private static Param WebhookName => new("name", Integer: false, "The registered webhook name (a lowercase slug).", Uuid: false);
 
     private static Param Reference => new("reference", Integer: false, "The screenshot ref's {sha256}.png tail (the timeline's screenshotRef without its screenshots/ prefix).", Uuid: false);
 
@@ -280,6 +301,7 @@ public static class OpenApiSpec
         new JsonObject { ["name"] = _payloads, ["description"] = "Draft, revise, rename, archive, list, and diff managed payloads." },
         new JsonObject { ["name"] = _browsers, ["description"] = "Register, list, and unregister tenant browser connect credentials." },
         new JsonObject { ["name"] = _fixtures, ["description"] = "Record, list, inspect, and erase tenant fixture sets for offline payload-regression testing." },
+        new JsonObject { ["name"] = _webhooks, ["description"] = "Register, list, and unregister tenant webhook endpoints for signed run-lifecycle delivery." },
         new JsonObject { ["name"] = _docs, ["description"] = "Anonymous, tenant-independent product artifacts (health, schema, discovery, this document)." },
     ];
 

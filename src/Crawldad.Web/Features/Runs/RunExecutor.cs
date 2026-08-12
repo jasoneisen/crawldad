@@ -25,6 +25,11 @@ public static class ExecuteRunHandler
         if (await executor.ExecuteAsync(command.RunId, envelope.TenantId, ct))
         {
             await bus.PublishAsync(new PromoteQueued(), new DeliveryOptions { TenantId = envelope.TenantId });
+
+            // The run reached a durable terminal disposition — notify downstream subscribers (webhook fan-out) off the
+            // execution path. Post-commit like PromoteQueued, so at-least-once; the subscriber derives everything from the
+            // committed run state, so a duplicate is harmless.
+            await bus.PublishAsync(new RunFinalized(command.RunId), new DeliveryOptions { TenantId = envelope.TenantId });
         }
     }
 }

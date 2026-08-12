@@ -3,6 +3,7 @@ using Crawldad.Web.Features.Browsers;
 using Crawldad.Web.Features.Fixtures;
 using Crawldad.Web.Features.Payloads;
 using Crawldad.Web.Features.Runs;
+using Crawldad.Web.Features.Webhooks;
 using Crawldad.Web.Infrastructure.Security;
 using Crawldad.Web.Infrastructure.Storage;
 using JasperFx;
@@ -54,6 +55,7 @@ public static class HostConfiguration
                 RunsModule.ConfigureMarten(options, projectionLifecycle);
                 BrowsersModule.ConfigureMarten(options); // the tenant-scoped browser-credential document (no projection)
                 FixturesModule.ConfigureMarten(options); // the tenant-scoped recorded fixture-set document (no projection)
+                WebhooksModule.ConfigureMarten(options); // the tenant-scoped webhook-endpoint registration document (no projection)
             })
             .IntegrateWithWolverine()           // transactional outbox/inbox + aggregate handlers
             .AddAsyncDaemon(DaemonMode.HotCold);
@@ -81,17 +83,25 @@ public static class HostConfiguration
         // ProblemDetails for unhandled exceptions, paired with UseExceptionHandler in the production branch below.
         builder.Services.AddProblemDetails();
 
-        // Per-slice service registration (validators + infrastructure seams). Each slice owns its DI, mirroring the
-        // foundation; e.g. Runs registers the POST /runs validator + browser-backend seam, Payloads its POST /payloads validator.
+        // Per-slice service registration, then the tenant security boundary and the log-scrubbing decorator.
+        AddFeatureServices(builder);
+        AddTenantSecurity(builder);
+        ScrubAllLogOutput(builder.Services);
+        return builder;
+    }
+
+    // Each vertical slice self-registers its DI (validators + infrastructure seams), mirroring the foundation; e.g. Runs
+    // registers the POST /runs validator + browser-backend seam, Payloads its POST /payloads validator. Grouped here so
+    // the composition root stays legible as slices are added.
+    private static void AddFeatureServices(WebApplicationBuilder builder)
+    {
         RunsModule.AddRunsServices(builder.Services);
         PayloadsModule.AddPayloadsServices(builder.Services);
         BrowsersModule.AddBrowsersServices(builder.Services); // browser-registration store + encrypting resolver
         FixturesModule.AddFixturesServices(builder.Services); // tenant fixture-set store + the `fixture` replay backend
+        WebhooksModule.AddWebhooksServices(builder.Services); // webhook-endpoint store + HTTP sender + delivery options
         StorageModule.AddStorage(builder.Services, builder.Configuration); // durable download sink + screenshot store + retention janitor
         DataProtectionModule.AddKeyRingProtection(builder.Services, builder.Configuration); // the at-rest secret cipher + its persisted key ring
-        AddTenantSecurity(builder);
-        ScrubAllLogOutput(builder.Services);
-        return builder;
     }
 
     // The tenant boundary: the config-bound tenant directory + the machine-to-machine API-key scheme, plus the

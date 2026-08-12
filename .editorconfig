@@ -86,6 +86,20 @@ dotnet_diagnostic.CA1056.severity = none
 dotnet_diagnostic.CA1054.severity = none
 dotnet_diagnostic.CA1056.severity = none
 
+[src/Crawldad.Web/Features/Webhooks/**.cs]
+# A webhook target is a caller-supplied delivery URL carried and validated as a plain string: WebhookUrlPolicy checks
+# scheme/host (SSRF) and surfaces a classified 400, so binding it as System.Uri would move malformed-URL handling into
+# a model-binding fault instead. Same string-URL treatment as the browser connect string. Off for this slice only.
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+
+[src/Crawldad.Contracts/Webhooks/**.cs]
+# The webhook wire contracts carry the delivery target as a plain string (the value the tenant registers and the SSRF
+# policy validates), matching the slice above — not a System.Uri property to construct. Off for these contracts only.
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1056.severity = none
+
 [tests/**.cs]
 # Tests legitimately have public fixtures, magic values, short-lived disposables, and unused-looking params.
 dotnet_diagnostic.CA1707.severity = none   # underscores in test method names

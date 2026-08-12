@@ -31,17 +31,18 @@ contracts and endpoints, not from older design notes.
 11. [Managed payloads — `/payloads`](#11-managed-payloads--payloads)
 12. [Browsers — `/browsers`](#12-browsers--browsers)
 13. [Fixtures — record/replay for payload regression testing — `/fixtures`](#13-fixtures--recordreplay-for-payload-regression-testing--fixtures)
-14. [Wire codes](#14-wire-codes)
-15. [Reading validation errors](#15-reading-validation-errors)
-16. [Served docs & health](#16-served-docs--health)
-17. [Examples](#17-examples)
-18. [Endpoint quick reference](#18-endpoint-quick-reference)
+14. [Webhooks — `/webhooks`](#14-webhooks--webhooks)
+15. [Wire codes](#15-wire-codes)
+16. [Reading validation errors](#16-reading-validation-errors)
+17. [Served docs & health](#17-served-docs--health)
+18. [Examples](#18-examples)
+19. [Endpoint quick reference](#19-endpoint-quick-reference)
 
 ---
 
 ## 1. Authentication
 
-Every route except the anonymous ones ([§16](#16-served-docs--health)) requires a per-tenant API key,
+Every route except the anonymous ones ([§17](#17-served-docs--health)) requires a per-tenant API key,
 presented **either** way:
 
 ```http
@@ -213,7 +214,7 @@ Failed run — still `200` (the request succeeded; the run faulted):
   "status": "failed",
   "failure": {
     "class": "terminal",                     // terminal | retryable-exhausted
-    "code": "record_not_accessible",         // a stable slug — see §14
+    "code": "record_not_accessible",         // a stable slug — see §15
     "message": "Record not accessible (redirected to /Login.aspx)",
     "atStep": { "index": 2, "kind": "guard" }
   },
@@ -529,7 +530,7 @@ Body `{ "payload": { /* crawldad document */ } }`. Drafts revision 1. Response (
 { "payloadId": "…", "name": "example.title", "revision": 1, "scriptHash": "…", "status": "active" }
 ```
 
-A schema/semantic failure is `400` with the full structured error list ([§15](#15-reading-validation-errors)):
+A schema/semantic failure is `400` with the full structured error list ([§16](#16-reading-validation-errors)):
 
 ```jsonc
 { "errors": [ { "path": "/steps/6/loop", "code": "missing_max_iterations", "message": "…" } ] }
@@ -695,13 +696,80 @@ jobs:
 
 Crawldad returns the replay `result` normally; the **golden comparison stays external** (your CI owns the golden and the diff) — there is no server-side diff endpoint for this. The candidate `payload.json` you replay is exactly what you promote with `POST /payloads/{id}/revise`, so a green gate proves the revision that production will run.
 
-## 14. Wire codes
+## 14. Webhooks — `/webhooks`
+
+A tenant registers **webhook endpoints** through the API (the same self-service shape as `/browsers`) to be **pushed** a run's terminal disposition rather than polling `GET /runs/{id}`. When a durable run reaches a terminal state, Crawldad POSTs a small, **ref-only** JSON envelope — signed with an HMAC the receiver verifies — to each subscribed endpoint. Delivery is **durable and at-least-once** with bounded exponential-backoff retry on an independent channel: **a slow or failing receiver never affects run execution.**
+
+### `PUT /webhooks/{name}` — register or replace
+
+`{name}` is a slug (lowercase letters, digits, hyphens; 1–64 chars; no leading/trailing hyphen).
+
+```jsonc
+{
+  "url": "https://hooks.example.com/crawldad",  // https only; not a loopback/private/link-local address (SSRF guard)
+  "secret": "whsec_…",                          // the HMAC signing secret; write-only — never echoed back
+  "events": ["run.failed"]                       // optional; omit or [] to receive ALL terminal events
+}
+```
+
+`200` returns the stored metadata (never the secret); a replace preserves `createdAt`:
+
+```json
+{ "name": "prod", "url": "https://hooks.example.com/crawldad", "events": ["run.failed"],
+  "createdAt": "2026-08-12T12:00:00Z", "updatedAt": "2026-08-12T12:00:00Z" }
+```
+
+`400` (RFC 7807 problem+json) when the name is not a valid slug, the URL is not `https` or targets a private/loopback/link-local address, the secret is empty or shorter than 16 characters, or an event type is unknown.
+
+The **secret is caller-supplied and encrypted at rest** (ASP.NET Data Protection); it is **never** returned by any endpoint, event, or log. **Rotate** it by re-registering (`PUT`) with a new value.
+
+### `GET /webhooks` — list
+
+`200 { "webhooks": [ { name, url, events, createdAt, updatedAt }, … ] }` — ordered by name. **Secrets are never included.** An empty `events` array means the endpoint receives all terminal events.
+
+### `DELETE /webhooks/{name}` — unregister
+
+`204` on success; `404` when this tenant has no such name (a name owned by another tenant is simply absent — no existence oracle).
+
+### The delivery — `WebhookEventEnvelope`
+
+A terminal run POSTs this body (`application/json`) to each subscribed endpoint:
+
+```json
+{ "id": "3f2a…", "type": "run.succeeded", "runId": "…", "payloadId": "…", "revision": 4,
+  "status": "succeeded", "stats": { "durationMs": 1234, "steps": 3, "requests": 4, "cacheHits": 0, "downloads": 0, "selectorMisses": 0 },
+  "finishedAt": "2026-08-12T12:00:05Z" }
+```
+
+- **Refs only, never result content.** The body carries the run id + metadata, never the `result`/`partial` — fetch `GET /runs/{id}` on receipt. This keeps bodies small and PII-free.
+- `payloadId`/`revision` are present only for a pinned managed-payload run (absent for an inline run); `failure` (the typed `RunFailureDetail`, see [§15.3](#153-run-failures--failurecode)) is present only for a `run.failed` event.
+- **Event catalog** — subscribe to a subset via `events`, or all: `run.succeeded`; `run.failed` (includes a wall-clock deadline or a queue-wait timeout); `run.cancelled` (cooperative, or cancelled while still queued).
+- **Scope.** Webhooks fire for runs on the **durable** surface — an `async:true` run, or any run promoted from the admission queue, plus a queued run that terminates in the queue (cancel/timeout). A run that completes on the **synchronous** fast-path returns its disposition in the `POST /runs` response and is not additionally delivered.
+
+### Verifying a delivery — headers & signature
+
+Every POST carries:
+
+| Header | Value |
+|---|---|
+| `X-Crawldad-Event` | the event type (`run.succeeded` / `run.failed` / `run.cancelled`) |
+| `X-Crawldad-Delivery` | the event `id` (stable across retries of one delivery) |
+| `X-Crawldad-Timestamp` | the send time, Unix seconds |
+| `X-Crawldad-Signature` | `sha256=<hex>`, where `<hex> = HMAC-SHA256(secret, "{timestamp}.{rawBody}")` |
+
+To verify: recompute `HMAC-SHA256(your_secret, X-Crawldad-Timestamp + "." + rawBody)` over the **raw** request bytes (before any JSON re-serialization), hex-encode, and compare in constant time to the hex after `sha256=`. Reject the delivery if `X-Crawldad-Timestamp` is older than your tolerance — a replay bound.
+
+### Retries & idempotency
+
+Delivery is **at-least-once**. A non-`2xx` response or a transport failure (connection error, per-attempt timeout) is retried with **exponential backoff** (`Crawldad:Webhooks:Delivery` — default base 10 s, doubling, capped at 5 min, up to 8 attempts, with a 10 s per-attempt timeout); past the attempt cap the delivery is abandoned. Because delivery can repeat, **make your handler idempotent** — dedupe on (`runId`, `status`), since a run has exactly one terminal disposition — and return `2xx` promptly (do the work asynchronously) so a slow handler is not retried.
+
+## 15. Wire codes
 
 Three surfaces carry stable slugs: **request & control rejections** (a `RunRejection` body — `4xx`/`429`), **save-time
 validation** (`400` on `/payloads`), and **run failures** (`failure.code`, `HTTP 200` sync or terminal after a
 `202`). Enum values below are exact.
 
-### 14.1 Request & control rejections — `RunRejection`
+### 15.1 Request & control rejections — `RunRejection`
 
 | Code | HTTP | Where | Meaning |
 |---|---|---|---|
@@ -717,7 +785,7 @@ rejected. `queue_depth_exceeded` is the only `429`. (A malformed request body �
 non-object `inputs`, a non-object payload — is a `400 ProblemDetails` from the boundary validator, not one of
 these slugs.)
 
-### 14.2 Save-time payload validation — `400 PayloadValidationProblem`
+### 15.2 Save-time payload validation — `400 PayloadValidationProblem`
 
 Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two kinds of `code`:
 
@@ -730,7 +798,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 - `payload_archived` is also returned here (as a `PayloadValidationProblem`) by revise/rename/archive on an
   archived payload.
 
-### 14.3 Run failures — `failure.code`
+### 15.3 Run failures — `failure.code`
 
 `failure.class` is `terminal` (never retried) or `retryable-exhausted` (a retryable condition that exhausted
 `config.retry`). Engine and expression failures:
@@ -779,7 +847,7 @@ own vocabulary, not a fixed enum.
 > `unknown_identifier` or a `malformed_node`/selector failure. Save your payload (`POST /payloads`) to get the
 > full static check.
 
-### 13.4 Server limits and their config knobs
+### 15.4 Server limits and their config knobs
 
 Every mid-run cap is a deployment config value under `Crawldad:Limits` (a payload can never raise them). Keys
 equal the C# property names; defaults are generous so legitimate runs never trip them.
@@ -800,7 +868,7 @@ equal the C# property names; defaults are generous so legitimate runs never trip
 
 ---
 
-## 15. Reading validation errors
+## 16. Reading validation errors
 
 Save-time errors are reported **per (JSON-Pointer location, keyword)**. The one wart to know: a bad node fails
 the schema's `oneOf` over the node vocabulary, and the JSON Schema library reports **every** non-matching
@@ -820,7 +888,7 @@ the reliable anchor.
 
 ---
 
-## 16. Served docs & health
+## 17. Served docs & health
 
 Four routes are deliberately **anonymous** (no key), because each is a public, tenant-independent artifact:
 
@@ -836,7 +904,7 @@ only anonymous ones.
 
 ---
 
-## 17. Examples
+## 18. Examples
 
 Eight curated, schema-valid payloads live in [`docs/examples/`](examples/) (every one is validated against the
 schema in CI, so they never drift). Five are lifted verbatim from the tested acceptance fixtures; three
@@ -891,7 +959,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 
 ---
 
-## 18. Endpoint quick reference
+## 19. Endpoint quick reference
 
 | Method + route | Auth | Body | Success | Errors |
 |---|---|---|---|---|
@@ -921,6 +989,9 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `GET /fixtures` | ✔ | — | `200 FixtureListResponse` | — |
 | `GET /fixtures/{name}` | ✔ | — | `200 FixtureDetailResponse` | `404` |
 | `DELETE /fixtures/{name}` | ✔ | — | `204` | `404` |
+| `PUT /webhooks/{name}` | ✔ | `RegisterWebhookRequest` | `200 WebhookSummary` | `400` |
+| `GET /webhooks` | ✔ | — | `200 WebhookListResponse` | — |
+| `DELETE /webhooks/{name}` | ✔ | — | `204` | `404` |
 | `GET /health` | — | — | `200` | — |
 | `GET /schema/crawldad-1.schema.json` | — | — | `200 application/schema+json` | — |
 | `GET /llms.txt` | — | — | `200 text/plain` | — |
