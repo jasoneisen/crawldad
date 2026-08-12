@@ -26,7 +26,7 @@ contracts and endpoints, not from older design notes.
 6. [Streaming trace (SSE) — `GET /runs/{id}/events`](#6-streaming-trace-sse--get-runsidevents)
 7. [Cancel — `POST /runs/{id}/cancel`](#7-cancel--post-runsidcancel)
 8. [Replay — `POST /runs/{id}/replay`](#8-replay--post-runsidreplay)
-9. [Drift, timeline, screenshots & erasure — `GET /runs/{id}/drift`, `/timeline`, `/screenshots/{ref}`, `DELETE /runs/{id}`](#9-drift-timeline-screenshots--erasure)
+9. [Drift, timeline, screenshots & erasure — `GET /runs/{id}/drift`, `GET /payloads/{id}/drift-status`, `/timeline`, `/screenshots/{ref}`, `DELETE /runs/{id}`](#9-drift-timeline-screenshots--erasure)
 10. [Queue stats — `GET /runs/queue-stats`](#10-queue-stats--get-runsqueue-stats)
 11. [Managed payloads — `/payloads`](#11-managed-payloads--payloads)
 12. [Browsers — `/browsers`](#12-browsers--browsers)
@@ -400,11 +400,42 @@ A run's pinned revision vs the payload's current head. Drift = the pinned revisi
 Equal hashes under a revision mismatch mean the head moved by a metadata-only change (rename/archive). An
 inline run never drifts (`payloadId`/head fields `null`, `drifted:false`). `404` for an unknown run.
 
+### `GET /payloads/{id}/drift-status`
+**Per-tenant *selector* drift monitoring** (distinct from the run-*revision* drift above): productizes the nightly
+canary into a pollable signal. Run a payload's pinned revision on a schedule — against the live site, or a
+fixture-replay baseline ([§13](#13-fixtures--recordreplay-for-payload-regression-testing--fixtures)) — and poll
+this to learn whether the extraction has drifted from the page it targets.
+
+```jsonc
+{ "payloadId": "…", "payloadName": "ljcmg.enforcement", "pinnedRevision": 4,
+  "state": "drifted",              // noData | warmingUp | steady | drifted
+  "drifted": true,                 // the boolean alarm (state == "drifted")
+  "observedRuns": 37, "baselineRuns": 3, "driftedSelectorCount": 1, "threshold": 0,
+  "firstObservedAt": "…", "lastObservedAt": "…",
+  "selectors": [ { "selector": "#lblRecordNumber", "drifted": true, "baselineFloor": false, "missingInLatest": true } ],
+  "evidence": { "runId": "…", "status": "succeeded", "observedAt": "…",
+                "failureScreenshotRef": null, "captureRefs": ["captures/…"], "screenshotRefs": ["screenshots/…"] } }
+```
+
+The signal is **baseline/delta**, deliberately *not* `selectorMisses > 0` — a payload with a legitimate
+multi-selector fallback (`coalesce(text(a), text(b))`) misses on every run at steady state. The **baseline** is the
+miss floor of the earliest `baselineRuns` healthy (succeeded) runs; **drift** is a selector that matched at baseline
+but is *newly* missing in the latest completed run. A selector missing since the baseline is reported as
+`baselineFloor:true`, never `drifted`. Optional `?threshold=N` tolerates `N` new misses before `drifted` is set
+(default `0`). `evidence` carries the latest run's `capture`/`screenshot` refs (see the timeline/screenshot sections
+below) so an alert arrives with the changed page in hand.
+
+States: `noData` (no completed run yet), `warmingUp` (baseline not yet established — nothing is alarmed), `steady`
+(baseline established, no new misses beyond `threshold`), `drifted`. Only **durable** (async) runs emit the
+selector-miss trace, so only they are observed. Tenant-scoped: an unknown or foreign payload is a `404`.
+
 ### `GET /runs/{id}/timeline`
 The observability read model (the lag-tolerant cross-run view): ordered steps with per-step durations, the
 **redacted** input key *names*, extracted-value shape refs (never values), download, screenshot, and **capture**
-blob refs (never bytes), the terminal failure + its screenshot ref, the pinned revision + script hash, and the
-backend region. Everything derives from already-scrubbed trace events, so no raw credential or bulk PII surfaces.
+blob refs (never bytes), the `missedSelectors` (the run's distinct extraction selectors that matched nothing — the
+per-run drift signal [`GET /payloads/{id}/drift-status`](#get-payloadsiddrift-status) folds), the terminal failure +
+its screenshot ref, the pinned revision + script hash, and the backend region. Everything derives from
+already-scrubbed trace events, so no raw credential or bulk PII surfaces.
 `404` for an unknown run. Each `screenshotRef` here (and `failure.screenshotRef`) is fetched as an actual PNG
 via [`GET /runs/{id}/screenshots/{ref}`](#get-runsidscreenshotsref) below.
 
@@ -882,6 +913,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `POST /payloads/{id}/archive` | ✔ | — | `200 PayloadResponse` | `404`, `400` |
 | `GET /payloads/{id}/revisions/{revision}` | ✔ | — | `200 PayloadRevisionResponse` | `404` |
 | `GET /payloads/{id}/diff/{from}/{to}` | ✔ | — | `200 PayloadDiffResponse` | `404` |
+| `GET /payloads/{id}/drift-status` | ✔ | — (opt. `?threshold=N`) | `200 PayloadDriftStatus` | `404` |
 | `PUT /browsers/{name}` | ✔ | `RegisterBrowserRequest` | `200 BrowserSummary` | `400` |
 | `GET /browsers` | ✔ | — | `200 BrowserListResponse` | — |
 | `DELETE /browsers/{name}` | ✔ | — | `204` | `404` |

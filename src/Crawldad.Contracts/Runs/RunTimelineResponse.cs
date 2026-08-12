@@ -26,7 +26,8 @@ public sealed record RunTimelineCapture(string BlobRef, long Size, string Sha256
 public sealed record RunTimelineFailure(string Code, string Message, RunStepRef AtStep, string? ScreenshotRef);
 
 /// <summary>The <c>GET /runs/{id}/timeline</c> response: the <c>RunTimeline</c> projection as a DTO — ordered steps
-/// with durations, redacted input key names, extracted/blob refs, and the failure + screenshot ref.</summary>
+/// with durations, redacted input key names, extracted/blob refs, the missed extraction selectors (the per-run drift
+/// signal, issue #47), and the failure + screenshot ref.</summary>
 public sealed record RunTimelineResponse(
     Guid RunId,
     string PayloadName,
@@ -44,4 +45,5 @@ public sealed record RunTimelineResponse(
     IReadOnlyList<RunTimelineDownload> Downloads,
     IReadOnlyList<RunTimelineScreenshot> Screenshots,
     IReadOnlyList<RunTimelineCapture> Captures,
+    IReadOnlyList<string> MissedSelectors,
     RunTimelineFailure? Failure);

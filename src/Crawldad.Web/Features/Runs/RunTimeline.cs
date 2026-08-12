@@ -57,6 +57,12 @@ public sealed record RunTimeline
     /// metadata, never the HTML), in capture order.</summary>
     public IReadOnlyList<RunTimelineCapture> Captures { get; init; } = [];
 
+    /// <summary>The distinct extraction selectors that matched no element in this run, in first-seen order — the
+    /// per-run drift signal folded from <c>SelectorMiss</c> (issue #47). Deduped like the trace's own per-selector
+    /// dedupe, so a selector that drifted across every row of a loop appears once. Populated on the durable executor
+    /// path only (the sole path that emits the trace); the declared selector text, never page content.</summary>
+    public IReadOnlyList<string> MissedSelectors { get; init; } = [];
+
     /// <summary>The failure screenshot's ref captured on the failing step, carried into <see cref="Failure"/> at the terminal event.</summary>
     public string? ScreenshotRef { get; init; }
 
@@ -124,6 +130,14 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
     /// like a download — the ref manifest of documents banked to tenant storage.</summary>
     public RunTimeline Apply(Captured captured, RunTimeline timeline) =>
         timeline with { Captures = [.. timeline.Captures, new RunTimelineCapture(captured.BlobRef, captured.Size, captured.Sha256)] };
+
+    /// <summary>Records one missed extraction selector (the soft/strict drift signal), deduped and in first-seen order.
+    /// The trace already emits one <c>SelectorMiss</c> per distinct selector per run, so this fold is one entry per
+    /// selector even before the guard — the dedupe also keeps a projection rebuild idempotent.</summary>
+    public RunTimeline Apply(SelectorMiss miss, RunTimeline timeline) =>
+        timeline.MissedSelectors.Contains(miss.Selector, StringComparer.Ordinal)
+            ? timeline
+            : timeline with { MissedSelectors = [.. timeline.MissedSelectors, miss.Selector] };
 
     /// <summary>Captures the failing step's screenshot ref (carried into the failure at the terminal event).</summary>
     public RunTimeline Apply(StepFailed failed, RunTimeline timeline) => timeline with { ScreenshotRef = failed.ScreenshotRef };

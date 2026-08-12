@@ -13,7 +13,7 @@ inspectable effect surface. Authenticate every request with `Authorization: Bear
 
 ## Docs
 
-- [API reference](docs/API.md): the single, self-contained consumer reference — auth, the run lifecycle in all three shapes (sync result / async 202 / queued 202 + promotion), `GET /runs/{id}`, SSE, cancel, replay, payload CRUD/revisions/diff, queue stats, and the complete wire-code table with the config knob behind every limit. Read this top-to-bottom to author a payload and drive a run.
+- [API reference](docs/API.md): the single, self-contained consumer reference — auth, the run lifecycle in all three shapes (sync result / async 202 / queued 202 + promotion), `GET /runs/{id}`, SSE, cancel, replay, payload CRUD/revisions/diff, per-tenant selector-drift monitoring (`GET /payloads/{id}/drift-status`), queue stats, and the complete wire-code table with the config knob behind every limit. Read this top-to-bottom to author a payload and drive a run.
 - [Payload JSON Schema](schema/crawldad-1.schema.json): the normative DSL reference — every node and field carries a `description`. Served live and anonymously at `GET /schema/crawldad-1.schema.json` (media type `application/schema+json`); usable directly as an editor `$schema` target.
 - [OpenAPI description](openapi.json): the generated OpenAPI 3.1 spec for the HTTP envelope — every endpoint, its auth, the request/response contracts, and the status codes (including the `202` queued/running run shapes and `429 queue_depth_exceeded`). Served live and anonymously at `GET /openapi.json`; payload request bodies `$ref` the schema above rather than restating the DSL.
 
