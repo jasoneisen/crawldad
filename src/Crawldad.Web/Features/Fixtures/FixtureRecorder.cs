@@ -19,6 +19,7 @@ internal sealed class FixtureRecorder : IFixtureRecorder
     /// recording that outgrew its page/byte cap). A record run raising it persists no set.</summary>
     public const string UnrecordableCode = "fixture_unrecordable";
 
+    private readonly Func<string, string> _scrubUrl;
     private readonly int _maxStates;
     private readonly long _maxBytes;
 
@@ -34,13 +35,32 @@ internal sealed class FixtureRecorder : IFixtureRecorder
     private EmitDto? _pendingEmit;
     private long _totalBytes;
 
-    /// <summary>Creates a recorder bounded by <paramref name="maxStates"/> distinct pages and <paramref name="maxBytes"/>
-    /// total HTML — guardrails so a runaway session cannot bloat a tenant's stored set (a record run that exceeds either
-    /// fails classified). The defaults are generous headroom over any representative record-once session.</summary>
-    public FixtureRecorder(int maxStates = DefaultMaxStates, long maxBytes = DefaultMaxBytes)
+    /// <summary>Creates a recorder that scrubs every persisted URL through <paramref name="scrubUrl"/> — the same
+    /// credential redaction (exact registered secrets + apiKey/token/signingKey params) the run timeline applies to a
+    /// <c>Navigated</c> URL, so no manifest URL echoes a secret over the API — bounded by <paramref name="maxStates"/>
+    /// distinct pages and <paramref name="maxBytes"/> total HTML (a runaway session fails classified). Secrets are only in
+    /// scope during the record run, so scrubbing must happen here, not at GET time.</summary>
+    public FixtureRecorder(Func<string, string> scrubUrl, int maxStates = DefaultMaxStates, long maxBytes = DefaultMaxBytes)
     {
+        _scrubUrl = scrubUrl;
         _maxStates = maxStates;
         _maxBytes = maxBytes;
+    }
+
+    /// <summary>Discards everything banked so far — called at the start of each interpreter retry attempt so a program
+    /// re-run (after a transient <c>timeout</c>/<c>pageCrashed</c>) records only the final successful pass, never a
+    /// duplicated/mis-wired merge of a failed attempt's states and transitions.</summary>
+    public void Reset()
+    {
+        _pages.Clear();
+        _statesBySha.Clear();
+        _states.Clear();
+        _transitions.Clear();
+        _initialState = null;
+        _currentState = null;
+        _open = null;
+        _pendingEmit = null;
+        _totalBytes = 0;
     }
 
     /// <summary>The default cap on distinct recorded pages — well above any representative record-once session.</summary>
@@ -52,7 +72,7 @@ internal sealed class FixtureRecorder : IFixtureRecorder
     public async ValueTask OnNavigatedAsync(string url, IPageHandle page, CancellationToken ct)
     {
         var state = await SettleAsync(page, ct);
-        state.GotoUrl ??= url; // the first goto that lands on this page fixes its gotoUrl (replay resolves navigations by it)
+        state.GotoUrl ??= _scrubUrl(url); // the first goto that lands on this page fixes its gotoUrl (scrubbed; replay resolves navigations by it)
         _initialState ??= state.Name; // the run's first navigation is the manifest's initial state
     }
 
@@ -74,7 +94,7 @@ internal sealed class FixtureRecorder : IFixtureRecorder
     }
 
     public void SetPendingEmit(string urlPrefix, string? method) =>
-        _pendingEmit = new EmitDto(urlPrefix, method ?? "GET"); // echo the payload's own urlPrefix so replay's StartsWith match holds
+        _pendingEmit = new EmitDto(_scrubUrl(urlPrefix), method ?? "GET"); // scrubbed; echoes the payload's own urlPrefix so replay's StartsWith match holds
 
     public void ClearPendingEmit() => _pendingEmit = null;
 
@@ -123,7 +143,7 @@ internal sealed class FixtureRecorder : IFixtureRecorder
                 throw Unrecordable($"a session exceeding the recording cap ({_maxStates} pages / {_maxBytes} bytes)");
             }
 
-            state = new StateBuilder($"s{_states.Count}", sha, page.Url);
+            state = new StateBuilder($"s{_states.Count}", sha, _scrubUrl(page.Url)); // the reported URL is scrubbed too (a postback URL can bear a credential param)
             _pages[sha] = html;
             _statesBySha[sha] = state;
             _states.Add(state);

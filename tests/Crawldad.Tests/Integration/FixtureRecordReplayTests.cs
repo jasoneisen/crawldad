@@ -82,6 +82,40 @@ public class FixtureRecordReplayTests(FixtureApiFixture fixture) : IAsyncLifetim
         await ExpectStatusAsync("POST", "/fixtures/Bad_Name/record", HttpStatusCode.BadRequest, RecordBody(payload, SiteBinding()));
     }
 
+    // ----- credential redaction ---------------------------------------------
+
+    [Fact]
+    public async Task A_credential_bearing_goto_url_is_scrubbed_before_persist_and_readback()
+    {
+        // A goto URL carrying a ?token= param records against the fake site (falls back to the form), then the manifest
+        // GET must never echo the raw token — it is redacted exactly as the Navigated timeline event would be.
+        const string secret = "SUPERSECRETTOKEN123";
+        const string payload = """
+        { "crawldad": "1", "name": "tokened", "inputs": { "backend": { "type": "backend", "required": true } },
+          "config": { "backend": "input.backend" },
+          "steps": [
+            { "goto": { "url": "https://county.example/search?token=SUPERSECRETTOKEN123" } },
+            { "waitForRequest": { "urlPrefix": "https://county.example/search", "method": "POST",
+                "trigger": [ { "click": { "selector": "#searchBtn" } } ] } },
+            { "waitFor": { "selector": "#loading", "state": "hidden" } },
+            { "click": { "selector": "#detailLink" } }
+          ],
+          "result": "'ok'" }
+        """;
+
+        var record = await RecordAsync("tokened", JsonNode.Parse(payload)!, SiteBinding());
+        record.GetProperty("status").GetString().ShouldBe("succeeded");
+
+        var detail = await GetJsonAsync("/fixtures/tokened");
+        var manifestText = detail.GetProperty("manifest").GetRawText();
+        manifestText.ShouldNotContain(secret);                 // no raw token anywhere in the persisted/returned manifest
+        manifestText.ShouldContain("token=[redacted]");        // redacted exactly like the Navigated event
+
+        var initial = detail.GetProperty("manifest").GetProperty("initialState").GetString()!;
+        detail.GetProperty("manifest").GetProperty("states").GetProperty(initial)
+            .GetProperty("gotoUrl").GetString().ShouldBe("https://county.example/search?token=[redacted]");
+    }
+
     // ----- classified divergence + unrecordable operations ------------------
 
     [Fact]

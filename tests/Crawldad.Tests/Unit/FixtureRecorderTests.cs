@@ -19,10 +19,14 @@ public class FixtureRecorderTests
     private static string SearchDetailPayload() =>
         File.ReadAllText(Path.Combine(Runner.FixturesRoot, "Payloads", "record-search-detail.json"));
 
+    // A recorder with an identity URL scrubber (the state-machine tests do not exercise scrubbing).
+    private static FixtureRecorder Recorder(int maxStates = FixtureRecorder.DefaultMaxStates, long maxBytes = FixtureRecorder.DefaultMaxBytes) =>
+        new(static s => s, maxStates, maxBytes);
+
     [Fact]
     public async Task Records_the_search_detail_state_machine()
     {
-        var recorder = new FixtureRecorder();
+        var recorder = Recorder();
         var outcome = await Runner.RunWithRecorderAsync(SearchDetailPayload(), _siteInputs, recorder);
         outcome.Status.ShouldBe(RunStatus.Succeeded);
 
@@ -69,7 +73,7 @@ public class FixtureRecorderTests
           "result": "'ok'" }
         """;
 
-        var recorder = new FixtureRecorder();
+        var recorder = Recorder();
         (await Runner.RunWithRecorderAsync(payload, _siteInputs, recorder)).Status.ShouldBe(RunStatus.Succeeded);
 
         var recorded = recorder.Build();
@@ -92,7 +96,7 @@ public class FixtureRecorderTests
           "result": "'ok'" }
         """;
 
-        var recorder = new FixtureRecorder();
+        var recorder = Recorder();
         (await Runner.RunWithRecorderAsync(payload, _siteInputs, recorder)).Status.ShouldBe(RunStatus.Succeeded);
 
         using var manifest = JsonDocument.Parse(recorder.Build().ManifestJson);
@@ -102,7 +106,7 @@ public class FixtureRecorderTests
     [Fact]
     public async Task A_session_over_the_page_cap_is_unrecordable()
     {
-        var outcome = await Runner.RunWithRecorderAsync(SearchDetailPayload(), _siteInputs, new FixtureRecorder(maxStates: 1));
+        var outcome = await Runner.RunWithRecorderAsync(SearchDetailPayload(), _siteInputs, Recorder(maxStates: 1));
         outcome.Status.ShouldBe(RunStatus.Failed);
         outcome.Failure!.Code.ShouldBe(FixtureRecorder.UnrecordableCode);
     }
@@ -110,7 +114,7 @@ public class FixtureRecorderTests
     [Fact]
     public async Task A_session_over_the_byte_cap_is_unrecordable()
     {
-        var outcome = await Runner.RunWithRecorderAsync(SearchDetailPayload(), _siteInputs, new FixtureRecorder(maxBytes: 1));
+        var outcome = await Runner.RunWithRecorderAsync(SearchDetailPayload(), _siteInputs, Recorder(maxBytes: 1));
         outcome.Status.ShouldBe(RunStatus.Failed);
         outcome.Failure!.Code.ShouldBe(FixtureRecorder.UnrecordableCode);
     }
@@ -128,7 +132,7 @@ public class FixtureRecorderTests
           "result": "'ok'" }
         """;
 
-        var outcome = await Runner.RunWithRecorderAsync(payload, _siteInputs, new FixtureRecorder());
+        var outcome = await Runner.RunWithRecorderAsync(payload, _siteInputs, Recorder());
         outcome.Status.ShouldBe(RunStatus.Failed);
         outcome.Failure!.Code.ShouldBe(FixtureRecorder.UnrecordableCode);
     }
@@ -147,7 +151,7 @@ public class FixtureRecorderTests
           "result": "'ok'" }
         """;
 
-        var outcome = await Runner.RunWithRecorderAsync(payload, _siteInputs, new FixtureRecorder());
+        var outcome = await Runner.RunWithRecorderAsync(payload, _siteInputs, Recorder());
         outcome.Status.ShouldBe(RunStatus.Failed);
         outcome.Failure!.Code.ShouldBe(FixtureRecorder.UnrecordableCode);
     }
@@ -166,7 +170,7 @@ public class FixtureRecorderTests
           "result": "'ok'" }
         """;
 
-        var outcome = await Runner.RunWithRecorderAsync(payload, _siteInputs, new FixtureRecorder());
+        var outcome = await Runner.RunWithRecorderAsync(payload, _siteInputs, Recorder());
         outcome.Status.ShouldBe(RunStatus.Failed);
         outcome.Failure!.Code.ShouldBe(FixtureRecorder.UnrecordableCode);
     }
@@ -181,11 +185,31 @@ public class FixtureRecorderTests
           "result": "'ok'" }
         """;
 
-        var recorder = new FixtureRecorder();
+        var recorder = Recorder();
         (await Runner.RunWithRecorderAsync(payload, _siteInputs, recorder)).Status.ShouldBe(RunStatus.Succeeded);
 
         var ex = Should.Throw<CrawldadFailureException>(recorder.Build);
         ex.Code.ShouldBe(FixtureRecorder.UnrecordableCode);
+    }
+
+    [Fact]
+    public async Task Every_persisted_manifest_url_is_run_through_the_scrubber()
+    {
+        // The recorder scrubs every URL it banks (gotoUrl, state url, and the postback emit prefix) — proven here with a
+        // scrubber that uppercases, so a raw URL cannot survive into the manifest unscrubbed.
+        var recorder = new FixtureRecorder(static url => url.ToUpperInvariant());
+        (await Runner.RunWithRecorderAsync(SearchDetailPayload(), _siteInputs, recorder)).Status.ShouldBe(RunStatus.Succeeded);
+
+        using var manifest = JsonDocument.Parse(recorder.Build().ManifestJson);
+        var root = manifest.RootElement;
+        var initial = root.GetProperty("initialState").GetString()!;
+        root.GetProperty("states").GetProperty(initial).GetProperty("gotoUrl").GetString().ShouldBe("HTTPS://COUNTY.EXAMPLE/SEARCH");
+        foreach (var state in root.GetProperty("states").EnumerateObject())
+        {
+            state.Value.GetProperty("url").GetString()!.ShouldBe(state.Value.GetProperty("url").GetString()!.ToUpperInvariant());
+        }
+
+        root.GetProperty("transitions")[0].GetProperty("emit").GetProperty("url").GetString().ShouldBe("HTTPS://COUNTY.EXAMPLE/SEARCH");
     }
 
     [Fact]

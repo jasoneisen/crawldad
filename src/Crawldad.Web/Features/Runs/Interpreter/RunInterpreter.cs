@@ -219,8 +219,9 @@ internal sealed class RunInterpreter
         {
             try
             {
-                _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget, _missSink); // FRESH scope per attempt — re-evaluate vars, same session (secretRefs excluded)
+                _scope = new RunScope(_scopeInput, _limits.ExpressionStepBudget, _missSink); // FRESH scope per attempt (secretRefs excluded)
                 _scope.Bind(_page);
+                _recorder?.Reset(); // discard any partial recording from a prior (retried) attempt — bank only the successful pass
                 if (_resume is null)
                 {
                     await EvaluateVarsAsync(ct);

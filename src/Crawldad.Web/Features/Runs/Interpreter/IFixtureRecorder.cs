@@ -27,6 +27,10 @@ internal interface IFixtureRecorder
     /// naming it — so an unrecordable session is a clear typed failure, never a silently incomplete set.</summary>
     void RejectUnrecordable(string operation);
 
+    /// <summary>Discards everything banked so far — called at the start of each retry attempt so a re-run records only
+    /// the final successful pass, not a merge of a failed attempt's states/transitions.</summary>
+    void Reset();
+
     /// <summary>The run succeeded: settles the final DOM (closing the last open transition) so the manifest is complete.</summary>
     ValueTask FinalizeAsync(IPageHandle page, CancellationToken ct);
 }

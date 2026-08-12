@@ -40,7 +40,10 @@ public static class RecordFixtureEndpoint
         }
 
         var input = JsonValues.FromJson(request.Inputs) as Dictionary<string, object?> ?? new(StringComparer.Ordinal);
-        var recorder = new FixtureRecorder();
+        // Scrub every persisted manifest URL with the SAME credential redaction the run timeline applies to a Navigated
+        // URL (exact registered secrets + apiKey/token/signingKey params) — the run's secret scope is live only here, so a
+        // secret-bearing goto/postback URL is redacted before it can land in the FixtureSet doc or be read back via GET.
+        var recorder = new FixtureRecorder(scrubber.Scrub);
         var runId = Guid.NewGuid();
 
         // The recorder threads through the interpreter exactly like the synchronous run path (its own secret scope spans
