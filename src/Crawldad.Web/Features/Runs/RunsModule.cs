@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Crawldad.Contracts.Runs;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
@@ -44,6 +45,29 @@ public static class RunsModule
         // The RunTimeline observability read model: the ordered step list + durations + refs + region, folded from the
         // step trace on the shared lifecycle (async in production — the lag-tolerant dashboard view; inline under the test switch).
         options.Projections.Add<RunTimelineProjection>(lifecycle);
+
+        // Index the drift-monitoring read path (issues #47/#89): GET /payloads/{id}/drift-status filters RunTimeline by
+        // (PayloadId, PayloadRevision, Status) and orders/limits by StartedAt for its three per-poll queries — the
+        // current revision's baseline (earliest healthy runs), the latest completed observation, and that revision's
+        // observation count. Without an index each poll is a jsonb scan + sort of the payload's whole run history. This
+        // composite computed index over those columns serves the baseline as a true bounded index range scan (all leading
+        // columns are equality-matched, StartedAt supplies the LIMIT 3 order); the count and the revision-agnostic latest
+        // query still ride the index but by its PayloadId prefix only, so their work stays proportional to the revision's
+        // (resp. the payload's) completed-run count rather than a full-table scan — smaller and index-backed, not O(1).
+        // The name is set explicitly: Marten's convention-derived name for four columns overflows Postgres's 63-char
+        // identifier limit and would churn the schema diff on every migration.
+        options.Schema.For<RunTimeline>()
+            .Index(
+                new Expression<Func<RunTimeline, object>>[]
+                {
+                    // Null-forgiving: PayloadId/PayloadRevision are nullable value types, so boxing them to the
+                    // Expression's object result trips CS8603; Marten only reads the member for the column, never the value.
+                    timeline => timeline.PayloadId!,
+                    timeline => timeline.PayloadRevision!,
+                    timeline => timeline.Status,
+                    timeline => timeline.StartedAt,
+                },
+                index => index.Name = "mt_doc_runtimeline_idx_drift");
 
         // The executor-owned run-progress read model: the pollable state + the durable resume cursor. A plain Marten
         // document (not a projection) written solely by the executor's own sessions.

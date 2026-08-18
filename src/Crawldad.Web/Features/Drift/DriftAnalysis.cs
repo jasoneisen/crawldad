@@ -21,11 +21,15 @@ public static class DriftAnalysis
     /// bounded however long the canary has run.</summary>
     public const int DefaultBaselineRuns = 3;
 
-    /// <summary>Assesses a payload's drift from its baseline + latest observations. <paramref name="baseline"/> is the
-    /// earliest <paramref name="baselineRuns"/> succeeded observations (ascending); <paramref name="current"/> is the
-    /// latest completed (succeeded or failed) observation, or null when none exists; <paramref name="observedRuns"/> is
-    /// the total completed observation count; <paramref name="threshold"/> is the per-payload count of new misses
-    /// tolerated before the status is <see cref="DriftState.Drifted"/> (0 = any new miss drifts).</summary>
+    /// <summary>Assesses a payload's drift from its baseline + latest observations. The observations are scoped by the
+    /// caller to a single pinned revision (the canary's current revision, issue #89), so this fold is revision-agnostic:
+    /// <paramref name="baseline"/> is the earliest <paramref name="baselineRuns"/> succeeded observations of that revision
+    /// (ascending); <paramref name="current"/> is the latest completed (succeeded or failed) observation, or null when
+    /// none exists; <paramref name="observedRuns"/> is that revision's completed observation count; <paramref name="threshold"/>
+    /// is the per-payload count of new misses tolerated before the status is <see cref="DriftState.Drifted"/> (0 = any new
+    /// miss drifts). Because the observations are per-revision, moving to a revision that has not yet accumulated its
+    /// baseline window reads as warming up, while a rollback to an already-baselined revision resumes against its own
+    /// established floor at once.</summary>
     public static PayloadDriftStatus Analyze(
         Guid payloadId,
         string payloadName,

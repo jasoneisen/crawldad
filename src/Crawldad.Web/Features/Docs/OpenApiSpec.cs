@@ -183,9 +183,9 @@ public static class OpenApiSpec
             [new("200", "The historical revision's script and metadata.", Component: nameof(PayloadRevisionResponse)), NotFound("payload/revision")]),
         new("get", "/payloads/{id}/diff/{from}/{to}", "getPayloadDiff", "Diff two payload revisions.", _payloads, Anonymous: false, [Id, From, To], null,
             [new("200", "Both revisions' scripts and a minimal structural diff.", Component: nameof(PayloadDiffResponse)), NotFound("payload/either revision")]),
-        new("get", "/payloads/{id}/drift-status", "getPayloadDriftStatus", "A payload canary's selector-drift status.", _payloads, Anonymous: false, [Id], null,
+        new("get", "/payloads/{id}/drift-status", "getPayloadDriftStatus", "A payload canary's selector-drift status.", _payloads, Anonymous: false, [Id, Threshold], null,
             [new("200", "The payload's baseline/delta selector-drift assessment (state, drifted selectors, and latest-run evidence).", Component: nameof(PayloadDriftStatus)), NotFound("payload")],
-            Description: "Reports whether a payload's canary has drifted (issue #47): computed on read from the payload's runs under a baseline/delta model, where the baseline is the miss floor of the earliest healthy runs and drift is a selector that matched at baseline but is newly missing in the latest completed run — never a naive selectorMisses > 0, which a legitimate multi-selector fallback trips every run. Optional `?threshold=N` tolerates N new misses before `drifted` is set (default 0). Evidence carries the latest run's capture/screenshot refs so an alert arrives with the changed page. Reads the same async RunTimeline observations the run timeline exposes; only durable (async) runs emit the selector-miss trace, so only they are observed. Distinct from GET /runs/{id}/drift, which reports one run's payload-revision drift."),
+            Description: "Reports whether a payload's canary has drifted (issue #47): computed on read from the payload's runs under a baseline/delta model, where the baseline is the miss floor of the earliest healthy runs and drift is a selector that matched at baseline but is newly missing in the latest completed run — never a naive selectorMisses > 0, which a legitimate multi-selector fallback trips every run. The baseline and observation count are scoped to the latest completed run's pinned revision (issue #89), so a payload edit that adds or renames selectors re-establishes the baseline for the new revision (returning to warmingUp) instead of reporting the new selectors as permanent drift. Optional `?threshold=N` tolerates N new misses before `drifted` is set (default 0). Evidence carries the latest run's capture/screenshot refs so an alert arrives with the changed page. Reads the same async RunTimeline observations the run timeline exposes; only durable (async) runs emit the selector-miss trace, so only they are observed. Distinct from GET /runs/{id}/drift, which reports one run's payload-revision drift."),
 
         // Browser connect credentials (tenant self-service; the registered name becomes a payload's credentialRef).
         new("put", "/browsers/{name}", "registerBrowser", "Register or replace a browser connect credential.", _browsers, Anonymous: false, [Name],
@@ -251,6 +251,9 @@ public static class OpenApiSpec
     private static Param From => new("from", Integer: true, "The base revision number.");
 
     private static Param To => new("to", Integer: true, "The compared revision number.");
+
+    // The one declared query parameter: the optional per-payload drift-status alert threshold.
+    private static Param Threshold => new("threshold", Integer: true, "Optional per-payload drift alert threshold: the number of newly-missing selectors tolerated before `drifted` is set (default 0). A stray, non-numeric, or negative value reads as 0 — a monitor's poll never 400s on the query.", Uuid: false, Query: true);
 
     // Shared responses.
     private static Response ValidationProblem =>
@@ -338,9 +341,9 @@ public static class OpenApiSpec
             operation["description"] = endpoint.Description;
         }
 
-        if (endpoint.PathParams.Length > 0)
+        if (endpoint.Parameters.Length > 0)
         {
-            operation["parameters"] = BuildParameters(endpoint.PathParams);
+            operation["parameters"] = BuildParameters(endpoint.Parameters);
         }
 
         if (endpoint.RequestBody is not null)
@@ -359,8 +362,9 @@ public static class OpenApiSpec
             parameters.Add(new JsonObject
             {
                 ["name"] = param.Name,
-                ["in"] = "path",
-                ["required"] = true,
+                // Path params are always required; the only declared query param (drift-status ?threshold) is optional.
+                ["in"] = param.Query ? "query" : "path",
+                ["required"] = !param.Query,
                 ["description"] = param.Description,
                 ["schema"] = param switch
                 {
@@ -532,12 +536,12 @@ public static class OpenApiSpec
         string Summary,
         string Tag,
         bool Anonymous,
-        Param[] PathParams,
+        Param[] Parameters,
         Body? RequestBody,
         Response[] Responses,
         string? Description = null);
 
-    private sealed record Param(string Name, bool Integer, string Description, bool Uuid = true);
+    private sealed record Param(string Name, bool Integer, string Description, bool Uuid = true, bool Query = false);
 
     private sealed record Body(string Component, string Description);
 
