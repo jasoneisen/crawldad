@@ -206,6 +206,27 @@ public class PayloadValidatorTests
         issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/capture/to");
     }
 
+    // A `capture` with an `in` (frame ref) but no `selector` is a silent misconfiguration: `in` scopes a selector, and
+    // the interpreter's full-document branch drops `in` entirely, so a stray/typo'd frame ref would validate clean and
+    // no-op. The walker rejects it (frame ref left deliberately unchecked here — the construct itself is invalid). (The
+    // schema rejects it too via dependentRequired; Semantic() exercises the walker branch directly.) See issue #79.
+    [Fact]
+    public void A_capture_with_in_but_no_selector_is_rejected()
+    {
+        var issue = Semantic(Steps("""[ { "capture": { "to": "input.store", "in": "fr", "var": "c" } } ]""")).ShouldHaveSingleItem();
+        issue.Code.ShouldBe(InterpreterErrorCodes.CaptureInWithoutSelector);
+        issue.Path.ShouldBe("/steps/0/capture/in");
+    }
+
+    // The complement: WITH a `selector`, the node-level `in` frame ref is validated defined-before-use, so a frame no
+    // `frame` node bound is an undefined_reference (not the silent no-op of the selector-absent branch above).
+    [Fact]
+    public void A_capture_selector_with_an_undefined_frame_ref_is_rejected()
+    {
+        var issues = Semantic(Steps("""[ { "capture": { "to": "input.store", "selector": "#grid", "in": "noSuchFrame", "var": "c" } } ]"""));
+        issues.ShouldContain(i => i.Code == InterpreterErrorCodes.UndefinedReference && i.Path == "/steps/0/capture/in");
+    }
+
     [Fact]
     public void An_undefined_captureOnFailure_target_reference_is_rejected()
     {

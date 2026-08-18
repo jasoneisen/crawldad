@@ -69,6 +69,12 @@ internal static class InterpreterErrorCodes
     /// <see cref="Crawldad.Web.Infrastructure.Storage.IDownloadSink"/> — the capture analogue of <see cref="UnknownDownloadSink"/>.</summary>
     public const string UnknownCaptureSink = "unknown_capture_sink";
 
+    /// <summary>Save-time: a <c>capture</c> carried an <c>in</c> (frame reference) but no <c>selector</c>. <c>in</c>
+    /// scopes a <c>selector</c> to a bound frame; a full-document capture (no <c>selector</c>) has nothing to scope, and
+    /// the interpreter's full-document branch drops <c>in</c> entirely — so it is rejected at save rather than silently
+    /// ignored with its frame reference left unvalidated. Enforced here and in the JSON Schema (<c>dependentRequired</c>).</summary>
+    public const string CaptureInWithoutSelector = "capture_in_without_selector";
+
     /// <summary>Save-time: a <c>secretRef</c> input was referenced in an expression/template — a secretRef may be
     /// consumed only by <c>fill.secret</c>, keeping the secret structurally out of the expression value space.</summary>
     public const string SecretRefInExpression = "secret_ref_in_expression";

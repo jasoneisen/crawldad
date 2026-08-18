@@ -215,7 +215,17 @@ internal sealed class SemanticWalker
                 if (body.TryGetProperty("selector", out var captureSelector))
                 {
                     CheckSel(captureSelector, $"{p}/selector"); // optional: absent ⇒ full-document capture
-                    CheckNodeIn(body, p);
+                    CheckNodeIn(body, p); // the frame ref is validated (defined-before-use) only where it scopes a selector
+                }
+                else if (body.TryGetProperty("in", out _))
+                {
+                    // A full-document capture has no `selector` for `in` to scope, and the interpreter's full-document
+                    // branch drops `in` entirely — so a stray frame reference would validate clean and silently no-op.
+                    // Reject it at save time rather than leave the misconfiguration (and its frame ref) unvalidated (#79).
+                    _issues.Add(new PayloadIssue(
+                        $"{p}/in", InterpreterErrorCodes.CaptureInWithoutSelector,
+                        "capture 'in' scopes a 'selector' to a bound frame; a full-document capture has no selector to scope — add a 'selector' or remove 'in'",
+                        _stepIndex, _stepKind));
                 }
 
                 Define(body);

@@ -75,6 +75,22 @@ public class PayloadSchemaTests
         errors.ShouldContain(e => e.Path.StartsWith("/steps/0/download", StringComparison.Ordinal));
     }
 
+    // A `capture` accepts the full-document (no selector), element-subtree (selector), and subtree-in-a-frame
+    // (selector + in) shapes — `in` is optional but, when present, coexists with a selector.
+    [Theory]
+    [InlineData("""[ { "capture": { "to": "input.store", "var": "c" } } ]""")]
+    [InlineData("""[ { "capture": { "to": "input.store", "selector": "#g", "var": "c" } } ]""")]
+    [InlineData("""[ { "capture": { "to": "input.store", "selector": "#g", "in": "fr", "var": "c" } } ]""")]
+    public void A_capture_node_satisfies_the_schema(string steps) =>
+        PayloadSchema.Validate(Parse(Steps(steps))).ShouldBeEmpty();
+
+    [Fact]
+    public void A_capture_with_in_but_no_selector_fails_the_schema() // dependentRequired: `in` scopes a selector, so it requires one
+    {
+        var errors = PayloadSchema.Validate(Parse(Steps("""[ { "capture": { "to": "input.store", "in": "fr", "var": "c" } } ]""")));
+        errors.ShouldContain(e => e.Path.StartsWith("/steps/0/capture", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void An_unknown_node_head_fails_the_schema()
     {
