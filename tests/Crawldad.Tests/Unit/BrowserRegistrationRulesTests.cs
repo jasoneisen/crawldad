@@ -49,6 +49,15 @@ public class BrowserRegistrationRulesTests
         BrowserRegistrationRules.IsKnownMode(mode).ShouldBe(known);
 
     [Theory]
+    [InlineData("browserless", "connectUrl", false)] // token-only — no connectUrl connect path, so the pairing is inert
+    [InlineData("browserless", "apiKey", true)]
+    [InlineData("browserbase", "connectUrl", true)]  // CDP adapter — supports both modes
+    [InlineData("browserbase", "apiKey", true)]
+    [InlineData("selenium", "connectUrl", true)]     // unknown adapter — rejected by IsKnownAdapter, never falsely here
+    public void Knows_which_adapters_support_which_modes(string adapter, string mode, bool supported) =>
+        BrowserRegistrationRules.AdapterSupportsMode(adapter, mode).ShouldBe(supported);
+
+    [Theory]
     [InlineData("wss://connect.example.com/?signingKey=x", true)]
     [InlineData("WSS://connect.example.com", true)]         // scheme is case-insensitive
     [InlineData("https://tunnel.example.com", true)]

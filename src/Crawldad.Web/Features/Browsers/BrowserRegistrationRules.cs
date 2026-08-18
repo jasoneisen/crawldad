@@ -12,9 +12,17 @@ internal static partial class BrowserRegistrationRules
     /// <summary>The secret is a provider api key.</summary>
     public const string ApiKeyMode = "apiKey";
 
+    /// <summary>The CDP adapter — connects to a caller/session connect URL, so it supports both
+    /// <see cref="ConnectUrlMode"/> and <see cref="ApiKeyMode"/>.</summary>
+    public const string BrowserbaseAdapter = "browserbase";
+
+    /// <summary>The native-connect adapter — connects only by token (<c>?token=…</c>), so it supports
+    /// <see cref="ApiKeyMode"/> only; it has no connectUrl connect path.</summary>
+    public const string BrowserlessAdapter = "browserless";
+
     // Only the two credentialed adapters are registerable; local/fake need no credential.
     private static readonly HashSet<string> _adapters =
-        new(StringComparer.Ordinal) { "browserbase", "browserless" };
+        new(StringComparer.Ordinal) { BrowserbaseAdapter, BrowserlessAdapter };
 
     private static readonly HashSet<string> _modes =
         new(StringComparer.Ordinal) { ConnectUrlMode, ApiKeyMode };
@@ -24,6 +32,15 @@ internal static partial class BrowserRegistrationRules
 
     /// <summary>Whether <paramref name="mode"/> is a recognised credential mode.</summary>
     public static bool IsKnownMode(string mode) => _modes.Contains(mode);
+
+    /// <summary>Whether the <paramref name="adapter"/> actually has a connect path for <paramref name="mode"/>. Only
+    /// <see cref="BrowserlessAdapter"/> + <see cref="ConnectUrlMode"/> is unsupported: browserless connects natively by
+    /// token and has no connectUrl path, so that pairing is inert — it would register cleanly and then fail closed at
+    /// connect. Rejecting it at registration turns a silent misconfiguration into a clear <c>400</c>. browserbase
+    /// supports both modes; unknown adapters/modes are rejected by their own guards, so they never falsely trip here.</summary>
+    public static bool AdapterSupportsMode(string adapter, string mode) =>
+        !(string.Equals(adapter, BrowserlessAdapter, StringComparison.Ordinal)
+            && string.Equals(mode, ConnectUrlMode, StringComparison.Ordinal));
 
     /// <summary>Whether a connectUrl-mode secret has a valid connect-URL scheme (wss:// or https://).</summary>
     public static bool IsConnectUrlShape(string secret) =>
