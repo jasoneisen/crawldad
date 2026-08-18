@@ -92,8 +92,19 @@ jobs:
       - name: Install Playwright Chromium
         run: eng/install-browsers.sh Debug
 
-      # Run ONLY the live canary. Coverage is off — a single-test run cannot meet the 100% gate (that gate is CI's).
-      # This is the real live hit: real Chromium, real network, session policy for real, concurrency 1. If
-      # CRAWLDAD_CANARY_LINK is unset the test self-skips and the job passes green (safe no-op).
+      # Run ONLY the live canary, through the retry-once wrapper (issue #92). Coverage is off — a single-test run
+      # cannot meet the 100% gate (that gate is CI's). This is the real live hit: real Chromium, real network, session
+      # policy for real, concurrency 1. If CRAWLDAD_CANARY_LINK is unset the test self-skips and the job passes green.
+      #
+      # The wrapper retries EXACTLY ONCE, and only for the portal maintenance-window false alarm: if the first attempt
+      # fails with a transient `record_not_accessible` (CapDetail briefly redirecting to Error.aspx during Accela's
+      # overnight app-pool recycle), it waits CANARY_RETRY_DELAY_SECONDS and runs the canary once more; only the second
+      # failure — or ANY other failure class on the first attempt — fails the job (real drift still fails fast, on the
+      # first occurrence). Concurrency-1 still holds across the wait. The wrapper's decision + orchestration are
+      # unit-tested by eng/canary-retry.selftest.sh (run in ci.yml).
       - name: Live canary
-        run: dotnet test Crawldad.slnx -c Debug --filter "Category=LiveCanary" /p:CollectCoverage=false
+        env:
+          # ~10 minutes: long enough to clear a typical maintenance / app-pool-recycle blip, short enough to stay well
+          # inside the job timeout. A second (e.g. manual) canary queues behind this one, including through this wait.
+          CANARY_RETRY_DELAY_SECONDS: "600"
+        run: eng/canary-retry.sh
