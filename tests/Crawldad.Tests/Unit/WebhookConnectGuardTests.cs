@@ -4,6 +4,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Webhooks;
 
@@ -38,12 +39,14 @@ public class WebhookConnectGuardTests
     }
 
     [Fact]
-    public async Task A_public_resolution_is_allowed_and_pinned()
+    public async Task A_public_resolution_is_allowed_and_returns_the_validated_addresses()
     {
         var addresses = await Guard(Resolves("93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"))
             .ResolveAndValidateAsync("hooks.example.com", _ct);
 
-        addresses.Count.ShouldBe(2); // both validated addresses are returned for the socket to pin to
+        // Every resolved address is validated and handed back, in order, for the socket to pin to (the actual bind is
+        // covered by A_pinned_connection_to_an_allowed_address_delivers).
+        addresses.ShouldBe([IPAddress.Parse("93.184.216.34"), IPAddress.Parse("2606:2800:220:1:248:1893:25c8:1946")]);
     }
 
     [Theory]
@@ -182,8 +185,20 @@ public class WebhookConnectGuardTests
                 state: null,
                 timeout.Token);
 
-            var request = new byte[1024];
-            _ = await tls.ReadAsync(request, timeout.Token); // consume the request head; the 2-byte body fits the socket buffer
+            // Read until the end of the request head (CRLF CRLF) rather than assuming a single read captures it.
+            var head = "";
+            var buffer = new byte[512];
+            while (!head.Contains("\r\n\r\n", StringComparison.Ordinal))
+            {
+                var read = await tls.ReadAsync(buffer, timeout.Token);
+                if (read == 0)
+                {
+                    break; // client closed before completing the request head
+                }
+
+                head += Encoding.Latin1.GetString(buffer, 0, read);
+            }
+
             await tls.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"u8.ToArray(), timeout.Token);
             await tls.FlushAsync(timeout.Token);
         });

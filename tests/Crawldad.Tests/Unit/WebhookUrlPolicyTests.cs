@@ -66,9 +66,18 @@ public class WebhookUrlPolicyTests
     [InlineData("169.254.169.254", true)]                 // link-local (cloud metadata)
     [InlineData("100.100.0.1", true)]                     // CGNAT
     [InlineData("168.63.129.16", true)]                   // Azure WireServer (platform SSRF sink)
+    [InlineData("192.0.0.1", true)]                       // IETF protocol assignments
+    [InlineData("192.0.2.5", true)]                       // TEST-NET-1
+    [InlineData("192.88.99.1", true)]                     // 6to4 relay anycast (deprecated)
+    [InlineData("198.18.0.1", true)]                      // benchmarking
+    [InlineData("198.51.100.5", true)]                    // TEST-NET-2
+    [InlineData("203.0.113.5", true)]                     // TEST-NET-3
     [InlineData("0.0.0.0", true)]                         // unspecified
     [InlineData("239.255.255.250", true)]                 // multicast
     [InlineData("::1", true)]                             // IPv6 loopback
+    [InlineData("2001::1", true)]                         // Teredo
+    [InlineData("2001:db8::1", true)]                     // documentation prefix
+    [InlineData("2001:4860:4860::8888", false)]           // public 2001:x global unicast stays allowed (not over-blocked)
     [InlineData("fe80::1", true)]                         // IPv6 link-local
     [InlineData("fc00::1", true)]                         // IPv6 unique-local
     [InlineData("ff02::1", true)]                         // IPv6 multicast

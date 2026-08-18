@@ -14,9 +14,10 @@ namespace Crawldad.Web.Features.Webhooks;
 /// registration check remains the fast, first-line rejection of a non-https URL or an obviously-internal literal.</summary>
 internal static class WebhookUrlPolicy
 {
-    // The IPv4 ranges a delivery must never reach: "this network", private, CGNAT, loopback, link-local, and
-    // multicast/reserved, plus the Azure platform magic IP. Membership is a single range test, so the policy has no
-    // per-range branch to cover.
+    // The IPv4 ranges a delivery must never reach — the IANA IPv4 Special-Purpose Address Registry (RFC 6890 and
+    // friends): "this network", private, CGNAT, loopback, link-local, IETF protocol assignments, TEST-NET, benchmarking,
+    // 6to4-relay anycast, multicast/reserved — plus the Azure platform magic IP. Membership is a single range test, so
+    // the policy has no per-range branch to cover.
     private static readonly IPNetwork[] _blockedV4 =
     [
         IPNetwork.Parse("0.0.0.0/8"),        // unspecified / "this network"
@@ -26,19 +27,29 @@ internal static class WebhookUrlPolicy
         IPNetwork.Parse("168.63.129.16/32"), // Azure WireServer (platform DNS/health/DHCP — a documented SSRF sink)
         IPNetwork.Parse("169.254.0.0/16"),   // link-local (incl. 169.254.169.254 cloud metadata)
         IPNetwork.Parse("172.16.0.0/12"),    // RFC 1918 private
+        IPNetwork.Parse("192.0.0.0/24"),     // IETF protocol assignments (RFC 6890)
+        IPNetwork.Parse("192.0.2.0/24"),     // TEST-NET-1 (RFC 5737)
+        IPNetwork.Parse("192.88.99.0/24"),   // 6to4 relay anycast, deprecated (RFC 7526)
         IPNetwork.Parse("192.168.0.0/16"),   // RFC 1918 private
+        IPNetwork.Parse("198.18.0.0/15"),    // benchmarking (RFC 2544)
+        IPNetwork.Parse("198.51.100.0/24"),  // TEST-NET-2 (RFC 5737)
+        IPNetwork.Parse("203.0.113.0/24"),   // TEST-NET-3 (RFC 5737)
         IPNetwork.Parse("224.0.0.0/4"),      // multicast
         IPNetwork.Parse("240.0.0.0/4"),      // reserved / broadcast
     ];
 
-    // The IPv6 ranges a delivery must never reach: unspecified, loopback, link-local, unique-local, and multicast.
+    // The IPv6 ranges a delivery must never reach: unspecified, loopback, Teredo, documentation, link-local,
+    // unique-local, and multicast. Teredo is blocked wholesale (its embedded client v4 could be internal, and no public
+    // receiver is a Teredo address — simpler and correct for a server-side target than unwrapping it).
     private static readonly IPNetwork[] _blockedV6 =
     [
-        IPNetwork.Parse("::/128"),   // unspecified
-        IPNetwork.Parse("::1/128"),  // loopback
-        IPNetwork.Parse("fe80::/10"), // link-local
-        IPNetwork.Parse("fc00::/7"),  // unique-local
-        IPNetwork.Parse("ff00::/8"),  // multicast
+        IPNetwork.Parse("::/128"),        // unspecified
+        IPNetwork.Parse("::1/128"),       // loopback
+        IPNetwork.Parse("2001::/32"),     // Teredo (RFC 4380)
+        IPNetwork.Parse("2001:db8::/32"), // documentation (RFC 3849)
+        IPNetwork.Parse("fe80::/10"),     // link-local
+        IPNetwork.Parse("fc00::/7"),      // unique-local
+        IPNetwork.Parse("ff00::/8"),      // multicast
     ];
 
     // IPv6 prefixes that *embed* an IPv4 destination a translating gateway will reach: NAT64 — both the well-known
