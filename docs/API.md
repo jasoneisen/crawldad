@@ -833,7 +833,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `undefined_push_target` | terminal | `push` target is undefined / not an array |
 | `handle_in_result` | terminal | a locator/frame handle leaked into `result` |
 | `unknown_backend_adapter` / `invalid_backend_binding` | terminal | `config.backend` did not resolve |
-| `backend_unavailable` | terminal | the backend connect/setup faulted — single-shot unless `config.connectRetry` retries a **transient** fault (a tunnel reconnect, a refused socket, a 5xx); an auth-shaped fault (rejected key, 4xx, absent credential) fails fast, and exhausting the bounded attempts stays terminal here |
+| `backend_unavailable` | terminal | the backend connect/setup faulted — single-shot unless `config.connectRetry` retries a **transient** fault (a tunnel reconnect, a refused socket, a 5xx, a 429/408 throttle); an auth-shaped fault (rejected key, a 4xx other than 429/408, absent credential) fails fast, and exhausting the bounded attempts stays terminal here |
 | `malformed_node` | terminal | a node was structurally malformed at run time |
 | `invalid_download_target` / `unknown_download_sink` | terminal | `download.to` did not resolve to a registered sink |
 | `invalid_capture_target` / `unknown_capture_sink` | terminal | `capture.to` (or `config.captureOnFailure.to`) did not resolve to a registered sink |

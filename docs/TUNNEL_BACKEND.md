@@ -191,10 +191,12 @@ The verified behavior, because a tunnel is the flakiest backend Crawldad support
   the pre-existing behavior. Supplying `config.connectRetry { maxAttempts, delayMs }` re-attempts the connect
   under two rules (issue #76):
   - **Only a transient fault is retried.** A refused/reset socket, a DNS failure, a WebSocket handshake failure,
-    or a `5xx` from a hosted session API is a transient blip worth a bounded retry — exactly the window a
-    cloudflared edge reconnect or the connector's own supervise/re-register cycle opens. An **auth-shaped**
-    fault — a rejected key, a `4xx` from the session API, or a `credentialRef` that resolves to nothing (a
-    deleted/never-registered credential) — **fails fast** with no retry: a retry cannot fix it.
+    or a `5xx`/`429`/`408` from a hosted session API is a transient blip worth a bounded retry — exactly the window a
+    cloudflared edge reconnect, a provider rate-limit, or the connector's own supervise/re-register cycle opens. An
+    **auth-shaped** fault — a rejected key, a client-error `4xx` other than the transient `429`/`408` from the session
+    API, or a `credentialRef` that resolves to nothing (a deleted/never-registered credential) — **fails fast** with no
+    retry: a retry cannot fix it. The `429`/`408` carve-out keeps the HTTP session-API path symmetric with the WS
+    handshake, which likewise fails fast only on the auth-shaped `401`/`403` (issue #85).
   - **Each attempt re-reads the credential.** A fresh `ConnectAsync` re-resolves the `credentialRef`, so a
     connector that rotated its tunnel URL under a **stable registered name** mid-window is picked up on the next
     attempt (the freshly re-registered `wss` secret), and the new secret is re-registered for scrubbing. The
