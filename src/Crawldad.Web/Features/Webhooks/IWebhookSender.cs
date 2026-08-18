@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 
@@ -33,6 +34,11 @@ internal sealed class HttpWebhookSender(IHttpClientFactory httpClientFactory) : 
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
+            // HTTP/2 at most: the SSRF guard lives in the handler's ConnectCallback, which runs for HTTP/1.1 and HTTP/2
+            // (both over TCP) but NOT for HTTP/3 (QUIC). Pinning the version policy here means a future framework default
+            // or Alt-Svc upgrade to HTTP/3 can never silently route a delivery around the resolve-and-pin.
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
             Content = new StringContent(body, Encoding.UTF8, new MediaTypeHeaderValue("application/json")),
         };
         foreach (var (name, value) in headers)

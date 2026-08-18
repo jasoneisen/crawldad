@@ -15,14 +15,16 @@ namespace Crawldad.Web.Features.Webhooks;
 internal static class WebhookUrlPolicy
 {
     // The IPv4 ranges a delivery must never reach: "this network", private, CGNAT, loopback, link-local, and
-    // multicast/reserved. Membership is a single range test, so the policy has no per-range branch to cover.
+    // multicast/reserved, plus the Azure platform magic IP. Membership is a single range test, so the policy has no
+    // per-range branch to cover.
     private static readonly IPNetwork[] _blockedV4 =
     [
         IPNetwork.Parse("0.0.0.0/8"),        // unspecified / "this network"
         IPNetwork.Parse("10.0.0.0/8"),       // RFC 1918 private
         IPNetwork.Parse("100.64.0.0/10"),    // CGNAT
         IPNetwork.Parse("127.0.0.0/8"),      // loopback
-        IPNetwork.Parse("169.254.0.0/16"),   // link-local
+        IPNetwork.Parse("168.63.129.16/32"), // Azure WireServer (platform DNS/health/DHCP — a documented SSRF sink)
+        IPNetwork.Parse("169.254.0.0/16"),   // link-local (incl. 169.254.169.254 cloud metadata)
         IPNetwork.Parse("172.16.0.0/12"),    // RFC 1918 private
         IPNetwork.Parse("192.168.0.0/16"),   // RFC 1918 private
         IPNetwork.Parse("224.0.0.0/4"),      // multicast
@@ -39,12 +41,16 @@ internal static class WebhookUrlPolicy
         IPNetwork.Parse("ff00::/8"),  // multicast
     ];
 
-    // IPv6 prefixes that *embed* an IPv4 destination a translating gateway will reach: NAT64 (RFC 6052, the low 32 bits),
-    // 6to4 (RFC 3056, the 32 bits after the 2002 prefix), and the deprecated IPv4-compatible form (the low 32 bits). A
-    // DNS64 resolver can synthesise e.g. 64:ff9b::169.254.169.254; the embedded v4 must be judged against the v4 denylist
-    // or the NAT64 gateway reaches the metadata service. (The IPv4-*mapped* ::ffff:0:0/96 form is handled separately via
-    // IsIPv4MappedToIPv6.)
-    private static readonly IPNetwork _nat64 = IPNetwork.Parse("64:ff9b::/96");
+    // IPv6 prefixes that *embed* an IPv4 destination a translating gateway will reach: NAT64 — both the well-known
+    // 64:ff9b::/96 (RFC 6052, embedded v4 in the low 32 bits) and the RFC 8215 local-use 64:ff9b:1::/48 (RFC 6052 /48
+    // format, v4 in bits 48-63 and 72-87 around the reserved byte 8) — 6to4 (RFC 3056, the 32 bits after the 2002 prefix),
+    // and the deprecated IPv4-compatible form (the low 32 bits). A DNS64 resolver can synthesise e.g. 64:ff9b::169.254.169.254;
+    // the embedded v4 must be judged against the v4 denylist or the NAT64 gateway reaches the metadata service. A platform
+    // that runs DNS64/NAT64 on an operator-chosen network-specific prefix (an NSP, not one of these well-known ones) would
+    // need that prefix added here — a documented limitation (THREAT_MODEL.md). (The IPv4-*mapped* ::ffff:0:0/96 form is
+    // handled separately via IsIPv4MappedToIPv6.)
+    private static readonly IPNetwork _nat64WellKnown = IPNetwork.Parse("64:ff9b::/96");
+    private static readonly IPNetwork _nat64LocalUse = IPNetwork.Parse("64:ff9b:1::/48");
     private static readonly IPNetwork _sixToFour = IPNetwork.Parse("2002::/16");
     private static readonly IPNetwork _v4Compatible = IPNetwork.Parse("::/96");
 
@@ -114,14 +120,22 @@ internal static class WebhookUrlPolicy
 
     private static bool IsBlockedV6(IPAddress ipv6) => Array.Exists(_blockedV6, network => network.Contains(ipv6));
 
-    // The IPv4 embedded in a NAT64 / 6to4 / IPv4-compatible IPv6 address, or null when the address embeds none. NAT64 and
-    // the IPv4-compatible form carry it in the low 32 bits; 6to4 carries it in the 32 bits after the 2002 prefix.
+    // The IPv4 embedded in a NAT64 / 6to4 / IPv4-compatible IPv6 address, or null when the address embeds none. The
+    // well-known NAT64 prefix and the IPv4-compatible form carry it in the low 32 bits; 6to4 carries it in the 32 bits
+    // after the 2002 prefix; the RFC 8215 local-use NAT64 prefix is a /48, so RFC 6052 splits the v4 across bytes 6-7 and
+    // 9-10 (byte 8 is the reserved "u" octet).
     private static bool TryExtractEmbeddedV4(IPAddress ipv6, [NotNullWhen(true)] out IPAddress? embedded)
     {
         var bytes = ipv6.GetAddressBytes();
-        if (_nat64.Contains(ipv6) || _v4Compatible.Contains(ipv6))
+        if (_nat64WellKnown.Contains(ipv6) || _v4Compatible.Contains(ipv6))
         {
             embedded = new IPAddress(bytes[12..16]);
+            return true;
+        }
+
+        if (_nat64LocalUse.Contains(ipv6))
+        {
+            embedded = new IPAddress([bytes[6], bytes[7], bytes[9], bytes[10]]);
             return true;
         }
 

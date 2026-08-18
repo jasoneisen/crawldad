@@ -65,6 +65,7 @@ public class WebhookUrlPolicyTests
     [InlineData("192.168.0.1", true)]                     // RFC 1918
     [InlineData("169.254.169.254", true)]                 // link-local (cloud metadata)
     [InlineData("100.100.0.1", true)]                     // CGNAT
+    [InlineData("168.63.129.16", true)]                   // Azure WireServer (platform SSRF sink)
     [InlineData("0.0.0.0", true)]                         // unspecified
     [InlineData("239.255.255.250", true)]                 // multicast
     [InlineData("::1", true)]                             // IPv6 loopback
@@ -73,9 +74,11 @@ public class WebhookUrlPolicyTests
     [InlineData("ff02::1", true)]                         // IPv6 multicast
     [InlineData("::ffff:10.0.0.1", true)]                 // IPv4-mapped private
     // Embedded-IPv4 translation prefixes: the embedded v4 is re-judged, so an internal one is blocked and a public one is not.
-    [InlineData("64:ff9b::a9fe:a9fe", true)]              // NAT64 -> 169.254.169.254 (cloud metadata)
-    [InlineData("64:ff9b::7f00:1", true)]                 // NAT64 -> 127.0.0.1
-    [InlineData("64:ff9b::5db8:d822", false)]             // NAT64 -> 93.184.216.34 (public) stays allowed
+    [InlineData("64:ff9b::a9fe:a9fe", true)]              // NAT64 well-known -> 169.254.169.254 (cloud metadata)
+    [InlineData("64:ff9b::7f00:1", true)]                 // NAT64 well-known -> 127.0.0.1
+    [InlineData("64:ff9b::5db8:d822", false)]             // NAT64 well-known -> 93.184.216.34 (public) stays allowed
+    [InlineData("64:ff9b:1:a9fe:a9:fe00::", true)]        // NAT64 local-use /48 (RFC 8215) -> 169.254.169.254
+    [InlineData("64:ff9b:1:5db8:d8:2200::", false)]       // NAT64 local-use /48 -> 93.184.216.34 (public) stays allowed
     [InlineData("2002:a9fe:a9fe::1", true)]               // 6to4 -> 169.254.169.254
     [InlineData("::7f00:1", true)]                        // IPv4-compatible -> 127.0.0.1
     public void Classifies_resolved_addresses(string address, bool blocked) =>

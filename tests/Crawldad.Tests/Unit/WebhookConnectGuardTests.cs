@@ -55,7 +55,9 @@ public class WebhookConnectGuardTests
     [InlineData("::1")]              // IPv6 loopback
     [InlineData("fc00::1")]          // IPv6 unique-local
     [InlineData("::ffff:10.0.0.1")]  // IPv4-mapped private
-    [InlineData("64:ff9b::a9fe:a9fe")] // NAT64-synthesised 169.254.169.254 (DNS64 rebinding)
+    [InlineData("168.63.129.16")]    // Azure WireServer (platform SSRF sink)
+    [InlineData("64:ff9b::a9fe:a9fe")]     // NAT64 well-known -> 169.254.169.254 (DNS64 rebinding)
+    [InlineData("64:ff9b:1:a9fe:a9:fe00::")] // NAT64 local-use /48 -> 169.254.169.254
     public async Task A_resolution_to_a_blocked_address_is_refused(string ip) =>
         await Should.ThrowAsync<WebhookSsrfException>(
             () => Guard(Resolves(ip)).ResolveAndValidateAsync("rebind.example.com", _ct).AsTask());
