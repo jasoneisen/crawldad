@@ -7,7 +7,8 @@ namespace Crawldad.Tests.Unit;
 /// <summary>Negative-space tests for the <see cref="CredentialScrubber"/> primitive: the known-param rule across
 /// name/case/encoding variants and wss URLs (Browserless, Browserbase, and ngrok/cloudflared tunnel shapes), the exact
 /// live-secret rule, the no-false-positive guarantee on ordinary text (so the acceptance goldens are untouched), the
-/// result-channel carve-out (<c>ScrubJson</c> skips the param rule so caller-extracted content survives — issue #70), and idempotence.</summary>
+/// JSON-channel carve-out (<c>ScrubJson</c> skips the param rule so caller-extracted content survives — the run's result,
+/// issue #70, and the durable resume checkpoint a run restores through, issue #82), and idempotence.</summary>
 public class CredentialScrubberTests
 {
     private const string _redacted = CredentialScrubber.Redaction;
@@ -305,5 +306,42 @@ public class CredentialScrubberTests
         scrubbed.ShouldNotBeNull();
         scrubbed.Value.GetProperty("echoedUrl").GetString().ShouldBe($"wss://x?token={_redacted}");
         scrubbed.Value.GetRawText().ShouldNotContain(Secret);
+    }
+
+    // ----- durable checkpoint snapshot scrubbing (issue #82) -----------------
+    // The executor stores a checkpoint's cursor + var snapshot as `ScrubJson(...).GetRawText()` — the same JSON channel as
+    // the result (RunFinalization stores the result the same way). These pin that a resumed run restores TRUE state.
+
+    [Fact]
+    public void ScrubJson_raw_text_preserves_a_credential_shaped_value_in_a_checkpoint_snapshot() // issue #82
+    {
+        // A durable checkpoint's var snapshot (or cursor) carries the customer's OWN extracted state — here a captured
+        // detail-page URL with a `token=`-shaped param that is NOT a run secret. Scrubbed through ScrubJson and stored as
+        // its raw text, it must survive byte-identical: a resumed run restores the TRUE value into its result and
+        // re-navigates the real cursor URL — never `token=[redacted]`, which would corrupt the result and break resume.
+        using var snapshot = JsonDocument.Parse(
+            """{"captured":"https://site/Cap/CapDetail.aspx?token=abc123SHAPEDtoken&capId=1","page":2}""");
+        var raw = snapshot.RootElement.GetRawText();
+
+        var stored = Scrubber().ScrubJson(snapshot.RootElement)!.Value.GetRawText();
+
+        stored.ShouldBe(raw); // byte-identical: the checkpointed value a resume restores is not corrupted
+        stored.ShouldContain("token=abc123SHAPEDtoken");
+        stored.ShouldNotContain(_redacted);
+    }
+
+    [Fact]
+    public void ScrubJson_raw_text_still_redacts_a_registered_secret_in_a_checkpoint_snapshot() // issue #82 — exact-scrub stays unconditional
+    {
+        // Exact-secret scrubbing stays unconditional on the checkpoint channel: the run's OWN registered credential
+        // snapshotted into a checkpoint var is still redacted (raw and in a `token=` cursor position), so no secret is
+        // ever persisted in the durable checkpoint even though the param rule is dropped there.
+        const string Secret = "bb_live_LEAKCANARY_checkpoint_0123456789";
+        using var snapshot = JsonDocument.Parse($$"""{"leaked":"{{Secret}}","cursorUrl":"wss://x?token={{Secret}}"}""");
+
+        var stored = Scrubber(Secret).ScrubJson(snapshot.RootElement)!.Value.GetRawText();
+
+        stored.ShouldNotContain(Secret);
+        stored.ShouldContain($"token={_redacted}"); // the secret in a param position is exact-redacted, marker left inert
     }
 }

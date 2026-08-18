@@ -3,8 +3,10 @@ using Crawldad.Contracts.Runs;
 namespace Crawldad.Web.Features.Runs;
 
 /// <summary>The durable, resumable position persisted at a <c>checkpoint</c>. Held in <see cref="RunProgress"/>, not the
-/// immutable trace, because the var snapshot is bulk accumulated state. Both JSON payloads are stored as scrubbed raw
-/// text and re-parsed on resume — sufficient, with the checkpoint's <c>resume</c> sub-program, to continue without refetching earlier work.</summary>
+/// immutable trace, because the var snapshot is bulk accumulated state. Both JSON payloads are stored as raw text scrubbed
+/// through the result-channel posture (<c>CredentialScrubber.ScrubJson</c> — exact-secret redaction, but NOT the
+/// credential-param rule, so a <c>token=</c>-shaped extracted value or cursor URL a resumed run restores is not corrupted;
+/// issue #82) and re-parsed on resume — sufficient, with the checkpoint's <c>resume</c> sub-program, to continue without refetching earlier work.</summary>
 public sealed record StoredCheckpoint(string Name, int Sequence, int StepIndex, string CursorJson, string VarsJson);
 
 /// <summary>The per-run read model that backs <c>GET /runs/{id}</c> and the executor's resume. Distinct from the run's

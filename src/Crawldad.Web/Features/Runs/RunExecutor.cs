@@ -223,13 +223,19 @@ public sealed class RunExecutor(
             await using var session = store.LightweightSession(tenantId);
             session.Events.Append(runId, new RunCheckpointReached(checkpoint.Name, checkpoint.Sequence, clock.GetUtcNow()));
 
+            // The durable cursor + var snapshot is the run's OWN accumulated extracted state: a resumed run restores it and
+            // shapes it into the result, so it is scrubbed through ScrubJson — the SAME result-channel posture (exact-secret
+            // redaction, but NOT the credential-param rule) RunFinalization stores the result with, stored here as its raw
+            // text. The full `Scrub` would rewrite a `token=`-shaped value in extracted content (or a cursor URL) to
+            // `[redacted]` on the checkpoint, then restore it corrupted into the result — and break the resume re-navigation
+            // of a redacted cursor URL (issue #82). Exact-secret scrubbing stays unconditional, so no run secret is persisted.
             var progress = (await session.LoadAsync<RunProgress>(runId, ct))!;
             progress.Checkpoint = new StoredCheckpoint(
                 checkpoint.Name,
                 checkpoint.Sequence,
                 checkpoint.StepIndex,
-                scrubber.Scrub(checkpoint.Cursor.GetRawText()),
-                scrubber.Scrub(checkpoint.Vars.GetRawText()));
+                scrubber.ScrubJson(checkpoint.Cursor)!.Value.GetRawText(),
+                scrubber.ScrubJson(checkpoint.Vars)!.Value.GetRawText());
             session.Store(progress);
 
             await session.SaveChangesAsync(ct);
