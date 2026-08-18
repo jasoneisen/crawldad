@@ -6,16 +6,25 @@
 # Crawldad. Runs unprivileged.
 FROM debian:bookworm-slim
 
-# Pinned via build args so the image is reproducible; override to bump.
+# Pinned via build args; override to bump. cloudflared is additionally verified
+# against a pinned per-arch SHA-256 below (the base image and apt packages are
+# not digest-pinned, so this is a hardened download, not a bit-reproducible image).
 ARG CLOUDFLARED_VERSION=2024.8.2
 # Populated by BuildKit/buildx (amd64 or arm64); defaults for a plain build.
 ARG TARGETARCH=amd64
+# SHA-256 of the pinned cloudflared release asset, per architecture. Bump these
+# in lockstep with CLOUDFLARED_VERSION (sha256sum of the release download).
+ARG CLOUDFLARED_SHA256_amd64=e6cb78348e05680805c8317b5073c54401c1ebac9fa88a2cc35be752858bdc6b
+ARG CLOUDFLARED_SHA256_arm64=f0cc2f42b658a89a794ca91210f73df2f3d51c459f050ae1ee57b221d1e30f98
 
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/home/crawldad
 
-RUN set -eux; \
-    apt-get update; \
+# bash (not the default dash) so the cloudflared step can source the connector's
+# shared helpers; pipefail so a failed download aborts the layer.
+SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
+
+RUN apt-get update; \
     apt-get install -y --no-install-recommends \
     chromium \
     nginx-light \
@@ -23,15 +32,27 @@ RUN set -eux; \
     ca-certificates \
     jq \
     tini; \
-    curl -fsSL -o /usr/local/bin/cloudflared \
-    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${TARGETARCH}"; \
-    chmod 0755 /usr/local/bin/cloudflared; \
-    cloudflared --version; \
     rm -rf /var/lib/apt/lists/*; \
     useradd --create-home --home-dir /home/crawldad --uid 10001 --shell /usr/sbin/nologin crawldad
 
-COPY nginx.conf /opt/connector/nginx.conf
+# Fetch cloudflared and verify it against the pinned per-arch SHA-256 *before* it
+# is placed on PATH or made executable, so a corrupted or tampered release asset
+# can never run. verify_sha256 is the same helper the connector's selftest covers.
 COPY lib.sh /opt/connector/lib.sh
+RUN source /opt/connector/lib.sh; \
+    case "${TARGETARCH}" in \
+    amd64) cf_sha="${CLOUDFLARED_SHA256_amd64}" ;; \
+    arm64) cf_sha="${CLOUDFLARED_SHA256_arm64}" ;; \
+    *) echo "unsupported TARGETARCH='${TARGETARCH}'" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/cloudflared \
+    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${TARGETARCH}"; \
+    verify_sha256 /tmp/cloudflared "${cf_sha}"; \
+    install -m 0755 /tmp/cloudflared /usr/local/bin/cloudflared; \
+    rm -f /tmp/cloudflared; \
+    cloudflared --version
+
+COPY nginx.conf /opt/connector/nginx.conf
 COPY entrypoint.sh /opt/connector/entrypoint.sh
 RUN chmod 0755 /opt/connector/entrypoint.sh
 

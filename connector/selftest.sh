@@ -179,6 +179,99 @@ check "body.secret == the wss connectUrl" "$(printf '%s' "$BODY_JSON" | jq -r '.
 check_absent "API key absent from connector log output" "$REG_LOG" "$SYNTH_KEY"
 check_contains "log confirms registration by name" "$REG_LOG" "Registered browser 'my-laptop'"
 
+echo "== cloudflared checksum verification (verify_sha256) =="
+
+# The exact gate the Dockerfile runs on the downloaded cloudflared binary before
+# it is ever installed onto PATH: a matching digest verifies, anything else
+# refuses (so a tampered/corrupted asset never becomes executable).
+SHA_FILE="${WORK}/asset.bin"
+printf 'pretend cloudflared payload\n' >"$SHA_FILE"
+SHA_GOOD="$(sha256sum "$SHA_FILE" | cut -d' ' -f1)"
+SHA_BAD="0000000000000000000000000000000000000000000000000000000000000000"
+
+set +e
+verify_sha256 "$SHA_FILE" "$SHA_GOOD" 2>/dev/null
+RC_GOOD=$?
+verify_sha256 "$SHA_FILE" "${SHA_GOOD^^}" 2>/dev/null # uppercase digest
+RC_UPPER=$?
+MISMATCH_ERR="$(verify_sha256 "$SHA_FILE" "$SHA_BAD" 2>&1 >/dev/null)"
+RC_BAD=$?
+verify_sha256 "$SHA_FILE" "" 2>/dev/null
+RC_EMPTY=$?
+verify_sha256 "${WORK}/does-not-exist" "$SHA_GOOD" 2>/dev/null
+RC_MISSING=$?
+set -e
+
+refused() { if [ "$1" -ne 0 ]; then echo refused; else echo executed; fi; }
+check "matching checksum verifies (happy path)" "$RC_GOOD" "0"
+check "uppercase expected digest still verifies" "$RC_UPPER" "0"
+check "mismatched checksum refuses to execute" "$(refused "$RC_BAD")" "refused"
+check_contains "mismatch reason names the checksum" "$MISMATCH_ERR" "checksum mismatch"
+check "empty expected digest is refused" "$(refused "$RC_EMPTY")" "refused"
+check "missing file is refused" "$(refused "$RC_MISSING")" "refused"
+
+echo "== restart budget (restart_budget_step) =="
+
+# window = 600s healthy-before-forgiven, max = 10 restarts.
+check "alive with no restarts stays at zero" \
+    "$(restart_budget_step 1 0 0 1000 600 10)" "0 0 healthy"
+check "alive within the window keeps the count" \
+    "$(restart_budget_step 1 3 1000 1599 600 10)" "3 1000 healthy"
+check "alive at exactly the window forgives the budget" \
+    "$(restart_budget_step 1 3 1000 1600 600 10)" "0 0 forgiven"
+check "alive past the window forgives the budget" \
+    "$(restart_budget_step 1 3 1000 5000 600 10)" "0 0 forgiven"
+check "alive with an unset anchor never forgives" \
+    "$(restart_budget_step 1 3 0 99999 600 10)" "3 0 healthy"
+check "death increments and asks for a restart" \
+    "$(restart_budget_step 0 0 0 1000 600 10)" "1 1000 restart"
+check "the MAX_RESTARTS-th restart is still allowed" \
+    "$(restart_budget_step 0 9 500 1000 600 10)" "10 1000 restart"
+check "one past MAX_RESTARTS is exhausted" \
+    "$(restart_budget_step 0 10 500 1000 600 10)" "11 1000 exhausted"
+
+# Replay the *real* accounting through a scripted clock and report the terminal
+# state, pinning the reset semantics end-to-end. sample = alive|dead:<epoch>.
+replay_budget() { # window max sample...
+    local window="$1" max="$2"
+    shift 2
+    local restarts=0 last=0 verdict a n out sample
+    for sample in "$@"; do
+        case "${sample%%:*}" in
+            alive) a=1 ;;
+            dead) a=0 ;;
+        esac
+        n="${sample##*:}"
+        out="$(restart_budget_step "$a" "$restarts" "$last" "$n" "$window" "$max")"
+        read -r restarts last verdict <<<"$out"
+        [ "$verdict" = "exhausted" ] && {
+            printf 'exhausted@%s' "$n"
+            return 0
+        }
+    done
+    printf 'survived:%s' "$restarts"
+}
+
+# Rapid churn (a death every tick, far inside the window) still trips the budget
+# after MAX_RESTARTS+1 deaths — the safety valve is intact.
+check "rapid churn exhausts after MAX_RESTARTS+1 deaths" \
+    "$(replay_budget 600 10 \
+        dead:0 dead:3 dead:6 dead:9 dead:12 dead:15 \
+        dead:18 dead:21 dead:24 dead:27 dead:30)" \
+    "exhausted@30"
+
+# Churn spaced by a full healthy window forgives each time, so 40 death/recovery
+# cycles — four times MAX_RESTARTS — never exhaust the budget (issue #69).
+spaced=()
+t=0
+for _ in $(seq 1 40); do
+    spaced+=("dead:${t}")
+    spaced+=("alive:$((t + 600))") # up for a full window -> forgiven
+    t=$((t + 600))
+done
+check "churn spaced by a healthy window never exhausts" \
+    "$(replay_budget 600 10 "${spaced[@]}")" "survived:0"
+
 echo
 echo "passed: ${pass}, failed: ${fail}"
 [ "$fail" -eq 0 ]

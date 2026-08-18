@@ -111,6 +111,11 @@ it changes every time cloudflared reconnects. The connector handles that for you
   (Chromium, nginx, cloudflared) are supervised. If cloudflared drops and comes
   back with a new URL, the connector re-issues `PUT /browsers/<name>` with the
   new secret under the **same name**, so your `credentialRef` keeps working.
+  Each process has a restart budget (`MAX_RESTARTS`, default 10); the budget is
+  **forgiven once the process has stayed up `HEALTHY_RESET_SECONDS` (default 600)**,
+  so ordinary churn over a long-lived session never accumulates into a fatal
+  restart storm. Only a burst of restarts with no healthy recovery in between
+  gives up (and the container's `restart: unless-stopped` then self-heals).
 - **The container restarts → it re-registers on boot.** Nothing to do; the next
   `docker compose up` registers a fresh tunnel under the same name.
 - **A run must fit inside one tunnel lifetime.** Crawldad connects to a backend
