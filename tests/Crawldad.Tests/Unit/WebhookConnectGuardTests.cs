@@ -1,4 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Webhooks;
 
@@ -50,6 +55,7 @@ public class WebhookConnectGuardTests
     [InlineData("::1")]              // IPv6 loopback
     [InlineData("fc00::1")]          // IPv6 unique-local
     [InlineData("::ffff:10.0.0.1")]  // IPv4-mapped private
+    [InlineData("64:ff9b::a9fe:a9fe")] // NAT64-synthesised 169.254.169.254 (DNS64 rebinding)
     public async Task A_resolution_to_a_blocked_address_is_refused(string ip) =>
         await Should.ThrowAsync<WebhookSsrfException>(
             () => Guard(Resolves(ip)).ResolveAndValidateAsync("rebind.example.com", _ct).AsTask());
@@ -83,11 +89,14 @@ public class WebhookConnectGuardTests
     }
 
     [Fact]
-    public void The_delivery_handler_refuses_redirects()
+    public void The_delivery_handler_disables_redirects_and_proxy()
     {
         using var handler = WebhookHttpClient.CreateHandler();
 
         handler.AllowAutoRedirect.ShouldBeFalse();
+        // With a proxy the ConnectCallback would receive the proxy endpoint, not the target — pinning the proxy while it
+        // reaches the tenant host. UseProxy must stay off so the guard governs the real destination.
+        handler.UseProxy.ShouldBeFalse();
     }
 
     [Fact]
@@ -144,5 +153,61 @@ public class WebhookConnectGuardTests
             () => client.PostAsync(dead, new StringContent("{}"), _ct));
 
         HasSsrfCause(error).ShouldBeFalse();
+    }
+
+    [Fact]
+    [SuppressMessage("Security", "CA5359:Do not disable certificate validation",
+        Justification = "The delivery client validates certificates in production; this test bypasses validation only to accept an in-process, self-signed loopback certificate — the point is to run a real TLS handshake through the custom pinned ConnectCallback.")]
+    public async Task An_https_delivery_completes_a_real_tls_handshake_through_the_pinned_connect()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var certificate = SelfSignedLoopbackCertificate();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        string? observedSni = null;
+        var serve = Task.Run(async () =>
+        {
+            using var connection = await listener.AcceptTcpClientAsync(timeout.Token);
+            await using var tls = new SslStream(connection.GetStream(), leaveInnerStreamOpen: false);
+            await tls.AuthenticateAsServerAsync(
+                (_, hello, _, _) =>
+                {
+                    observedSni = hello.ServerName;
+                    return ValueTask.FromResult(new SslServerAuthenticationOptions { ServerCertificate = certificate });
+                },
+                state: null,
+                timeout.Token);
+
+            var request = new byte[1024];
+            _ = await tls.ReadAsync(request, timeout.Token); // consume the request head; the 2-byte body fits the socket buffer
+            await tls.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"u8.ToArray(), timeout.Token);
+            await tls.FlushAsync(timeout.Token);
+        });
+
+        // Allow the loopback listener (permissive classifier), and trust the self-signed cert so the handshake can complete;
+        // the handler still owns the pinned ConnectCallback, so TLS is layered on top of the guard's own transport.
+        using var handler = WebhookHttpClient.CreateHandler(static _ => false, _realDns);
+        handler.SslOptions.RemoteCertificateValidationCallback = static (_, _, _, _) => true;
+        using var client = new HttpClient(handler, disposeHandler: false);
+
+        // A hostname target (not an IP literal) so a TLS SNI is actually sent — proving SNI carries the original host name.
+        using var response = await client.PostAsync(new Uri($"https://localhost:{port}/hook"), new StringContent("{}"), timeout.Token);
+        await serve;
+
+        ((int)response.StatusCode).ShouldBe(200);
+        observedSni.ShouldBe("localhost"); // TLS/SNI use the original hostname; only the transport IP was pinned
+    }
+
+    private static X509Certificate2 SelfSignedLoopbackCertificate()
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddDnsName("localhost");
+        san.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(san.Build());
+        return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
     }
 }

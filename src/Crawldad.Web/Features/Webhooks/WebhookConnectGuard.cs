@@ -94,13 +94,16 @@ internal static class WebhookHttpClient
     /// and the real DNS resolver.</summary>
     public static SocketsHttpHandler CreateHandler() => CreateHandler(WebhookUrlPolicy.IsBlockedAddress, ResolveWithDns);
 
-    /// <summary>Builds the delivery handler: redirects refused (a 3xx to an internal target would bypass the guard) and
-    /// every connection resolve-pinned by a <see cref="WebhookConnectGuard"/> over the given classifier/resolver, which
-    /// are injectable so a test can drive the redirect and rebind behaviour deterministically.</summary>
+    /// <summary>Builds the delivery handler: redirects refused (a 3xx to an internal target would bypass the guard),
+    /// the proxy disabled (with a proxy, <see cref="SocketsHttpHandler.ConnectCallback"/> receives the <i>proxy</i>
+    /// endpoint, not the webhook target, so the resolve-and-pin would validate the proxy while the proxy reached the
+    /// tenant host — a full bypass), and every connection resolve-pinned by a <see cref="WebhookConnectGuard"/> over the
+    /// given classifier/resolver, which are injectable so a test can drive the redirect and rebind behaviour deterministically.</summary>
     internal static SocketsHttpHandler CreateHandler(Func<IPAddress, bool> isBlocked, ResolveHost resolve) =>
         new()
         {
             AllowAutoRedirect = false,
+            UseProxy = false,
             ConnectCallback = new WebhookConnectGuard(isBlocked, resolve).ConnectAsync,
         };
 

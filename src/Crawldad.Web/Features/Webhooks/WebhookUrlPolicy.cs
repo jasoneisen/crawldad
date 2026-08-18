@@ -39,6 +39,15 @@ internal static class WebhookUrlPolicy
         IPNetwork.Parse("ff00::/8"),  // multicast
     ];
 
+    // IPv6 prefixes that *embed* an IPv4 destination a translating gateway will reach: NAT64 (RFC 6052, the low 32 bits),
+    // 6to4 (RFC 3056, the 32 bits after the 2002 prefix), and the deprecated IPv4-compatible form (the low 32 bits). A
+    // DNS64 resolver can synthesise e.g. 64:ff9b::169.254.169.254; the embedded v4 must be judged against the v4 denylist
+    // or the NAT64 gateway reaches the metadata service. (The IPv4-*mapped* ::ffff:0:0/96 form is handled separately via
+    // IsIPv4MappedToIPv6.)
+    private static readonly IPNetwork _nat64 = IPNetwork.Parse("64:ff9b::/96");
+    private static readonly IPNetwork _sixToFour = IPNetwork.Parse("2002::/16");
+    private static readonly IPNetwork _v4Compatible = IPNetwork.Parse("::/96");
+
     /// <summary>Whether <paramref name="url"/> is an acceptable delivery target. On rejection, <paramref name="error"/>
     /// carries a caller-safe reason (no host resolution, no internal detail).</summary>
     public static bool IsAllowed(string url, [NotNullWhen(false)] out string? error)
@@ -84,11 +93,45 @@ internal static class WebhookUrlPolicy
 
     /// <summary>Whether <paramref name="address"/> falls in a range a delivery must never reach — the reserved-range
     /// denylist shared by this registration check and the send-time <see cref="WebhookConnectGuard"/>. An IPv4-mapped
-    /// IPv6 address is unwrapped first, so <c>::ffff:10.0.0.1</c> is judged as the <c>10.0.0.1</c> it really reaches.</summary>
+    /// IPv6 address is unwrapped first, so <c>::ffff:10.0.0.1</c> is judged as the <c>10.0.0.1</c> it really reaches; a
+    /// NAT64 / 6to4 / IPv4-compatible address has its embedded IPv4 judged against the v4 denylist too, so a synthesised
+    /// <c>64:ff9b::169.254.169.254</c> cannot smuggle a delivery to an internal host through a translating gateway.</summary>
     internal static bool IsBlockedAddress(IPAddress address)
     {
         var ip = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
-        var networks = ip.AddressFamily == AddressFamily.InterNetwork ? _blockedV4 : _blockedV6;
-        return Array.Exists(networks, network => network.Contains(ip));
+
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6
+            && TryExtractEmbeddedV4(ip, out var embedded)
+            && IsBlockedV4(embedded))
+        {
+            return true;
+        }
+
+        return ip.AddressFamily == AddressFamily.InterNetwork ? IsBlockedV4(ip) : IsBlockedV6(ip);
+    }
+
+    private static bool IsBlockedV4(IPAddress ipv4) => Array.Exists(_blockedV4, network => network.Contains(ipv4));
+
+    private static bool IsBlockedV6(IPAddress ipv6) => Array.Exists(_blockedV6, network => network.Contains(ipv6));
+
+    // The IPv4 embedded in a NAT64 / 6to4 / IPv4-compatible IPv6 address, or null when the address embeds none. NAT64 and
+    // the IPv4-compatible form carry it in the low 32 bits; 6to4 carries it in the 32 bits after the 2002 prefix.
+    private static bool TryExtractEmbeddedV4(IPAddress ipv6, [NotNullWhen(true)] out IPAddress? embedded)
+    {
+        var bytes = ipv6.GetAddressBytes();
+        if (_nat64.Contains(ipv6) || _v4Compatible.Contains(ipv6))
+        {
+            embedded = new IPAddress(bytes[12..16]);
+            return true;
+        }
+
+        if (_sixToFour.Contains(ipv6))
+        {
+            embedded = new IPAddress(bytes[2..6]);
+            return true;
+        }
+
+        embedded = null;
+        return false;
     }
 }

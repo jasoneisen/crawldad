@@ -72,6 +72,12 @@ public class WebhookUrlPolicyTests
     [InlineData("fc00::1", true)]                         // IPv6 unique-local
     [InlineData("ff02::1", true)]                         // IPv6 multicast
     [InlineData("::ffff:10.0.0.1", true)]                 // IPv4-mapped private
+    // Embedded-IPv4 translation prefixes: the embedded v4 is re-judged, so an internal one is blocked and a public one is not.
+    [InlineData("64:ff9b::a9fe:a9fe", true)]              // NAT64 -> 169.254.169.254 (cloud metadata)
+    [InlineData("64:ff9b::7f00:1", true)]                 // NAT64 -> 127.0.0.1
+    [InlineData("64:ff9b::5db8:d822", false)]             // NAT64 -> 93.184.216.34 (public) stays allowed
+    [InlineData("2002:a9fe:a9fe::1", true)]               // 6to4 -> 169.254.169.254
+    [InlineData("::7f00:1", true)]                        // IPv4-compatible -> 127.0.0.1
     public void Classifies_resolved_addresses(string address, bool blocked) =>
         WebhookUrlPolicy.IsBlockedAddress(IPAddress.Parse(address)).ShouldBe(blocked);
 }
