@@ -164,6 +164,79 @@ public class DriftMonitoringTests(DriftFixture fixture)
         selector.GetProperty("drifted").GetBoolean().ShouldBeFalse();
     }
 
+    // ----- multi-revision histories: the baseline rescopes per PayloadRevision (issue #89) -----
+
+    [Fact]
+    public async Task A_new_payload_revision_rescopes_the_baseline_and_clears_false_positive_drift()
+    {
+        var host = await fixture.EnsureAsync();
+        var payloadId = await DraftAsync(host, _canaryPayload);
+
+        // Revision 1 ran to a clean, established baseline. Revision 2 is a payload edit that added "#newField" — a
+        // selector with a legitimate steady-state miss (a coalesce fallback). Under the old revision-blind query the
+        // revision-1 floor (which never saw "#newField") froze, so the new selector read as PERMANENT false-positive
+        // drift. With per-revision scoping, the single revision-2 run so far only re-warms the baseline: nothing alarms.
+        await SeedAsync(host, TestTenants.PrimaryId,
+            Timeline(payloadId, RunStatus.Succeeded, _t0, revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(1), revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(2), revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(3), revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(10), revision: 2, missed: ["#newField"]));
+
+        var warming = await GetJsonAsync(host, $"/payloads/{payloadId}/drift-status");
+        warming.GetProperty("state").GetString().ShouldBe("warmingUp"); // NOT drifted — the revision change re-warms
+        warming.GetProperty("drifted").GetBoolean().ShouldBeFalse();
+        warming.GetProperty("pinnedRevision").GetInt32().ShouldBe(2);    // the canary's current revision
+        warming.GetProperty("observedRuns").GetInt32().ShouldBe(1);      // rescoped to revision 2, not the 5 runs total
+
+        // Revision 2 accumulates its own baseline window (its three earliest healthy runs, all missing "#newField" — its
+        // legitimate floor), then a later revision-2 run still missing only "#newField" → steady, floor, never drift.
+        await SeedAsync(host, TestTenants.PrimaryId,
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(11), revision: 2, missed: ["#newField"]),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(12), revision: 2, missed: ["#newField"]),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(20), revision: 2, missed: ["#newField"]));
+
+        var steady = await GetJsonAsync(host, $"/payloads/{payloadId}/drift-status");
+        steady.GetProperty("state").GetString().ShouldBe("steady");
+        steady.GetProperty("drifted").GetBoolean().ShouldBeFalse();
+        steady.GetProperty("driftedSelectorCount").GetInt32().ShouldBe(0);
+        steady.GetProperty("observedRuns").GetInt32().ShouldBe(4);       // the four revision-2 runs, not the eight total
+        var floor = steady.GetProperty("selectors").EnumerateArray().ShouldHaveSingleItem();
+        floor.GetProperty("selector").GetString().ShouldBe("#newField");
+        floor.GetProperty("baselineFloor").GetBoolean().ShouldBeTrue();
+        floor.GetProperty("drifted").GetBoolean().ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task A_prior_revision_floor_neither_leaks_into_nor_masks_drift_in_the_new_revision()
+    {
+        var host = await fixture.EnsureAsync();
+        var payloadId = await DraftAsync(host, _canaryPayload);
+
+        // Revision 1's earliest runs missed "#shared" (its floor). Revision 2's own baseline matched "#shared" cleanly,
+        // then a later revision-2 run newly misses it — a real drift. A revision-blind baseline would take revision 1's
+        // earliest runs as the floor (they miss "#shared") and MASK the drift as steady; per-revision scoping builds the
+        // floor from revision 2's clean baseline, so the newly-missing selector is correctly reported as drift.
+        await SeedAsync(host, TestTenants.PrimaryId,
+            Timeline(payloadId, RunStatus.Succeeded, _t0, revision: 1, missed: ["#shared"]),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(1), revision: 1, missed: ["#shared"]),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(2), revision: 1, missed: ["#shared"]),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(10), revision: 2),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(11), revision: 2),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(12), revision: 2),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(20), revision: 2, missed: ["#shared"]));
+
+        var drift = await GetJsonAsync(host, $"/payloads/{payloadId}/drift-status");
+        drift.GetProperty("state").GetString().ShouldBe("drifted");
+        drift.GetProperty("drifted").GetBoolean().ShouldBeTrue();
+        drift.GetProperty("pinnedRevision").GetInt32().ShouldBe(2);
+        drift.GetProperty("driftedSelectorCount").GetInt32().ShouldBe(1);
+        var selector = drift.GetProperty("selectors").EnumerateArray().ShouldHaveSingleItem();
+        selector.GetProperty("selector").GetString().ShouldBe("#shared");
+        selector.GetProperty("drifted").GetBoolean().ShouldBeTrue();
+        selector.GetProperty("baselineFloor").GetBoolean().ShouldBeFalse();
+    }
+
     // ----- tenant scoping + not-found -----
 
     [Fact]
@@ -197,6 +270,7 @@ public class DriftMonitoringTests(DriftFixture fixture)
         Guid payloadId,
         RunStatus status,
         DateTimeOffset startedAt,
+        int revision = 1,
         string[]? missed = null,
         string[]? captures = null,
         string[]? screenshots = null,
@@ -207,7 +281,7 @@ public class DriftMonitoringTests(DriftFixture fixture)
             PayloadId = payloadId,
             PayloadName = "drift.canary",
             ScriptHash = "hash",
-            PayloadRevision = 1,
+            PayloadRevision = revision,
             Status = status,
             StartedAt = startedAt,
             FinishedAt = startedAt.AddSeconds(1),

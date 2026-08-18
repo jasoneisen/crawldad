@@ -426,9 +426,17 @@ but is *newly* missing in the latest completed run. A selector missing since the
 (default `0`). `evidence` carries the latest run's `capture`/`screenshot` refs (see the timeline/screenshot sections
 below) so an alert arrives with the changed page in hand.
 
-States: `noData` (no completed run yet), `warmingUp` (baseline not yet established — nothing is alarmed), `steady`
-(baseline established, no new misses beyond `threshold`), `drifted`. Only **durable** (async) runs emit the
-selector-miss trace, so only they are observed. Tenant-scoped: an unknown or foreign payload is a `404`.
+**Scoped to the pinned revision.** The baseline, `observedRuns`, and `firstObservedAt` are scoped to the pinned
+revision of the *latest completed run* — reported as `pinnedRevision`. A payload edit that adds or renames selectors,
+or an ad-hoc run at head mixed into the canary's stream, advances that revision, so the baseline re-establishes
+against the new revision's own earliest healthy runs and the state returns to `warmingUp` — the new revision's
+selectors are never reported as permanent drift against the old revision's floor. Consequently `firstObservedAt` is
+the first *healthy* observation **of the current revision** (not the payload's first-ever run), and `observedRuns`
+counts that revision's completed runs, not the whole cross-revision history.
+
+States: `noData` (no completed run yet), `warmingUp` (baseline not yet established for the current revision — nothing
+is alarmed), `steady` (baseline established, no new misses beyond `threshold`), `drifted`. Only **durable** (async)
+runs emit the selector-miss trace, so only they are observed. Tenant-scoped: an unknown or foreign payload is a `404`.
 
 ### `GET /runs/{id}/timeline`
 The observability read model (the lag-tolerant cross-run view): ordered steps with per-step durations, the

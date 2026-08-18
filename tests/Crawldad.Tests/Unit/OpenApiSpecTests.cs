@@ -114,6 +114,19 @@ public class OpenApiSpecTests
     }
 
     [Fact]
+    public void The_drift_status_threshold_is_a_declared_optional_integer_query_parameter()
+    {
+        // The one declared query parameter in the envelope (issue #89 folded in the missing declaration): drift-status
+        // ?threshold is an optional integer, distinct from the required path params the test above checks.
+        var parameters = OperationAt("GET", "/payloads/{id}/drift-status")!["parameters"]!.AsArray();
+        var threshold = parameters.Single(p => string.Equals(p!["name"]!.GetValue<string>(), "threshold", StringComparison.Ordinal))!;
+
+        threshold["in"]!.GetValue<string>().ShouldBe("query");
+        threshold["required"]!.GetValue<bool>().ShouldBeFalse();
+        threshold["schema"]!["type"]!.GetValue<string>().ShouldBe("integer");
+    }
+
+    [Fact]
     public void The_run_admission_shapes_are_documented()
     {
         var startRun = OperationAt("POST", "/runs")!["responses"]!.AsObject();
