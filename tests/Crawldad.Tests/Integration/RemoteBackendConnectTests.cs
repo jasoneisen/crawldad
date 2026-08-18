@@ -187,9 +187,10 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
     }
 
     [Fact]
-    public async Task Browserbase_apiKey_mode_4xx_from_the_session_api_is_a_non_retryable_terminal()
+    public async Task Browserbase_apiKey_mode_auth_4xx_from_the_session_api_is_a_non_retryable_terminal()
     {
-        // A rejected key: the session API answers 4xx BEFORE any CDP connect — an auth-shaped fault that fails fast.
+        // A rejected key: the session API answers an auth-shaped 4xx (401) BEFORE any CDP connect — fails fast (a retry
+        // cannot fix it). Contrast the throttle 4xx (429/408) below, which IS retryable (issue #85).
         using var api = new LocalSite().Map("/v1/sessions", "application/json", "{}", status: 401);
         var backend = Browserbase("bb_live_rejected", api.BaseUrl.TrimEnd('/'));
 
@@ -203,6 +204,21 @@ public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDi
     {
         // A transient server-side fault from the session API — retryable under connectRetry.
         using var api = new LocalSite().Map("/v1/sessions", "application/json", "{}", status: 503);
+        var backend = Browserbase("bb_live_apikey", api.BaseUrl.TrimEnd('/'));
+
+        var ex = await Should.ThrowAsync<BrowserConnectException>(
+            () => backend.ConnectAsync(new BackendBinding("browserbase", "cred-ref"), SessionPolicy.Default, _ct));
+        ex.Retryable.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(429)] // Too Many Requests — the hosted provider is throttling
+    [InlineData(408)] // Request Timeout
+    public async Task Browserbase_apiKey_mode_throttle_4xx_from_the_session_api_is_a_retryable_terminal(int status)
+    {
+        // Issue #85: a 429/408 from the session API is transient throttling — retryable under connectRetry with the same
+        // bounded budget as a 5xx, not a fail-fast auth rejection like the 401 above.
+        using var api = new LocalSite().Map("/v1/sessions", "application/json", "{}", status: status);
         var backend = Browserbase("bb_live_apikey", api.BaseUrl.TrimEnd('/'));
 
         var ex = await Should.ThrowAsync<BrowserConnectException>(
