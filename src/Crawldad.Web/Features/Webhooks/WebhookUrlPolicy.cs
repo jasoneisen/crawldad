@@ -4,13 +4,14 @@ using System.Net.Sockets;
 
 namespace Crawldad.Web.Features.Webhooks;
 
-/// <summary>The SSRF guard for a webhook target URL, enforced at registration. Crawldad dials <b>out</b> to a
-/// tenant-supplied address, so the policy is deliberately restrictive: <c>https</c> only (deliveries are signed but the
-/// transport must still be encrypted), and no IP that would let a delivery reach the platform's own network
-/// (loopback, link-local, RFC 1918 / CGNAT / unique-local, unspecified, multicast). An IP-literal host is classified
-/// directly; a DNS host is permitted at registration (its literal is checked, not resolved) except the reserved
-/// <c>localhost</c> name. DNS-rebinding defence — resolving and re-checking at send time — is a documented follow-up;
-/// the shipped stance is https + literal-address classification.</summary>
+/// <summary>The registration-time SSRF guard for a webhook target URL. Crawldad dials <b>out</b> to a tenant-supplied
+/// address, so the policy is deliberately restrictive: <c>https</c> only (deliveries are signed but the transport must
+/// still be encrypted), and no IP that would let a delivery reach the platform's own network (loopback, link-local,
+/// RFC 1918 / CGNAT / unique-local, unspecified, multicast). An IP-literal host is classified directly; a DNS host is
+/// permitted here (its literal is checked, not resolved) except the reserved <c>localhost</c> name — a name's actual
+/// resolution is re-checked at send time by <see cref="WebhookConnectGuard"/>, which resolves, re-classifies against
+/// this same denylist (<see cref="IsBlockedAddress"/>), and pins the connection, closing the DNS-rebinding gap. This
+/// registration check remains the fast, first-line rejection of a non-https URL or an obviously-internal literal.</summary>
 internal static class WebhookUrlPolicy
 {
     // The IPv4 ranges a delivery must never reach: "this network", private, CGNAT, loopback, link-local, and
@@ -56,7 +57,7 @@ internal static class WebhookUrlPolicy
 
         if (uri.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6)
         {
-            if (IsBlocked(IPAddress.Parse(uri.Host.Trim('[', ']'))))
+            if (IsBlockedAddress(IPAddress.Parse(uri.Host.Trim('[', ']'))))
             {
                 error = "url must not target a loopback, link-local, or private (RFC 1918 / unique-local) address";
                 return false;
@@ -81,9 +82,10 @@ internal static class WebhookUrlPolicy
         string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
         || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase);
 
-    // Whether an IP literal is in a blocked range — unwrapping an IPv4-mapped IPv6 address first so "::ffff:10.0.0.1"
-    // is judged as the 10.0.0.1 it really reaches.
-    private static bool IsBlocked(IPAddress address)
+    /// <summary>Whether <paramref name="address"/> falls in a range a delivery must never reach — the reserved-range
+    /// denylist shared by this registration check and the send-time <see cref="WebhookConnectGuard"/>. An IPv4-mapped
+    /// IPv6 address is unwrapped first, so <c>::ffff:10.0.0.1</c> is judged as the <c>10.0.0.1</c> it really reaches.</summary>
+    internal static bool IsBlockedAddress(IPAddress address)
     {
         var ip = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
         var networks = ip.AddressFamily == AddressFamily.InterNetwork ? _blockedV4 : _blockedV6;

@@ -38,9 +38,11 @@ internal sealed class LocalSite : IDisposable
 
     /// <summary>Registers a route.</summary>
     /// <param name="cacheControl">Optional <c>Cache-Control</c> header (e.g. <c>no-store</c> to force re-requests).</param>
-    public LocalSite Map(string path, string contentType, string body, string? cacheControl = null, int status = 200)
+    /// <param name="location">Optional <c>Location</c> header (with a 3xx <paramref name="status"/>, a redirect a client
+    /// may or may not follow).</param>
+    public LocalSite Map(string path, string contentType, string body, string? cacheControl = null, int status = 200, string? location = null)
     {
-        _routes[path] = new Response(contentType, Encoding.UTF8.GetBytes(body), cacheControl, status);
+        _routes[path] = new Response(contentType, Encoding.UTF8.GetBytes(body), cacheControl, status, location);
         return this;
     }
 
@@ -81,6 +83,11 @@ internal sealed class LocalSite : IDisposable
                     context.Response.AddHeader("Cache-Control", response.CacheControl);
                 }
 
+                if (response.Location is not null)
+                {
+                    context.Response.AddHeader("Location", response.Location);
+                }
+
                 context.Response.OutputStream.Write(response.Body);
             }
             else
@@ -106,5 +113,5 @@ internal sealed class LocalSite : IDisposable
         _listener.Close();
     }
 
-    private sealed record Response(string ContentType, byte[] Body, string? CacheControl, int Status);
+    private sealed record Response(string ContentType, byte[] Body, string? CacheControl, int Status, string? Location);
 }

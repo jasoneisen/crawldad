@@ -1,3 +1,4 @@
+using System.Net;
 using Crawldad.Web.Features.Webhooks;
 
 namespace Crawldad.Tests.Unit;
@@ -52,4 +53,25 @@ public class WebhookUrlPolicyTests
             error.ShouldNotBeNullOrEmpty();
         }
     }
+
+    [Theory]
+    // The reserved-range denylist reused at send time (WebhookConnectGuard) to classify a resolved address.
+    [InlineData("93.184.216.34", false)]                  // public IPv4
+    [InlineData("2606:2800:220:1:248:1893:25c8:1946", false)] // public IPv6
+    [InlineData("169.1.1.1", false)]                      // 169.x but NOT 169.254 link-local
+    [InlineData("127.0.0.1", true)]                       // loopback
+    [InlineData("10.1.2.3", true)]                        // RFC 1918
+    [InlineData("172.16.5.5", true)]                      // RFC 1918
+    [InlineData("192.168.0.1", true)]                     // RFC 1918
+    [InlineData("169.254.169.254", true)]                 // link-local (cloud metadata)
+    [InlineData("100.100.0.1", true)]                     // CGNAT
+    [InlineData("0.0.0.0", true)]                         // unspecified
+    [InlineData("239.255.255.250", true)]                 // multicast
+    [InlineData("::1", true)]                             // IPv6 loopback
+    [InlineData("fe80::1", true)]                         // IPv6 link-local
+    [InlineData("fc00::1", true)]                         // IPv6 unique-local
+    [InlineData("ff02::1", true)]                         // IPv6 multicast
+    [InlineData("::ffff:10.0.0.1", true)]                 // IPv4-mapped private
+    public void Classifies_resolved_addresses(string address, bool blocked) =>
+        WebhookUrlPolicy.IsBlockedAddress(IPAddress.Parse(address)).ShouldBe(blocked);
 }
