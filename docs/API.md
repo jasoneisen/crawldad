@@ -721,6 +721,8 @@ A tenant registers **webhook endpoints** through the API (the same self-service 
 
 `400` (RFC 7807 problem+json) when the name is not a valid slug, the URL is not `https` or targets a private/loopback/link-local address, the secret is empty or shorter than 16 characters, or an event type is unknown.
 
+The registration check classifies the URL's literal host; the same block-list is **re-applied at delivery**, where the target host is resolved, every resolved address re-checked, and the connection **pinned** to a validated address — so a DNS name that points or later rebinds to an internal address is refused before the request is sent. **Redirects are not followed** (a `3xx` is a failed delivery), so your endpoint must accept the `POST` directly at a publicly-routable `https` address.
+
 The **secret is caller-supplied and encrypted at rest** (ASP.NET Data Protection); it is **never** returned by any endpoint, event, or log. **Rotate** it by re-registering (`PUT`) with a new value.
 
 ### `GET /webhooks` — list

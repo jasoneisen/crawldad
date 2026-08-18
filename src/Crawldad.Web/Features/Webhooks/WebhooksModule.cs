@@ -16,15 +16,19 @@ public static class WebhooksModule
     /// event stream carries the secret). Multi-tenancy comes from the shared <c>AllDocumentsAreMultiTenanted</c> policy.</summary>
     public static void ConfigureMarten(StoreOptions options) => options.Schema.For<WebhookEndpoint>();
 
-    /// <summary>Registers the slice's services: the register validator, the encrypting endpoint store, the HTTP sender,
-    /// and the bound delivery options with their boot-time validator. Data Protection (the at-rest cipher) and the
-    /// <c>IHttpClientFactory</c> are host-wide seams the slice leans on.</summary>
+    /// <summary>Registers the slice's services: the register validator, the encrypting endpoint store, the HTTP sender
+    /// over its SSRF-hardened delivery client, and the bound delivery options with their boot-time validator. Data
+    /// Protection (the at-rest cipher) is a host-wide seam the slice leans on.</summary>
     public static void AddWebhooksServices(IServiceCollection services)
     {
         services.AddScoped<IValidator<RegisterWebhookRequest>, RegisterWebhookRequestValidator>();
         services.AddSingleton<IWebhookEndpointStore, MartenWebhookEndpointStore>();
         services.AddSingleton<IWebhookSender, HttpWebhookSender>();
-        services.AddHttpClient(); // IHttpClientFactory for the delivery POST (idempotent if another slice added it)
+
+        // The delivery POST rides a dedicated, SSRF-hardened client: redirects refused and every connection
+        // resolve-pinned to a send-time-validated public address (WebhookConnectGuard), so a DNS name that points or
+        // rebinds to the platform's own network is refused at send. Named so the guard applies to deliveries only.
+        services.AddHttpClient(WebhookHttpClient.Name).ConfigurePrimaryHttpMessageHandler(() => WebhookHttpClient.CreateHandler());
 
         services.AddOptions<WebhookOptions>().BindConfiguration(WebhookOptions.Section).ValidateOnStart();
         services.AddSingleton<IValidateOptions<WebhookOptions>, WebhookOptionsValidator>();
