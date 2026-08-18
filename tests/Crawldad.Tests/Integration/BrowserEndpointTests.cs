@@ -191,4 +191,15 @@ public sealed class BrowserEndpointTests(BrowserApiFixture fixture) : IAsyncLife
             x.Put.Json(new { adapter = "browserbase", mode = "connectUrl", secret = "not-a-url" }).ToUrl("/browsers/prod");
             x.StatusCodeShouldBe(400);
         });
+
+    // The inert combination: browserless connects only by token, so a connectUrl registration would save cleanly and
+    // then fail closed at connect. Validation rejects it up front (issue #66) rather than banking a silent misconfig.
+    [Fact]
+    public async Task A_browserless_connectUrl_registration_is_a_400() =>
+        await Host.Scenario(x =>
+        {
+            x.WithRequestHeader("Authorization", TestTenants.Bearer(TestTenants.PrimaryKey));
+            x.Put.Json(new { adapter = "browserless", mode = "connectUrl", secret = "wss://production-sfo.browserless.io/chromium/playwright" }).ToUrl("/browsers/prod");
+            x.StatusCodeShouldBe(400);
+        });
 }

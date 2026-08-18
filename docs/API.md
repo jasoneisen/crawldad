@@ -601,7 +601,7 @@ A tenant registers its browser **connect credentials** through the API rather th
 
 ```jsonc
 {
-  "adapter": "browserbase",             // browserbase | browserless
+  "adapter": "browserbase",             // browserbase (connectUrl | apiKey) | browserless (apiKey only)
   "mode": "connectUrl",                 // connectUrl (the secret is the whole wss/https URL) | apiKey (a provider key)
   "secret": "wss://…",                  // write-only — never echoed back
   "options": { "region": "us-east-1" }  // optional provider metadata (surfaced in listings, never the secret)
@@ -615,7 +615,9 @@ A tenant registers its browser **connect credentials** through the API rather th
   "options": { "region": "us-east-1" }, "createdAt": "2026-08-10T12:00:00Z", "updatedAt": "2026-08-10T12:00:00Z" }
 ```
 
-`400` (RFC 7807 problem+json) when the name is not a valid slug, the adapter or mode is unknown, the secret is empty, or a `connectUrl` secret is not `wss://`/`https://`.
+`400` (RFC 7807 problem+json) when the name is not a valid slug, the adapter or mode is unknown, the adapter has no connect path for the mode (`browserless` is token-only, so `browserless` + `connectUrl` is rejected — see the note below), the secret is empty, or a `connectUrl` secret is not `wss://`/`https://`.
+
+**What the registration drives.** The stored `mode` and `options` are **metadata** today: they shape the listing and are shape-validated here, but at connect the adapter resolves the credential *by reference* and takes its live mode/options from the **payload's** `config.backend` binding ([§2.1](#21-inputs)), not from this registration. `browserbase` reads `options.mode` from that binding to select `connectUrl` vs `apiKey`; `browserless` always connects natively by token (`?token=…`). Because `browserless` has **no** connectUrl connect path, registering it in `connectUrl` mode is an inert combination — it would save cleanly and then fail closed at connect — so it is rejected here with a `400` rather than banked as a silent misconfiguration.
 
 ### `GET /browsers` — list
 
