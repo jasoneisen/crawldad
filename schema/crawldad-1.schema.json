@@ -977,13 +977,18 @@
                   "$ref": "#/$defs/sel"
                 },
                 "in": {
-                  "description": "Resolve the `selector` inside a bound frame handle.",
+                  "description": "Resolve the `selector` inside a bound frame handle. Requires a `selector`: a full-document capture (no `selector`) has no frame to scope, so `in` without `selector` is rejected at save time (`capture_in_without_selector`).",
                   "type": "string"
                 },
                 "var": {
                   "description": "The variable bound to the capture result `{ contentId, sha256, sizeBytes, storedAs, stored }` — the ref manifest entry.",
                   "type": "string"
                 }
+              },
+              "dependentRequired": {
+                "in": [
+                  "selector"
+                ]
               }
             }
           }

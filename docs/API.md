@@ -812,6 +812,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 - **JSON-Schema keywords** (structural), e.g. `required`, `type`, `enum`, `additionalProperties`, `const`,
   `minimum`, `minLength`, `pattern`, `oneOf` — the failing schema keyword at that path.
 - **Semantic slugs:** `unknown_node`, `missing_max_iterations`, `undefined_reference`, `ambiguous_selector`,
+  `capture_in_without_selector` (a `capture` with `in` but no `selector` — the frame has nothing to scope),
   `checkpoint_misplaced`, `checkpoint_not_unique`, `secret_ref_in_expression`, `fill_secret_not_secret_ref`,
   `malformed_node`, `type_error` (a bare non-integral `loop.for` bound), and the expression parse codes
   `unknown_function`, `wrong_arity`, `syntax_error`, `expression_too_deep`.
