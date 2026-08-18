@@ -27,7 +27,9 @@ public static class DriftAnalysis
     /// (ascending); <paramref name="current"/> is the latest completed (succeeded or failed) observation, or null when
     /// none exists; <paramref name="observedRuns"/> is that revision's completed observation count; <paramref name="threshold"/>
     /// is the per-payload count of new misses tolerated before the status is <see cref="DriftState.Drifted"/> (0 = any new
-    /// miss drifts). A revision change therefore re-establishes the baseline and returns the state to warming up.</summary>
+    /// miss drifts). Because the observations are per-revision, moving to a revision that has not yet accumulated its
+    /// baseline window reads as warming up, while a rollback to an already-baselined revision resumes against its own
+    /// established floor at once.</summary>
     public static PayloadDriftStatus Analyze(
         Guid payloadId,
         string payloadName,

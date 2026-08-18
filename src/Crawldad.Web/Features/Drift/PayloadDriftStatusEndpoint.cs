@@ -23,13 +23,25 @@ public static class PayloadDriftStatusEndpoint
     /// <summary>Handles <c>GET /payloads/{id}/drift-status</c>. Fixes the canary's current revision from the latest
     /// completed observation, then reads at most <see cref="DriftAnalysis.DefaultBaselineRuns"/> earliest succeeded
     /// observations of <em>that revision</em> (the baseline) plus that revision's completed-observation count, and folds
-    /// them via <see cref="DriftAnalysis.Analyze"/>. Every query is bounded, so the cost does not grow with canary age.
+    /// them via <see cref="DriftAnalysis.Analyze"/>. Each query returns a bounded result, but only the baseline is
+    /// bounded <em>work</em> (an index range scan of at most <see cref="DriftAnalysis.DefaultBaselineRuns"/> rows); the
+    /// latest-run and count queries ride the same index restricted to the payload's (resp. the revision's) rows, so their
+    /// work is proportional to that history rather than a full-table scan — not strictly age-independent.
     ///
     /// <para>Scoping the baseline (and the observation count that drives warmup) to the latest run's pinned
     /// <c>PayloadRevision</c> is the fix for issue #89: a payload edit that adds or renames selectors — or an ad-hoc run
     /// at head mixed into the canary's stream — advances the pinned revision, so the baseline re-establishes against the
     /// new revision's own earliest healthy runs instead of freezing at the old revision's miss floor and reporting the
-    /// new selectors as permanent false-positive drift. A revision change resets the state to <c>warmingUp</c>.</para></summary>
+    /// new selectors as permanent false-positive drift. A revision the canary has not yet run
+    /// <see cref="DriftAnalysis.DefaultBaselineRuns"/>+1 healthy times reads as <c>warmingUp</c>; a rollback or re-pin to
+    /// an <em>already-baselined</em> revision instead resumes <c>steady</c>/<c>drifted</c> immediately against that
+    /// revision's own established floor.</para>
+    ///
+    /// <para>The current revision is whichever the <em>latest completed</em> run pinned, so when runs of two revisions
+    /// interleave — e.g. an ad-hoc head run landing between the canary's own — a single poll can report the other
+    /// revision and transiently mask a real drift on the pinned one; the next canary run at the pinned revision
+    /// self-corrects it. This is accepted deliberately: drift is a slow, polled signal, and pinning to the latest
+    /// observation keeps the read a fixed set of bounded-result queries with no cross-revision merge.</para></summary>
     [WolverineGet("/payloads/{id}/drift-status")]
     public static async Task<IResult> Handle(Guid id, IDocumentSession session, HttpContext http, CancellationToken ct)
     {
@@ -46,7 +58,9 @@ public static class PayloadDriftStatusEndpoint
 
         // The current signal: the latest completed observation (a failed run is a completed observation — a strict/
         // required miss fails the run yet still records the missed selector; a cancelled/running/queued run is not). Its
-        // pinned revision is the canary's CURRENT revision, which the baseline and count below are scoped to (#89).
+        // pinned revision is the canary's CURRENT revision, which the baseline and count below are scoped to (#89). When
+        // two revisions interleave (an ad-hoc head run mixed into the canary stream) this can flip the assessed revision
+        // for one poll — a transient, self-correcting mask we accept over a cross-revision merge (see the summary).
         var latest = await session.Query<RunTimeline>()
             .Where(timeline => timeline.PayloadId == id && (timeline.Status == RunStatus.Succeeded || timeline.Status == RunStatus.Failed))
             .OrderByDescending(timeline => timeline.StartedAt)

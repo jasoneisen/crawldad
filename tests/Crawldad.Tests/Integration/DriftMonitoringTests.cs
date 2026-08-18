@@ -237,6 +237,71 @@ public class DriftMonitoringTests(DriftFixture fixture)
         selector.GetProperty("baselineFloor").GetBoolean().ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task A_rollback_to_an_already_baselined_revision_resumes_immediately_without_re_warming()
+    {
+        var host = await fixture.EnsureAsync();
+        var payloadId = await DraftAsync(host, _canaryPayload);
+
+        // Revision 1 was fully baselined earlier (its three earliest healthy runs are its floor). The canary then moved
+        // to revision 2, and is now rolled back / re-pinned to revision 1 (a POST /runs { revision:1 } run is the latest
+        // observation). Because revision 1 already carries its baseline in history, the assessment resumes against that
+        // established floor at once — steady, NOT warmingUp. The "revision change → warmingUp" reset only holds for a
+        // revision the canary has not yet run its baseline window of healthy times, not a rollback to a baselined one.
+        await SeedAsync(host, TestTenants.PrimaryId,
+            Timeline(payloadId, RunStatus.Succeeded, _t0, revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(1), revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(2), revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(10), revision: 2),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(11), revision: 2),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(12), revision: 2),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(30), revision: 1)); // the rollback run — latest overall
+
+        var drift = await GetJsonAsync(host, $"/payloads/{payloadId}/drift-status");
+        drift.GetProperty("state").GetString().ShouldBe("steady");  // resumes revision 1's floor at once, never re-warms
+        drift.GetProperty("pinnedRevision").GetInt32().ShouldBe(1);
+        drift.GetProperty("observedRuns").GetInt32().ShouldBe(4);   // revision 1's four completed runs
+    }
+
+    [Fact]
+    public async Task An_interleaved_head_run_transiently_masks_pinned_revision_drift_then_self_corrects()
+    {
+        var host = await fixture.EnsureAsync();
+        var payloadId = await DraftAsync(host, _canaryPayload);
+
+        // The canary pins revision 1: a clean baseline, and a latest run that newly misses "#realDrift" → drifted.
+        await SeedAsync(host, TestTenants.PrimaryId,
+            Timeline(payloadId, RunStatus.Succeeded, _t0, revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(1), revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(2), revision: 1),
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(5), revision: 1, missed: ["#realDrift"]));
+
+        var drifted = await GetJsonAsync(host, $"/payloads/{payloadId}/drift-status");
+        drifted.GetProperty("state").GetString().ShouldBe("drifted");
+        drifted.GetProperty("pinnedRevision").GetInt32().ShouldBe(1);
+
+        // An ad-hoc run at head (revision 2) lands as the newest observation. The current revision follows the latest
+        // completed run, so this one poll now assesses revision 2 (warming up) and transiently MASKS the revision-1
+        // drift — the accepted, self-correcting one-cycle flap of pinning to the latest observation (issue #89 review).
+        await SeedAsync(host, TestTenants.PrimaryId,
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(6), revision: 2));
+
+        var masked = await GetJsonAsync(host, $"/payloads/{payloadId}/drift-status");
+        masked.GetProperty("state").GetString().ShouldBe("warmingUp");
+        masked.GetProperty("drifted").GetBoolean().ShouldBeFalse();
+        masked.GetProperty("pinnedRevision").GetInt32().ShouldBe(2);
+
+        // The canary's next scheduled run at its pinned revision 1 (still drifting) self-corrects the signal next poll.
+        await SeedAsync(host, TestTenants.PrimaryId,
+            Timeline(payloadId, RunStatus.Succeeded, _t0.AddMinutes(7), revision: 1, missed: ["#realDrift"]));
+
+        var recovered = await GetJsonAsync(host, $"/payloads/{payloadId}/drift-status");
+        recovered.GetProperty("state").GetString().ShouldBe("drifted");
+        recovered.GetProperty("pinnedRevision").GetInt32().ShouldBe(1);
+        recovered.GetProperty("selectors").EnumerateArray().ShouldHaveSingleItem()
+            .GetProperty("selector").GetString().ShouldBe("#realDrift");
+    }
+
     // ----- tenant scoping + not-found -----
 
     [Fact]

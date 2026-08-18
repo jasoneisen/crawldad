@@ -47,12 +47,15 @@ public static class RunsModule
         options.Projections.Add<RunTimelineProjection>(lifecycle);
 
         // Index the drift-monitoring read path (issues #47/#89): GET /payloads/{id}/drift-status filters RunTimeline by
-        // (PayloadId, PayloadRevision, Status) and orders/limits by StartedAt for its three bounded per-poll queries —
-        // the current revision's baseline (earliest healthy runs), the latest completed observation, and that revision's
-        // observation count. Without an index each poll is a jsonb scan + sort of the payload's whole run history; this
-        // composite computed index over exactly those columns makes them index range scans. The name is set explicitly:
-        // Marten's convention-derived name for four columns overflows Postgres's 63-char identifier limit and would churn
-        // the schema diff on every migration.
+        // (PayloadId, PayloadRevision, Status) and orders/limits by StartedAt for its three per-poll queries — the
+        // current revision's baseline (earliest healthy runs), the latest completed observation, and that revision's
+        // observation count. Without an index each poll is a jsonb scan + sort of the payload's whole run history. This
+        // composite computed index over those columns serves the baseline as a true bounded index range scan (all leading
+        // columns are equality-matched, StartedAt supplies the LIMIT 3 order); the count and the revision-agnostic latest
+        // query still ride the index but by its PayloadId prefix only, so their work stays proportional to the revision's
+        // (resp. the payload's) completed-run count rather than a full-table scan — smaller and index-backed, not O(1).
+        // The name is set explicitly: Marten's convention-derived name for four columns overflows Postgres's 63-char
+        // identifier limit and would churn the schema diff on every migration.
         options.Schema.For<RunTimeline>()
             .Index(
                 new Expression<Func<RunTimeline, object>>[]
