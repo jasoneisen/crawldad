@@ -56,6 +56,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fast, dotnet-free guard for the live-canary retry-once wrapper (issue #92): pins the retry semantics with a
+      # scripted fake canary and a recording no-op sleep (a transient record_not_accessible → one delayed retry →
+      # clears; any other failure alarms immediately, with no retry) — no live traffic, no real waiting. The wrapper
+      # itself (eng/canary-retry.sh) runs only in the scheduled/manual canary.yml.
+      - name: Canary retry wrapper selftest
+        run: eng/canary-retry.selftest.sh
+
       - name: Set up .NET (from global.json)
         uses: actions/setup-dotnet@v4
         with:
