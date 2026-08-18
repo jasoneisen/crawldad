@@ -6,8 +6,9 @@ namespace Crawldad.Web.Infrastructure.Security;
 /// <summary>The credential-scrubbing primitive every outbound sink (events, HTTP responses, logs) funnels text through:
 /// redacts exact registered run secrets, the always-on configured tenant API keys, and — on leak-prone channels (logs,
 /// trace/timeline events, errors) — known credential query params (<c>apiKey</c>, <c>token</c>, <c>signingKey</c>). The
-/// result channel (<see cref="ScrubJson"/>) exact-scrubs secrets but skips the param rule, so a customer's own extracted
-/// page content is never corrupted (issue #70). Idempotent; a no-op on already-clean text keeps goldens byte-identical.</summary>
+/// JSON channel (<see cref="ScrubJson"/>) — a run's shaped <c>result</c>/<c>partial</c> and the durable resume checkpoint
+/// it restores through — exact-scrubs secrets but skips the param rule, so a customer's own extracted page content is
+/// never corrupted (issues #70, #82). Idempotent; a no-op on already-clean text keeps goldens byte-identical.</summary>
 public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IReadOnlyCollection<string>? alwaysScrub = null)
 {
     private readonly IReadOnlyCollection<string> _alwaysScrub = alwaysScrub ?? [];
@@ -44,8 +45,9 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
     // The shared scrub core. The exact-secret rules (registered run secrets, form-fill secrets, the always-on tenant
     // keys) ALWAYS run, so a registered credential is redacted on every channel. The credential-param regex runs only
     // when scrubCredentialParams is set: every leak-prone channel (logs, trace/timeline events, errors) passes true, but
-    // the RESULT channel (ScrubJson) passes false — the param rule would rewrite a `token=`/`apiKey=`-shaped substring in
-    // the customer's OWN extracted page content to `[redacted]`, silently corrupting the data they asked for (issue #70).
+    // the JSON channels (ScrubJson — the run's RESULT and the durable resume checkpoint) pass false — the param rule would
+    // rewrite a `token=`/`apiKey=`-shaped substring in the customer's OWN extracted page content to `[redacted]`, silently
+    // corrupting the data they asked for (issue #70) and, on a checkpoint, the state a resumed run restores from (issue #82).
     // Their content is theirs to receive verbatim; only their run's own registered secrets stay redacted (the exact rules
     // above). This mirrors the capture channel, which bypasses the param rule for the same reason (PR #78).
     private string Scrub(string text, bool scrubCredentialParams)
@@ -89,12 +91,13 @@ public sealed partial class CredentialScrubber(IRunSecretScope secretScope, IRea
             : result;
     }
 
-    /// <summary>Scrubs a JSON value (the payload's shaped <c>result</c>/<c>partial</c> — the customer's OWN extracted
-    /// content, which could echo a registered secret). Exact-scrubs the run's live secrets so a registered credential is
-    /// never returned, but deliberately does NOT apply the credential-param rule: a <c>token=</c>/<c>apiKey=</c>-shaped
-    /// substring in the scraped page (a WebForms href, a hidden field) is the caller's data and survives verbatim, never
-    /// rewritten to <c>[redacted]</c> (issue #70; the capture channel bypasses the param rule the same way, PR #78).
-    /// Returns the same element when scrubbing changes nothing, so a credential-free result is byte-identical to its golden.</summary>
+    /// <summary>Scrubs a JSON value — the payload's shaped <c>result</c>/<c>partial</c>, and the durable resume checkpoint's
+    /// cursor + var snapshot (issue #82), both the customer's OWN extracted content that could echo a registered secret.
+    /// Exact-scrubs the run's live secrets so a registered credential is never returned, but deliberately does NOT apply the
+    /// credential-param rule: a <c>token=</c>/<c>apiKey=</c>-shaped substring in the scraped page (a WebForms href, a hidden
+    /// field) — or in a checkpointed var/cursor a resumed run restores and re-navigates — is the caller's data and survives
+    /// verbatim, never rewritten to <c>[redacted]</c> (issue #70; the capture channel bypasses the param rule the same way,
+    /// PR #78). Returns the same element when scrubbing changes nothing, so a credential-free result is byte-identical to its golden.</summary>
     public JsonElement? ScrubJson(JsonElement? element)
     {
         if (element is null)

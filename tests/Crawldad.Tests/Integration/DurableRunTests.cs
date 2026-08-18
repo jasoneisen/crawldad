@@ -4,6 +4,7 @@ using Alba;
 using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
+using Crawldad.Web.Infrastructure.Security;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Wolverine;
@@ -57,6 +58,20 @@ public sealed class DurableCollection : ICollectionFixture<DurableFixture>
 public class DurableRunTests(DurableFixture fixture)
 {
     private static string SearchPayload() => File.ReadAllText(Path.Combine(Runner.FixturesRoot, "Payloads", "search-full.json"));
+
+    // A captured detail-page URL carrying a `token=`-shaped param that is NOT a run secret — the customer's own extracted
+    // content. The full `Scrub` would param-redact it; the checkpoint's ScrubJson posture must leave it verbatim (issue #82).
+    private const string _capturedTokenUrl = "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?token=abc123SHAPEDtoken&capId=24ENF-1";
+
+    // The search crawl, but carrying _capturedTokenUrl in a var it shapes straight into the result. The var rides the
+    // durable checkpoint's snapshot, so a resumed run restores it into the result — the exact path issue #82 is about.
+    private static string CapturedVarPayload()
+    {
+        var payload = JsonNode.Parse(SearchPayload())!;
+        payload["vars"]!["captured"] = $"'{_capturedTokenUrl}'"; // a string-literal expression: the extracted URL, set once, never reassigned
+        payload["result"] = "{ captured: captured }";            // shape the restored var straight into the result
+        return payload.ToJsonString();
+    }
 
     private static JsonObject SearchBody(string fixture, bool async) => new()
     {
@@ -265,6 +280,67 @@ public class DurableRunTests(DurableFixture fixture)
         var types = await EventTypesAsync(host2, runId);
         types.ShouldContain(typeof(RunResumed));
         types.Count(t => t == typeof(RunCheckpointReached)).ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    // ----- checkpointed vars are not param-scrubbed (issue #82) --------------
+
+    [Fact]
+    public async Task A_checkpointed_token_shaped_var_survives_resume_into_the_result_uncorrupted()
+    {
+        var host = await fixture.EnsureAsync();
+        var gate = new RunGate("pg=2");
+        fixture.Gate.Arm(gate);
+
+        // Seed a runnable run whose crawl carries a `token=`-shaped captured URL in a var, and drive it directly so the
+        // handler token can honestly interrupt it mid-crawl (as host shutdown does) once the durable checkpoint is written.
+        var runId = Guid.NewGuid();
+        var inputs = new JsonObject
+        {
+            ["backend"] = new JsonObject { ["adapter"] = "fake", ["options"] = new JsonObject { ["fixture"] = "caphome-resume" } },
+            ["startDate"] = "01/01/2024",
+            ["endDate"] = "01/31/2024",
+            ["knownUrls"] = new JsonArray(),
+            ["priorCrawlComplete"] = false,
+        };
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        await using (var session = store.LightweightSession(TestTenants.PrimaryId))
+        {
+            session.Store(new RunExecutorSaga { Id = runId, Script = CapturedVarPayload(), Inputs = inputs.ToJsonString() });
+            session.Store(new RunProgress { Id = runId, Status = Crawldad.Contracts.Runs.RunStatus.Running });
+            await session.SaveChangesAsync();
+        }
+
+        using var handler = new CancellationTokenSource();
+        var executor = host.Services.GetRequiredService<RunExecutor>();
+        var drive = executor.ExecuteAsync(runId, TestTenants.PrimaryId, handler.Token);
+        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(20)); // blocked mid-crawl, past >= 1 checkpoint
+        await handler.CancelAsync();                            // honest interruption — leaves the run running for recovery
+        await drive;
+
+        // The durable checkpoint stored the TRUE value, not `token=[redacted]`: the var snapshot is scrubbed through the
+        // result-channel posture (exact-secret only, no param rule), so the customer's own extracted content is intact (#82).
+        await using (var read = store.LightweightSession(TestTenants.PrimaryId))
+        {
+            var interrupted = await read.LoadAsync<RunProgress>(runId);
+            interrupted!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Running);
+            interrupted.Checkpoint.ShouldNotBeNull();
+            using var snapshot = JsonDocument.Parse(interrupted.Checkpoint.VarsJson);
+            snapshot.RootElement.GetProperty("captured").GetString().ShouldBe(_capturedTokenUrl); // survived verbatim (not token=[redacted])
+            interrupted.Checkpoint.VarsJson.ShouldNotContain(CredentialScrubber.Redaction);        // never param-redacted on the checkpoint
+        }
+
+        // Resume on the same durable host (a fresh executor drive, as startup recovery would): it restores the var snapshot
+        // and shapes it into the result. The resumed run must succeed with the TRUE captured value — not a corrupted one.
+        fixture.Gate.Arm(gate: null); // run straight through to completion this time
+        (await executor.ExecuteAsync(runId, TestTenants.PrimaryId, CancellationToken.None)).ShouldBeTrue(); // reached terminal
+
+        await using (var read = store.LightweightSession(TestTenants.PrimaryId))
+        {
+            var finished = await read.LoadAsync<RunProgress>(runId);
+            finished!.Status.ShouldBe(Crawldad.Contracts.Runs.RunStatus.Succeeded);
+            using var result = JsonDocument.Parse(finished.ResultJson!);
+            result.RootElement.GetProperty("captured").GetString().ShouldBe(_capturedTokenUrl); // NOT token=[redacted]
+        }
     }
 
     // ----- async terminal failure + endpoint edges ---------------------------
