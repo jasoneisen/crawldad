@@ -37,6 +37,11 @@ NGINX_CONF="${SCRIPT_DIR}/nginx.conf"
 CF_LOG="${RUN_DIR}/cloudflared.log"
 
 MAX_RESTARTS="${MAX_RESTARTS:-10}" # per-component restart budget before giving up
+# A component that stays up this many seconds after a restart has its restart
+# budget forgiven (reset to 0). Without this, budgets are cumulative for the whole
+# process lifetime, so ordinary tunnel churn over a long session eventually trips
+# MAX_RESTARTS and forces a full container restart (issue #69).
+HEALTHY_RESET_SECONDS="${HEALTHY_RESET_SECONDS:-600}"
 
 CHROMIUM_BIN="${CHROMIUM_BIN:-}"
 CHROMIUM_PID=""
@@ -219,37 +224,61 @@ reregister() {
     register_with_retry "$SECRET" || die "Re-registration failed after retries; the browser would be unreachable."
 }
 
+# Per-component supervision. Each restart consumes one unit of that component's
+# budget; the budget is forgiven once the component has stayed up for
+# HEALTHY_RESET_SECONDS since its last restart (restart_budget_step in lib.sh owns
+# that arithmetic), so a long session's ordinary tunnel churn never accumulates
+# into a fatal restart storm. Exhausting the budget within a single unhealthy
+# window is still fatal.
 supervise() {
-    local chr_restarts=0 ngx_restarts=0 cf_restarts=0 need_register
+    local chr_restarts=0 ngx_restarts=0 cf_restarts=0
+    local chr_last=0 ngx_last=0 cf_last=0
+    local chr_up ngx_up cf_up verdict need_register now step
     while :; do
         sleep 3
         need_register=0
+        now="$(date +%s)"
 
-        if ! alive "$CHROMIUM_PID"; then
-            chr_restarts=$((chr_restarts + 1))
-            [ "$chr_restarts" -le "$MAX_RESTARTS" ] || die "Chromium exited ${chr_restarts} times; giving up."
-            log "Chromium exited; restarting (browser id changes, so re-registering)."
-            start_chromium
-            wait_for_cdp || die "Chromium did not come back up after restart."
-            WS_PATH="$(discover_ws_path)" || die "Could not rediscover the CDP WebSocket path after restart."
-            need_register=1
-        fi
+        if alive "$CHROMIUM_PID"; then chr_up=1; else chr_up=0; fi
+        step="$(restart_budget_step "$chr_up" "$chr_restarts" "$chr_last" "$now" "$HEALTHY_RESET_SECONDS" "$MAX_RESTARTS")"
+        read -r chr_restarts chr_last verdict <<<"$step"
+        case "$verdict" in
+            exhausted) die "Chromium restarted ${chr_restarts} times without staying up ${HEALTHY_RESET_SECONDS}s; giving up." ;;
+            forgiven) log "Chromium healthy for ${HEALTHY_RESET_SECONDS}s; restart budget reset." ;;
+            restart)
+                log "Chromium exited; restarting (browser id changes, so re-registering)."
+                start_chromium
+                wait_for_cdp || die "Chromium did not come back up after restart."
+                WS_PATH="$(discover_ws_path)" || die "Could not rediscover the CDP WebSocket path after restart."
+                need_register=1
+                ;;
+        esac
 
-        if ! alive "$NGINX_PID"; then
-            ngx_restarts=$((ngx_restarts + 1))
-            [ "$ngx_restarts" -le "$MAX_RESTARTS" ] || die "nginx exited ${ngx_restarts} times; giving up."
-            log "nginx exited; restarting."
-            start_nginx
-        fi
+        if alive "$NGINX_PID"; then ngx_up=1; else ngx_up=0; fi
+        step="$(restart_budget_step "$ngx_up" "$ngx_restarts" "$ngx_last" "$now" "$HEALTHY_RESET_SECONDS" "$MAX_RESTARTS")"
+        read -r ngx_restarts ngx_last verdict <<<"$step"
+        case "$verdict" in
+            exhausted) die "nginx restarted ${ngx_restarts} times without staying up ${HEALTHY_RESET_SECONDS}s; giving up." ;;
+            forgiven) log "nginx healthy for ${HEALTHY_RESET_SECONDS}s; restart budget reset." ;;
+            restart)
+                log "nginx exited; restarting."
+                start_nginx
+                ;;
+        esac
 
-        if ! alive "$CF_PID"; then
-            cf_restarts=$((cf_restarts + 1))
-            [ "$cf_restarts" -le "$MAX_RESTARTS" ] || die "cloudflared exited ${cf_restarts} times; giving up."
-            log "cloudflared exited; opening a new quick tunnel (URL changes, so re-registering)."
-            start_cloudflared
-            TUNNEL="$(await_tunnel_url)" || die "cloudflared did not advertise a new tunnel URL."
-            need_register=1
-        fi
+        if alive "$CF_PID"; then cf_up=1; else cf_up=0; fi
+        step="$(restart_budget_step "$cf_up" "$cf_restarts" "$cf_last" "$now" "$HEALTHY_RESET_SECONDS" "$MAX_RESTARTS")"
+        read -r cf_restarts cf_last verdict <<<"$step"
+        case "$verdict" in
+            exhausted) die "cloudflared restarted ${cf_restarts} times without staying up ${HEALTHY_RESET_SECONDS}s; giving up." ;;
+            forgiven) log "cloudflared healthy for ${HEALTHY_RESET_SECONDS}s; restart budget reset." ;;
+            restart)
+                log "cloudflared exited; opening a new quick tunnel (URL changes, so re-registering)."
+                start_cloudflared
+                TUNNEL="$(await_tunnel_url)" || die "cloudflared did not advertise a new tunnel URL."
+                need_register=1
+                ;;
+        esac
 
         if [ "$need_register" -eq 1 ]; then
             reregister
