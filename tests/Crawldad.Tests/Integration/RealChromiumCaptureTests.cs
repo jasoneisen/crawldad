@@ -11,7 +11,7 @@ namespace Crawldad.Tests.Integration;
 /// <c>local</c> backend, fixture corpus only — no live traffic) so the product's Playwright page/locator handles
 /// serialise a genuine document and element subtree. Covers the real <c>page.content()</c> + element <c>outerHTML</c>
 /// paths the fake cannot, including a selector that matches nothing (the empty-capture short-circuit).</summary>
-[Collection(RealChromiumParityCollection.Name)]
+[Collection(RealChromiumCollection.Name)]
 public class RealChromiumCaptureTests(ParityAppFixture fixture)
 {
     [Fact]

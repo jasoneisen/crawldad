@@ -9,7 +9,7 @@ namespace Crawldad.Tests.Integration;
 /// Playwright returns null for a zero-match selector (a miss) and a real string — possibly empty — for a matched element
 /// (not a miss). A soft miss is counted in <c>stats.selectorMisses</c> while the run succeeds; a <c>require(...)</c> miss
 /// fails the run <c>selector_miss</c>. The AngleSharp equivalents are <see cref="Unit.StrictExtractionTests"/>.</summary>
-[Collection(RealChromiumParityCollection.Name)]
+[Collection(RealChromiumCollection.Name)]
 public class RealChromiumStrictExtractionTests(ParityAppFixture fixture)
 {
     // The form page (#ctl00_PlaceHolderMain_btnNewSearch = "Search") the local backend renders for caphome-search; the

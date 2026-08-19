@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Alba;
 using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
 using Marten;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Support;
@@ -238,6 +240,43 @@ public static class DurableHost
         }
 
         throw new TimeoutException($"the executor saga for run {runId} was not reclaimed within {timeout}");
+    }
+
+    /// <summary>The poll window for a run that auto-upgraded across the sync cap: generous because the run already spent
+    /// the whole <see cref="RunLimitsOptions.DefaultSyncUpgradeThresholdMs"/> (120 s) window before the <c>202</c>, and the
+    /// loaded runner that pushed it over the cap dilates the remaining tail too. Bounded so a genuinely stuck run still
+    /// fails with a clear <see cref="TimeoutException"/> rather than hanging the suite.</summary>
+    private static readonly TimeSpan _upgradedRunPollTimeout = TimeSpan.FromSeconds(180);
+
+    /// <summary>Drives the default <b>synchronous</b> <c>POST /runs</c> to a terminal state, tolerating the sync-cap
+    /// auto-upgrade so a real-Chromium run that outruns the 120 s window under full-suite parallel load no longer fails on
+    /// the transient <c>202</c>. A run finishing inside the window answers <c>200</c> with the terminal
+    /// <see cref="Crawldad.Contracts.Runs.RunResponse"/>, returned verbatim (byte-for-byte today's synchronous response); a
+    /// run that crosses the window auto-upgrades to <c>202 { status:"running" }</c> and is polled to its terminal
+    /// <see cref="Crawldad.Contracts.Runs.RunStateResponse"/> — whose scrubbed <c>runId</c>/<c>status</c>/<c>result</c>/
+    /// <c>failure</c>/<c>stats</c> are byte-identical to the inline body (proven by <c>SyncCapTests</c>) and whose event
+    /// stream is the same lean shape, so a caller's golden/shape/stats and log/event assertions hold either way. This
+    /// removes the wall-clock sensitivity entirely: it no longer matters whether the scrape takes seconds or crosses the cap.</summary>
+    public static async Task<JsonElement> PostRunToTerminalAsync(IAlbaHost host, JsonObject body, TimeSpan? pollTimeout = null)
+    {
+        var posted = await host.Scenario(x =>
+        {
+            x.Post.Json(body).ToUrl("/runs");
+            x.IgnoreStatusCode(); // 200 (finished within the sync cap) and 202 (auto-upgraded to async under load) are both valid
+        });
+
+        var root = (await posted.ReadAsJsonAsync<JsonElement>()).Clone();
+        if (posted.Context.Response.StatusCode == StatusCodes.Status200OK)
+        {
+            return root; // finished inside the sync window — the inline terminal response, unchanged from today
+        }
+
+        posted.Context.Response.StatusCode.ShouldBe(StatusCodes.Status202Accepted, $"unexpected POST /runs status; body: {root}");
+
+        // Auto-upgraded (or queued) onto the async surface: follow the documented poll contract to the identical terminal
+        // disposition. PollUntilTerminalAsync waits past both `running` and `queued`, so a queued 202 resolves here too.
+        var runId = root.GetProperty("runId").GetGuid();
+        return await PollUntilTerminalAsync(host, runId, pollTimeout ?? _upgradedRunPollTimeout);
     }
 
     /// <summary>Polls <c>GET /runs/{id}</c> until the run reaches a terminal state (past <c>queued</c> and <c>running</c>),

@@ -3,7 +3,7 @@ namespace Crawldad.Tests.Integration;
 /// <summary>Zero-live-traffic wiring proof for the live canary: runs the canary's identical code path — read
 /// <c>scrape-full.json</c>, <c>POST /runs</c>, assert success, validate <c>RecordScrapedV1</c> shape — against the
 /// in-process fixture site instead of live Chromium. Only difference from <see cref="LiveCanaryTests"/> is the origin.</summary>
-[Collection(RealChromiumParityCollection.Name)]
+[Collection(RealChromiumCollection.Name)]
 public sealed class CanaryWiringTests(ParityAppFixture fixture)
 {
     private static string Link(string cap) =>

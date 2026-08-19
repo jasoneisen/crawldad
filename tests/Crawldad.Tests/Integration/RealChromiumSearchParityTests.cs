@@ -8,7 +8,7 @@ namespace Crawldad.Tests.Integration;
 /// <summary>Drives the full <c>SearchEnforcementRecords</c> payload (<c>search-full.json</c>) through <c>POST /runs</c>
 /// against real headless Chromium (the <c>"local"</c> adapter) and asserts the result is byte-identical to the same
 /// golden <see cref="SearchAcceptanceTests"/> uses, with only <c>backend.adapter</c> changed. Zero live third-party traffic.</summary>
-[Collection(RealChromiumParityCollection.Name)]
+[Collection(RealChromiumCollection.Name)]
 public class RealChromiumSearchParityTests(ParityAppFixture fixture)
 {
     private const string _knownMidPage2 = "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=p2-3";
@@ -116,12 +116,9 @@ public class RealChromiumSearchParityTests(ParityAppFixture fixture)
             },
         };
 
-        var scenario = await Host.Scenario(x =>
-        {
-            x.Post.Json(body).ToUrl("/runs");
-            x.StatusCodeShouldBeOk();
-        });
-        var root = await scenario.ReadAsJsonAsync<JsonElement>();
+        // Drive the synchronous run, tolerating the sync-cap auto-upgrade under full-suite parallel load: a real-Chromium
+        // search that outruns the 120 s window returns 202 and is polled to the identical terminal result + stats.
+        var root = await DurableHost.PostRunToTerminalAsync(Host, body);
 
         root.GetProperty("status").GetString().ShouldBe("succeeded");
         return (root.GetProperty("result").Clone(), root.GetProperty("stats").Clone());
