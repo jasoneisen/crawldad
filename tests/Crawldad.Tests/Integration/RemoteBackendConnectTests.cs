@@ -11,6 +11,7 @@ namespace Crawldad.Tests.Integration;
 /// servers. Covers both credential modes, the region tag, and that a connect failure raises a
 /// <see cref="BrowserConnectException"/> whose message leaks neither the token nor the connect URL.</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public sealed class RemoteBackendConnectTests(RealChromiumFixture fixture) : IDisposable
 {
     private static readonly CancellationToken _ct = CancellationToken.None;

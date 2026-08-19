@@ -10,6 +10,7 @@ namespace Crawldad.Tests.Integration;
 /// (not a miss). A soft miss is counted in <c>stats.selectorMisses</c> while the run succeeds; a <c>require(...)</c> miss
 /// fails the run <c>selector_miss</c>. The AngleSharp equivalents are <see cref="Unit.StrictExtractionTests"/>.</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public class RealChromiumStrictExtractionTests(ParityAppFixture fixture)
 {
     // The form page (#ctl00_PlaceHolderMain_btnNewSearch = "Search") the local backend renders for caphome-search; the

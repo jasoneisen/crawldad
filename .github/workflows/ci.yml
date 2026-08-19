@@ -91,8 +91,26 @@ jobs:
       - name: Install Playwright Chromium
         run: eng/install-browsers.sh Debug
 
-      # Gate 2: the full suite under the coverlet 100% line+branch gate (enforced by Crawldad.Tests.csproj). No
-      # --no-build: coverlet.msbuild instruments during the test build, so it must run the build. The --filter is
-      # belt-and-suspenders — the canary self-skips, and here it is not even collected.
-      - name: Test (100% coverage gate)
-        run: dotnet test Crawldad.slnx -c Debug --filter "Category!=LiveCanary"
+      # Gate 2: the full suite under the coverlet 100% line+branch gate (enforced by Crawldad.Tests.csproj), split into
+      # TWO sequential invocations in this one blocking job (issue #95). On a small hosted runner (2-4 cores) a real
+      # headless-Chromium scrape is starved by the rest of the suite running on the other maxParallelThreads lane under
+      # coverlet instrumentation: the machine saturates, the scrape crosses the product's 120 s synchronous cap, POST /runs
+      # auto-upgrades it to 202, and the tests (which assert 200) fail on every run. Running the main suite first and then
+      # the real-Chromium category ALONE — with the whole runner to itself — keeps every scrape synchronous. Coverage is
+      # MERGED across the two runs (Threshold=0 on the first, the 100% gate on the merged second) so the real-browser
+      # adapter, which only the second run exercises, is still gated. No --no-build: coverlet.msbuild instruments during
+      # the test build, so each invocation must run its build. The canary (Category=LiveCanary) is excluded from both.
+      - name: Test — main suite (excludes real-Chromium), collect coverage
+        run: >
+          dotnet test Crawldad.slnx -c Debug
+          --filter "Category!=LiveCanary&Category!=RealChromium"
+          /p:CoverletOutputFormat=json
+          /p:CoverletOutput=${{ github.workspace }}/coverage/
+          /p:Threshold=0
+
+      - name: Test — real-Chromium category alone (whole runner), merge coverage + enforce 100% gate
+        run: >
+          dotnet test Crawldad.slnx -c Debug
+          --filter "Category=RealChromium"
+          /p:MergeWith=${{ github.workspace }}/coverage/coverage.json
+          /p:CoverletOutput=${{ github.workspace }}/coverage/

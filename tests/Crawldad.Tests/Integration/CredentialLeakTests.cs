@@ -22,6 +22,7 @@ namespace Crawldad.Tests.Integration;
 /// projection row, log line, or HTTP response body. Real remote adapters run against loopback servers only (zero
 /// live third-party traffic); the sentinel credential is adversarially echoed into a log + result to exercise the scrub.</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public sealed class CredentialLeakTests(RealChromiumFixture chromium, LeakHost leak) : IClassFixture<LeakHost>
 {
     // A log node echoing the resolved secret + a result that echoes it both raw and inside a token= param.

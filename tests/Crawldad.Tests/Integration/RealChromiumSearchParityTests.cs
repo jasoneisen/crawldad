@@ -9,6 +9,7 @@ namespace Crawldad.Tests.Integration;
 /// against real headless Chromium (the <c>"local"</c> adapter) and asserts the result is byte-identical to the same
 /// golden <see cref="SearchAcceptanceTests"/> uses, with only <c>backend.adapter</c> changed. Zero live third-party traffic.</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public class RealChromiumSearchParityTests(ParityAppFixture fixture)
 {
     private const string _knownMidPage2 = "https://aca-prod.accela.com/LJCMG/Cap/CapDetail.aspx?id=p2-3";

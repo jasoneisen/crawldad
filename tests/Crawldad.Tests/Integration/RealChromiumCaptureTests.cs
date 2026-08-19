@@ -12,6 +12,7 @@ namespace Crawldad.Tests.Integration;
 /// serialise a genuine document and element subtree. Covers the real <c>page.content()</c> + element <c>outerHTML</c>
 /// paths the fake cannot, including a selector that matches nothing (the empty-capture short-circuit).</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public class RealChromiumCaptureTests(ParityAppFixture fixture)
 {
     [Fact]

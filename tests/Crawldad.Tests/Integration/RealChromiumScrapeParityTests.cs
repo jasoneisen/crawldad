@@ -12,6 +12,7 @@ namespace Crawldad.Tests.Integration;
 /// Chromium (the <c>"local"</c> adapter) and asserts byte-identical results to <see cref="ScrapeRecordAcceptanceTests"/>'s
 /// goldens — proving <c>fake ≡ real</c> with only <c>backend.adapter</c> changed. Zero live third-party traffic.</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public class RealChromiumScrapeParityTests(ParityAppFixture fixture)
 {
     private IAlbaHost Host => fixture.Host;

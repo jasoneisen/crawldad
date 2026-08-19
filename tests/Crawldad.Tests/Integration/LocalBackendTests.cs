@@ -9,6 +9,7 @@ namespace Crawldad.Tests.Integration;
 /// over a loopback origin. Covers goto/waits/locators/frames/reads/actions/download through the seam, the route
 /// policy (block/cache/pass-through), the region tag, and context-only teardown.</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public sealed class LocalBackendTests(RealChromiumFixture fixture)
 {
     private static readonly CancellationToken _ct = CancellationToken.None;

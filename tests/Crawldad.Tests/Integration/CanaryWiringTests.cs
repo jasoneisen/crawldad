@@ -4,6 +4,7 @@ namespace Crawldad.Tests.Integration;
 /// <c>scrape-full.json</c>, <c>POST /runs</c>, assert success, validate <c>RecordScrapedV1</c> shape — against the
 /// in-process fixture site instead of live Chromium. Only difference from <see cref="LiveCanaryTests"/> is the origin.</summary>
 [Collection(RealChromiumCollection.Name)]
+[Trait("Category", RealChromiumCollection.Category)]
 public sealed class CanaryWiringTests(ParityAppFixture fixture)
 {
     private static string Link(string cap) =>
