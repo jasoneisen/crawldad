@@ -241,12 +241,13 @@ internal sealed class FixtureSite
         "<a id=\"attachmentsTab\" title=\"Attachments\" href=\"#\">Attachments</a>";
 
     // Turns a captured click matching a transition selector into the real browser action it models. Capturing phase +
-    // preventDefault so the synthetic anchors' native behaviour never interferes. A download NAVIGATES to the loopback
-    // listener (D, real bytes) — a plain navigation whose Content-Disposition: attachment response the browser turns into
-    // a genuine download. It must NOT be a cross-origin `<a download>` click: the download attribute is same-origin-only,
-    // so a cross-origin download click is silently dropped by headless Chromium (no request, no download event) — which is
-    // exactly how the record-01/03/06 attachment scrapes hung forever on the 2-core CI runner (issue #95) while passing
-    // locally. Postbacks/frame-navs also go to the canonical origin (O) so page.Url/waitForRequest see real URLs.
+    // preventDefault so the synthetic anchors' native behaviour never interferes. A download NAVIGATES to the same-origin
+    // download base (D), which the route handler fulfils in-process with the file bytes + Content-Disposition: attachment —
+    // a plain navigation the browser turns into a genuine, byte-readable download. It must NOT be a cross-origin
+    // `<a download>` click: the download attribute is same-origin-only, so a cross-origin download click is silently
+    // dropped by headless Chromium (no request, no download event) — exactly how the record-01/03/06 attachment scrapes
+    // hung forever on the CI runner (issue #95) while passing locally. Postbacks/frame-navs also go to the canonical
+    // origin (O) so page.Url/waitForRequest see real URLs.
     private const string _transitionScript =
         "(function(){var O=\"https://aca-prod.accela.com\";var D=__D__;var T=__T__;" +
         "document.addEventListener(\"click\",function(e){var el=e.target;if(!el||!el.closest){return;}" +

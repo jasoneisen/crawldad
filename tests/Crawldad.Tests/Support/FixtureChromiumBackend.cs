@@ -97,7 +97,7 @@ internal sealed class FixtureBrowserSession(IBrowserContext context, FixtureSite
         var request = route.Request;
         if (request.Url.StartsWith(site.DownloadBase, StringComparison.Ordinal))
         {
-            var dl = site.DownloadResponse(request.Url); // DIAGNOSTIC: fulfill in-process instead of the loopback listener
+            var dl = site.DownloadResponse(request.Url); // fulfil the same-origin download in-process (bytes + Content-Disposition: attachment)
             await route.FulfillAsync(new RouteFulfillOptions
             {
                 Status = dl.Status,
@@ -110,7 +110,7 @@ internal sealed class FixtureBrowserSession(IBrowserContext context, FixtureSite
 
         if (!request.Url.StartsWith(FixtureSite.Origin, StringComparison.Ordinal))
         {
-            await route.AbortAsync(); // default-deny: only the canonical fixture origin and the loopback listener are served
+            await route.AbortAsync(); // default-deny: only the canonical fixture origin is served (the download base lives under it)
             return;
         }
 

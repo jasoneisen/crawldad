@@ -252,9 +252,11 @@ public static class DurableHost
     /// <c>200</c> with the terminal <see cref="Crawldad.Contracts.Runs.RunResponse"/> and is returned verbatim; a run that
     /// crosses the window auto-upgrades to <c>202 { status:"running" }</c> and is polled to its terminal
     /// <see cref="Crawldad.Contracts.Runs.RunStateResponse"/> — whose scrubbed <c>runId</c>/<c>status</c>/<c>result</c>/
-    /// <c>failure</c>/<c>stats</c> are byte-identical to the inline body (proven by <c>SyncCapTests</c>), so a caller's
-    /// golden/shape/stats assertions hold either way. On a poll timeout it surfaces the stuck run's timeline in the
-    /// exception, so a CI hang is diagnosable at a glance rather than an opaque "did not reach the awaited state".</summary>
+    /// <c>failure</c> are identical to the inline body (same terminal disposition and shape, proven by <c>SyncCapTests</c>),
+    /// as are the <c>stats</c> counters; only <c>stats.durationMs</c> (wall-time) can differ when the run was upgraded, and
+    /// the parity goldens don't assert on it — so a caller's golden/shape/stats assertions hold either way. On a poll
+    /// timeout it surfaces the stuck run's timeline in the exception, so a CI hang is diagnosable at a glance rather than
+    /// an opaque "did not reach the awaited state".</summary>
     public static async Task<JsonElement> PostRunToTerminalAsync(IAlbaHost host, JsonObject body, TimeSpan? pollTimeout = null)
     {
         var posted = await host.Scenario(x =>
