@@ -11,32 +11,30 @@ using Crawldad.Web.Infrastructure.Browser.Fake;
 namespace Crawldad.Tests.Support;
 
 /// <summary>An in-process origin serving a fixture's corpus to real headless Chromium (zero third-party traffic),
-/// driven by the same <see cref="FakeManifest"/> the record/replay fake uses. Downloads need a real loopback
-/// <see cref="HttpListener"/> (fulfilled downloads yield no readable bytes); clicks need the injected <see cref="_transitionScript"/> since captured anchors don't navigate on their own.</summary>
-internal sealed class FixtureSite : IDisposable
+/// driven by the same <see cref="FakeManifest"/> the record/replay fake uses. A download is a SAME-ORIGIN URL the route
+/// handler fulfils in-process with the file's bytes + <c>Content-Disposition: attachment</c> — Playwright reads those
+/// bytes back fine, so no loopback listener is needed. Clicks need the injected <see cref="_transitionScript"/> since
+/// captured anchors don't navigate on their own.</summary>
+internal sealed class FixtureSite
 {
     /// <summary>The canonical origin the corpus is served under, so <c>page.Url</c> and <c>waitForRequest</c> see the real Accela URLs the goldens are built from.</summary>
     public const string Origin = "https://aca-prod.accela.com";
 
+    /// <summary>The SAME-ORIGIN path the injected download links navigate to; the route handler recognises it and fulfils
+    /// the attachment in-process (see <see cref="DownloadResponse"/>). Same-origin so headless Chromium reliably issues
+    /// the navigation request — a cross-origin download navigation is silently dropped on the hosted CI runner (issue #95,
+    /// the record-01/03/06 hang) while working on a dev box — and fulfilled rather than served by a real
+    /// <c>HttpListener</c>, which Playwright reads back just fine and which removes the loopback flakiness entirely.</summary>
+    public string DownloadBase { get; } = Origin + "/__cf_download__";
+
     private readonly FakeManifest _manifest;
     private readonly Lock _gate = new();
-    private readonly HttpListener _downloads = new();
     private FakeState? _current;
     private int _frameNavs;
 
-    /// <summary>Loads the fixture's manifest (the same loader and manifest the fake uses) and starts the loopback download listener.</summary>
+    /// <summary>Loads the fixture's manifest (the same loader and manifest the fake uses).</summary>
     /// <param name="fixtureDir">The absolute fixture directory.</param>
-    public FixtureSite(string fixtureDir)
-    {
-        _manifest = FakeManifest.Load(fixtureDir);
-        DownloadBase = $"http://127.0.0.1:{Net.FreePort()}";
-        _downloads.Prefixes.Add(DownloadBase + "/");
-        _downloads.Start();
-        _ = Task.Run(ServeDownloadsAsync);
-    }
-
-    /// <summary>The loopback origin the injected download links point at; allowed through by the route handler so downloads are genuine network responses.</summary>
-    public string DownloadBase { get; }
+    public FixtureSite(string fixtureDir) => _manifest = FakeManifest.Load(fixtureDir);
 
     /// <summary>Answers one intercepted canonical-origin request from the corpus. Serialized so a concurrent document +
     /// iframe request pair never race the current-state cursor.</summary>
@@ -100,53 +98,21 @@ internal sealed class FixtureSite : IDisposable
 
     private void Apply(int index) => _current = _manifest.State(_manifest.Transitions[index].To);
 
-    // ----- the loopback download listener ------------------------------------
+    // ----- downloads: fulfilled in-process by the route handler (no loopback listener) -----------
 
-    private async Task ServeDownloadsAsync()
+    /// <summary>A download transition's bytes + suggested filename as a route-fulfillable response
+    /// (<c>Content-Disposition: attachment</c>). The route handler fulfils the same-origin <see cref="DownloadBase"/>
+    /// navigation with this, and Playwright's <c>RunAndWaitForDownloadAsync</c> reads the bytes back. The transition index
+    /// is on the query; no session state is touched (a download is a self-loop, to == from).</summary>
+    public FixtureResponse DownloadResponse(string url)
     {
-        while (true)
-        {
-            HttpListenerContext context;
-            try
-            {
-                context = await _downloads.GetContextAsync();
-            }
-            catch (HttpListenerException)
-            {
-                break; // listener stopped
-            }
-            catch (ObjectDisposedException)
-            {
-                break; // listener closed
-            }
-
-            ServeDownload(context);
-        }
-    }
-
-    // A download transition streams the fixture bytes with the manifest's suggested filename via Content-Disposition —
-    // a real, genuine browser download whose bytes RunAndWaitForDownloadAsync reads. The transition index is on
-    // the query; no session state is touched (a download is a self-loop, to == from).
-    private void ServeDownload(HttpListenerContext context)
-    {
-        try
-        {
-            var index = int.Parse(QueryValue(context.Request.Url!, "index"), CultureInfo.InvariantCulture);
-            var download = _manifest.Transitions[index].Download!;
-            var body = _manifest.ReadFile(download.File);
-            context.Response.ContentType = "application/octet-stream";
-            context.Response.AddHeader("Content-Disposition", $"attachment; filename=\"{download.SuggestedFilename}\"");
-            context.Response.OutputStream.Write(body);
-            context.Response.Close();
-        }
-        catch (HttpListenerException)
-        {
-            // client went away — irrelevant to the test
-        }
-        catch (IOException)
-        {
-            // ditto
-        }
+        var index = int.Parse(QueryValue(new Uri(url), "index"), CultureInfo.InvariantCulture);
+        var download = _manifest.Transitions[index].Download!;
+        return new FixtureResponse(
+            200,
+            "application/octet-stream",
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Content-Disposition"] = $"attachment; filename=\"{download.SuggestedFilename}\"" },
+            _manifest.ReadFile(download.File));
     }
 
     // ----- HTML transforms (serve-time; the fixture files are untouched) ------
@@ -263,12 +229,6 @@ internal sealed class FixtureSite : IDisposable
     private static FixtureResponse Html(string html) =>
         new(200, "text/html; charset=utf-8", null, Encoding.UTF8.GetBytes(html));
 
-    public void Dispose()
-    {
-        _downloads.Stop();
-        _downloads.Close();
-    }
-
     private static readonly Regex _iframe = new("<iframe\\b[^>]*?\\bid=\"(?<id>[^\"]+)\"[^>]*?>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture, TimeSpan.FromSeconds(1));
     private static readonly Regex _bodyOpen = new("<body[^>]*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private static readonly Regex _bodyClose = new("</body>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -281,8 +241,13 @@ internal sealed class FixtureSite : IDisposable
         "<a id=\"attachmentsTab\" title=\"Attachments\" href=\"#\">Attachments</a>";
 
     // Turns a captured click matching a transition selector into the real browser action it models. Capturing phase +
-    // preventDefault so the synthetic anchors' native behaviour never interferes. Downloads go to the loopback listener
-    // (D, real bytes); postbacks/frame-navs go to the canonical origin (O) so page.Url/waitForRequest see real URLs.
+    // preventDefault so the synthetic anchors' native behaviour never interferes. A download NAVIGATES to the same-origin
+    // download base (D), which the route handler fulfils in-process with the file bytes + Content-Disposition: attachment —
+    // a plain navigation the browser turns into a genuine, byte-readable download. It must NOT be a cross-origin
+    // `<a download>` click: the download attribute is same-origin-only, so a cross-origin download click is silently
+    // dropped by headless Chromium (no request, no download event) — exactly how the record-01/03/06 attachment scrapes
+    // hung forever on the CI runner (issue #95) while passing locally. Postbacks/frame-navs also go to the canonical
+    // origin (O) so page.Url/waitForRequest see real URLs.
     private const string _transitionScript =
         "(function(){var O=\"https://aca-prod.accela.com\";var D=__D__;var T=__T__;" +
         "document.addEventListener(\"click\",function(e){var el=e.target;if(!el||!el.closest){return;}" +
@@ -290,8 +255,7 @@ internal sealed class FixtureSite : IDisposable
         "if(t.action===\"postback\"){var f=document.createElement(\"form\");f.method=t.emitMethod;f.action=t.emitUrl;" +
         "var n=document.createElement(\"input\");n.type=\"hidden\";n.name=\"__cf_transition__\";n.value=\"\"+t.index;" +
         "f.appendChild(n);document.body.appendChild(f);f.submit();}" +
-        "else if(t.action===\"download\"){var a=document.createElement(\"a\");a.href=D+\"/d?index=\"+t.index;" +
-        "a.download=\"\";document.body.appendChild(a);a.click();}" +
+        "else if(t.action===\"download\"){window.location.assign(D+\"?index=\"+t.index);}" +
         "else{window.location.assign(O+\"/__cf_frame_nav__?index=\"+t.index);}return;}}},true);})();";
 }
 

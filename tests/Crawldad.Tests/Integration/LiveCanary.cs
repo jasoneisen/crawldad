@@ -98,12 +98,9 @@ internal static class LiveCanary
 
         var body = new JsonObject { ["payload"] = JsonNode.Parse(payload), ["inputs"] = inputs };
 
-        var scenario = await host.Scenario(x =>
-        {
-            x.Post.Json(body).ToUrl("/runs");
-            x.StatusCodeShouldBeOk();
-        });
-        return (await scenario.ReadAsJsonAsync<JsonElement>()).Clone();
+        // POST the default synchronous run, tolerating the sync-cap auto-upgrade (defense-in-depth): a scrape that crosses
+        // the 120 s window returns 202 and is polled to the identical terminal result instead of failing on the status.
+        return await DurableHost.PostRunToTerminalAsync(host, body);
     }
 
     /// <summary>Validates the SHAPE of a scrape <c>result</c> as a structurally valid <c>RecordScrapedV1</c> — every

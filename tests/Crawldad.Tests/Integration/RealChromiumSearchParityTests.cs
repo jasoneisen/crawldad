@@ -116,12 +116,9 @@ public class RealChromiumSearchParityTests(ParityAppFixture fixture)
             },
         };
 
-        var scenario = await Host.Scenario(x =>
-        {
-            x.Post.Json(body).ToUrl("/runs");
-            x.StatusCodeShouldBeOk();
-        });
-        var root = await scenario.ReadAsJsonAsync<JsonElement>();
+        // Drive the synchronous run, tolerating the sync-cap auto-upgrade (defense-in-depth): a search that crosses the
+        // 120 s window returns 202 and is polled to the identical terminal result + stats.
+        var root = await DurableHost.PostRunToTerminalAsync(Host, body);
 
         root.GetProperty("status").GetString().ShouldBe("succeeded");
         return (root.GetProperty("result").Clone(), root.GetProperty("stats").Clone());

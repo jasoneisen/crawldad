@@ -97,13 +97,20 @@ internal sealed class FixtureBrowserSession(IBrowserContext context, FixtureSite
         var request = route.Request;
         if (request.Url.StartsWith(site.DownloadBase, StringComparison.Ordinal))
         {
-            await route.ContinueAsync(); // the loopback download listener answers this — a genuine, readable download
+            var dl = site.DownloadResponse(request.Url); // fulfil the same-origin download in-process (bytes + Content-Disposition: attachment)
+            await route.FulfillAsync(new RouteFulfillOptions
+            {
+                Status = dl.Status,
+                ContentType = dl.ContentType,
+                Headers = dl.Headers,
+                BodyBytes = dl.Body,
+            });
             return;
         }
 
         if (!request.Url.StartsWith(FixtureSite.Origin, StringComparison.Ordinal))
         {
-            await route.AbortAsync(); // default-deny: only the canonical fixture origin and the loopback listener are served
+            await route.AbortAsync(); // default-deny: only the canonical fixture origin is served (the download base lives under it)
             return;
         }
 
@@ -122,9 +129,5 @@ internal sealed class FixtureBrowserSession(IBrowserContext context, FixtureSite
         await route.FulfillAsync(options);
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await context.CloseAsync();
-        site.Dispose();
-    }
+    public async ValueTask DisposeAsync() => await context.CloseAsync();
 }

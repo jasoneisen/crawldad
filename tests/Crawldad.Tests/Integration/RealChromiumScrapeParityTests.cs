@@ -124,12 +124,10 @@ public class RealChromiumScrapeParityTests(ParityAppFixture fixture)
 
         var body = new JsonObject { ["payload"] = JsonNode.Parse(payload), ["inputs"] = inputs };
 
-        var scenario = await Host.Scenario(x =>
-        {
-            x.Post.Json(body).ToUrl("/runs");
-            x.StatusCodeShouldBeOk();
-        });
-        var root = (await scenario.ReadAsJsonAsync<JsonElement>()).Clone();
+        // Drive the synchronous run, tolerating the sync-cap auto-upgrade (defense-in-depth): the terminal result and the
+        // persisted event stream are byte-identical whether the scrape finished inline (200) or after the upgrade (202),
+        // so the golden equality and the Logs/EventTypes assertions built from the stream below hold either way.
+        var root = await DurableHost.PostRunToTerminalAsync(Host, body);
 
         var runId = root.GetProperty("runId").GetGuid();
         var store = Host.Services.GetRequiredService<IDocumentStore>();

@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Alba;
 using Crawldad.Web.Features.Runs;
 using Crawldad.Web.Infrastructure.Browser;
 using Crawldad.Web.Infrastructure.Browser.Fake;
 using Marten;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Support;
@@ -238,6 +240,55 @@ public static class DurableHost
         }
 
         throw new TimeoutException($"the executor saga for run {runId} was not reclaimed within {timeout}");
+    }
+
+    /// <summary>The window a real-Chromium parity/canary scrape gets after it auto-upgrades across the 120 s sync cap
+    /// before the test gives up: generous enough to absorb a slow hosted runner, bounded so a genuinely stuck run fails
+    /// with a diagnosable <see cref="TimeoutException"/> rather than hanging the suite.</summary>
+    private static readonly TimeSpan _upgradedRunPollTimeout = TimeSpan.FromSeconds(180);
+
+    /// <summary>Drives the default <b>synchronous</b> <c>POST /runs</c> to a terminal state, tolerating the sync-cap
+    /// auto-upgrade (defense-in-depth for the parity/canary suites): a run finishing inside the 120 s window answers
+    /// <c>200</c> with the terminal <see cref="Crawldad.Contracts.Runs.RunResponse"/> and is returned verbatim; a run that
+    /// crosses the window auto-upgrades to <c>202 { status:"running" }</c> and is polled to its terminal
+    /// <see cref="Crawldad.Contracts.Runs.RunStateResponse"/> — whose scrubbed <c>runId</c>/<c>status</c>/<c>result</c>/
+    /// <c>failure</c> are identical to the inline body (same terminal disposition and shape, proven by <c>SyncCapTests</c>),
+    /// as are the <c>stats</c> counters; only <c>stats.durationMs</c> (wall-time) can differ when the run was upgraded, and
+    /// the parity goldens don't assert on it — so a caller's golden/shape/stats assertions hold either way. On a poll
+    /// timeout it surfaces the stuck run's timeline in the exception, so a CI hang is diagnosable at a glance rather than
+    /// an opaque "did not reach the awaited state".</summary>
+    public static async Task<JsonElement> PostRunToTerminalAsync(IAlbaHost host, JsonObject body, TimeSpan? pollTimeout = null)
+    {
+        var posted = await host.Scenario(x =>
+        {
+            x.Post.Json(body).ToUrl("/runs");
+            x.IgnoreStatusCode(); // 200 (finished within the sync cap) and 202 (auto-upgraded to async) are both valid
+        });
+
+        var root = (await posted.ReadAsJsonAsync<JsonElement>()).Clone();
+        if (posted.Context.Response.StatusCode == StatusCodes.Status200OK)
+        {
+            return root; // finished inside the sync window — the inline terminal response, unchanged from today
+        }
+
+        posted.Context.Response.StatusCode.ShouldBe(StatusCodes.Status202Accepted, $"unexpected POST /runs status; body: {root}");
+
+        // Auto-upgraded (or queued) onto the async surface: poll to the identical terminal disposition. PollUntilTerminalAsync
+        // waits past both `running` and `queued`, so a queued 202 resolves here too.
+        var runId = root.GetProperty("runId").GetGuid();
+        try
+        {
+            return await PollUntilTerminalAsync(host, runId, pollTimeout ?? _upgradedRunPollTimeout);
+        }
+        catch (TimeoutException ex)
+        {
+            var timeline = await host.Scenario(x =>
+            {
+                x.Get.Url($"/runs/{runId}/timeline");
+                x.IgnoreStatusCode();
+            });
+            throw new TimeoutException($"{ex.Message}. Stuck-run timeline: {await timeline.ReadAsTextAsync()}", ex);
+        }
     }
 
     /// <summary>Polls <c>GET /runs/{id}</c> until the run reaches a terminal state (past <c>queued</c> and <c>running</c>),
