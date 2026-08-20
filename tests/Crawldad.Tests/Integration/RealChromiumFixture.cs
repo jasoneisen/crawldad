@@ -10,9 +10,8 @@ using Microsoft.Playwright;
 namespace Crawldad.Tests.Integration;
 
 /// <summary>Shared real-Chromium harness: one Playwright driver + one local-adapter browser, plus factories for a
-/// local <c>run-server</c> (Browserless target) and a local CDP endpoint (Browserbase target). Hosted on the unified
-/// <see cref="RealChromiumCollection"/> (defined alongside <see cref="ParityAppFixture"/>) so Chromium/driver processes
-/// never contend; every "remote" backend is a loopback server here.</summary>
+/// local <c>run-server</c> (Browserless target) and a local CDP endpoint (Browserbase target). Serialized via the
+/// collection below so Chromium/driver processes never contend; every "remote" backend is a loopback server here.</summary>
 [SuppressMessage("Usage", "CA1001:Types that own disposable fields should be disposable",
     Justification = "Disposed via IAsyncLifetime.DisposeAsync, which xUnit invokes for the collection fixture; the type intentionally does not implement IDisposable because teardown is async.")]
 public sealed class RealChromiumFixture : IAsyncLifetime
@@ -129,4 +128,11 @@ internal sealed class CdpChromium(IBrowser browser, string endpoint) : IAsyncDis
     public string Endpoint => endpoint;
 
     public ValueTask DisposeAsync() => browser.DisposeAsync();
+}
+
+/// <summary>Serializes every real-Chromium test onto the one shared harness.</summary>
+[CollectionDefinition(Name)]
+public sealed class RealChromiumCollection : ICollectionFixture<RealChromiumFixture>
+{
+    public const string Name = "real-chromium";
 }

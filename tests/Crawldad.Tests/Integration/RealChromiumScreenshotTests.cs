@@ -9,8 +9,7 @@ namespace Crawldad.Tests.Integration;
 /// <summary>Drives a failing async run through the executor saga against real headless Chromium (the parity
 /// <c>local</c> backend, fixture corpus only — no live traffic) so the product's Playwright page handle captures a
 /// genuine PNG; the <c>StepFailed</c> event links the content-addressed blob ref. Covers the real path the fake cannot.</summary>
-[Collection(RealChromiumCollection.Name)]
-[Trait("Category", RealChromiumCollection.Category)]
+[Collection(RealChromiumParityCollection.Name)]
 public class RealChromiumScreenshotTests(ParityAppFixture fixture)
 {
     [Fact]

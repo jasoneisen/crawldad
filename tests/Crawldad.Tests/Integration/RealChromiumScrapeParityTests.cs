@@ -11,8 +11,7 @@ namespace Crawldad.Tests.Integration;
 /// <summary>Drives the full <c>ScrapeEnforcementRecord</c> payload through <c>POST /runs</c> against real headless
 /// Chromium (the <c>"local"</c> adapter) and asserts byte-identical results to <see cref="ScrapeRecordAcceptanceTests"/>'s
 /// goldens — proving <c>fake ≡ real</c> with only <c>backend.adapter</c> changed. Zero live third-party traffic.</summary>
-[Collection(RealChromiumCollection.Name)]
-[Trait("Category", RealChromiumCollection.Category)]
+[Collection(RealChromiumParityCollection.Name)]
 public class RealChromiumScrapeParityTests(ParityAppFixture fixture)
 {
     private IAlbaHost Host => fixture.Host;
@@ -125,10 +124,9 @@ public class RealChromiumScrapeParityTests(ParityAppFixture fixture)
 
         var body = new JsonObject { ["payload"] = JsonNode.Parse(payload), ["inputs"] = inputs };
 
-        // Drive the synchronous run, tolerating the sync-cap auto-upgrade: under full-suite parallel load a real-Chromium
-        // scrape can outrun the 120 s window and return 202, so resolve to the terminal disposition (inline on 200, polled
-        // on the upgrade). The result and the persisted event stream are byte-identical either way, so the golden equality
-        // and the Logs/EventTypes assertions built from the stream below hold whether or not the run crossed the cap.
+        // Drive the synchronous run, tolerating the sync-cap auto-upgrade (defense-in-depth): the terminal result and the
+        // persisted event stream are byte-identical whether the scrape finished inline (200) or after the upgrade (202),
+        // so the golden equality and the Logs/EventTypes assertions built from the stream below hold either way.
         var root = await DurableHost.PostRunToTerminalAsync(Host, body);
 
         var runId = root.GetProperty("runId").GetGuid();

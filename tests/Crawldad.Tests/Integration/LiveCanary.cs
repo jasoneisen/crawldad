@@ -79,12 +79,9 @@ internal static class LiveCanary
         return backend;
     }
 
-    /// <summary>Drives <c>scrape-full.json</c> verbatim through the default synchronous <c>POST /runs</c> with the supplied
-    /// <c>backend</c> input and returns the terminal response root (<c>runId</c>/<c>status</c>/<c>result</c>|<c>failure</c>/
-    /// <c>stats</c>). Identical to the acceptance/parity suites' driver, shared so the live path is proven by the wiring
-    /// proof too. Tolerates the sync-cap auto-upgrade via <see cref="DurableHost.PostRunToTerminalAsync"/>: a real scrape
-    /// (live, or the wiring proof's real Chromium under parallel load) that crosses the 120 s window returns <c>202</c> and
-    /// is polled to the identical terminal result — so the live canary and its wiring proof stay on one code path across it.</summary>
+    /// <summary>Drives <c>scrape-full.json</c> verbatim through <c>POST /runs</c> with the supplied <c>backend</c>
+    /// input and returns the cloned response root (<c>runId</c>/<c>status</c>/<c>result</c>|<c>failure</c>/<c>stats</c>).
+    /// Identical to the acceptance/parity suites' driver, shared so the live path is proven by the wiring proof too.</summary>
     public static async Task<JsonElement> RunScrapeAsync(IAlbaHost host, JsonObject backend, string link, string? publishDate)
     {
         var payload = await File.ReadAllTextAsync(Path.Combine(Runner.FixturesRoot, "Payloads", "scrape-full.json"));
@@ -100,6 +97,9 @@ internal static class LiveCanary
         }
 
         var body = new JsonObject { ["payload"] = JsonNode.Parse(payload), ["inputs"] = inputs };
+
+        // POST the default synchronous run, tolerating the sync-cap auto-upgrade (defense-in-depth): a scrape that crosses
+        // the 120 s window returns 202 and is polled to the identical terminal result instead of failing on the status.
         return await DurableHost.PostRunToTerminalAsync(host, body);
     }
 

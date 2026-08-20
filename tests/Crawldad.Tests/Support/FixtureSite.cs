@@ -127,18 +127,8 @@ internal sealed class FixtureSite : IDisposable
     // A download transition streams the fixture bytes with the manifest's suggested filename via Content-Disposition —
     // a real, genuine browser download whose bytes RunAndWaitForDownloadAsync reads. The transition index is on
     // the query; no session state is touched (a download is a self-loop, to == from).
-    // issue #95 DIAGNOSTIC (env-gated, reverted once CI pinpoints the stuck op): confirms whether a hung download's request
-    // even reaches the loopback listener and whether it is served, distinguishing a route/network stall from a
-    // download-event stall (the listener throwing here would otherwise kill the serve loop and hang every later download).
-    private static readonly bool _diag = string.Equals(Environment.GetEnvironmentVariable("CRAWLDAD_STEP_DIAG"), "1", StringComparison.Ordinal);
-
     private void ServeDownload(HttpListenerContext context)
     {
-        if (_diag)
-        {
-            Console.Error.WriteLine($"[DLDIAG] listener request url={context.Request.Url}");
-        }
-
         try
         {
             var index = int.Parse(QueryValue(context.Request.Url!, "index"), CultureInfo.InvariantCulture);
@@ -148,10 +138,6 @@ internal sealed class FixtureSite : IDisposable
             context.Response.AddHeader("Content-Disposition", $"attachment; filename=\"{download.SuggestedFilename}\"");
             context.Response.OutputStream.Write(body);
             context.Response.Close();
-            if (_diag)
-            {
-                Console.Error.WriteLine($"[DLDIAG] listener served {body.Length} bytes for index={index}");
-            }
         }
         catch (HttpListenerException)
         {
@@ -295,8 +281,12 @@ internal sealed class FixtureSite : IDisposable
         "<a id=\"attachmentsTab\" title=\"Attachments\" href=\"#\">Attachments</a>";
 
     // Turns a captured click matching a transition selector into the real browser action it models. Capturing phase +
-    // preventDefault so the synthetic anchors' native behaviour never interferes. Downloads go to the loopback listener
-    // (D, real bytes); postbacks/frame-navs go to the canonical origin (O) so page.Url/waitForRequest see real URLs.
+    // preventDefault so the synthetic anchors' native behaviour never interferes. A download NAVIGATES to the loopback
+    // listener (D, real bytes) — a plain navigation whose Content-Disposition: attachment response the browser turns into
+    // a genuine download. It must NOT be a cross-origin `<a download>` click: the download attribute is same-origin-only,
+    // so a cross-origin download click is silently dropped by headless Chromium (no request, no download event) — which is
+    // exactly how the record-01/03/06 attachment scrapes hung forever on the 2-core CI runner (issue #95) while passing
+    // locally. Postbacks/frame-navs also go to the canonical origin (O) so page.Url/waitForRequest see real URLs.
     private const string _transitionScript =
         "(function(){var O=\"https://aca-prod.accela.com\";var D=__D__;var T=__T__;" +
         "document.addEventListener(\"click\",function(e){var el=e.target;if(!el||!el.closest){return;}" +
@@ -304,8 +294,7 @@ internal sealed class FixtureSite : IDisposable
         "if(t.action===\"postback\"){var f=document.createElement(\"form\");f.method=t.emitMethod;f.action=t.emitUrl;" +
         "var n=document.createElement(\"input\");n.type=\"hidden\";n.name=\"__cf_transition__\";n.value=\"\"+t.index;" +
         "f.appendChild(n);document.body.appendChild(f);f.submit();}" +
-        "else if(t.action===\"download\"){var a=document.createElement(\"a\");a.href=D+\"/d?index=\"+t.index;" +
-        "a.download=\"\";document.body.appendChild(a);a.click();}" +
+        "else if(t.action===\"download\"){window.location.assign(D+\"/d?index=\"+t.index);}" +
         "else{window.location.assign(O+\"/__cf_frame_nav__?index=\"+t.index);}return;}}},true);})();";
 }
 

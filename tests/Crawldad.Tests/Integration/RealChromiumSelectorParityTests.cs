@@ -8,7 +8,6 @@ namespace Crawldad.Tests.Integration;
 /// serves (<see cref="Unit.SelectorVariantTests"/>) through real headless Chromium, asserting <c>GetByRole</c>,
 /// <c>GetByText</c>, and <c>xpath=</c> resolve identically — Playwright itself is the oracle. Zero live traffic.</summary>
 [Collection(RealChromiumCollection.Name)]
-[Trait("Category", RealChromiumCollection.Category)]
 public sealed class RealChromiumSelectorParityTests(RealChromiumFixture fixture)
 {
     private static readonly CancellationToken _ct = CancellationToken.None;

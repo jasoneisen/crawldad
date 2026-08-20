@@ -168,7 +168,6 @@ internal sealed class RunInterpreter
                 throw new InterpreterException(InterpreterErrorCodes.UnknownBackendAdapter, $"no backend is registered for adapter '{binding.Adapter}'");
             }
 
-            Diag($"connect:start adapter={binding.Adapter}"); // issue #95 diagnostic (RunSessionOpened below marks connect+newpage done)
             await using var session = await ConnectWithRetryAsync(backend, binding, sessionPolicy, connectRetryPolicy, ct);
             _session = session; // surfaced for stats (region/cacheHits) and the RunTimeline region
             _page = await session.NewPageAsync(ct);
@@ -1250,27 +1249,8 @@ internal sealed class RunInterpreter
 
     // Emits a coarse trace event (LogEmitted/RunAttemptFailed): live through the observer on the durable path (in occurrence
     // order), else accumulated for the synchronous endpoint to append at the end (behaviour + goldens unchanged).
-    // ---- issue #95 DIAGNOSTIC (env-gated, reverted once CI pinpoints the stuck op) --------------------------------
-    // The synchronous scrape hangs for specific records ONLY in CI, and StepAsync no-ops on the sync path (no observer),
-    // so there is no persisted trace of where it stalls. When CRAWLDAD_STEP_DIAG=1 (set only in the CI real-Chromium step)
-    // every emitted trace event + the connect/page phases are written to stderr with a monotonic elapsed stamp, so the CI
-    // log shows the last op before the hang. Zero effect otherwise.
-    private static readonly bool _stepDiag =
-        string.Equals(Environment.GetEnvironmentVariable("CRAWLDAD_STEP_DIAG"), "1", StringComparison.Ordinal);
-
-    private readonly long _diagStart = Environment.TickCount64;
-
-    private void Diag(string what)
-    {
-        if (_stepDiag)
-        {
-            Console.Error.WriteLine($"[STEPDIAG +{Environment.TickCount64 - _diagStart}ms cores={Environment.ProcessorCount}] {what}");
-        }
-    }
-
     private ValueTask EmitAsync(object traceEvent, CancellationToken ct)
     {
-        Diag(traceEvent.GetType().Name);
         EnforceEventBudget();
         if (_observer is not null)
         {
@@ -1285,7 +1265,6 @@ internal sealed class RunInterpreter
     // synchronous path no-ops, so its stream — and every golden — is byte-identical to before (and counts no event).
     private ValueTask StepAsync(object traceEvent, CancellationToken ct)
     {
-        Diag(traceEvent.ToString() ?? traceEvent.GetType().Name); // issue #95 diagnostic (StepStarted carries index+kind)
         if (_observer is null)
         {
             return ValueTask.CompletedTask;
