@@ -127,8 +127,18 @@ internal sealed class FixtureSite : IDisposable
     // A download transition streams the fixture bytes with the manifest's suggested filename via Content-Disposition —
     // a real, genuine browser download whose bytes RunAndWaitForDownloadAsync reads. The transition index is on
     // the query; no session state is touched (a download is a self-loop, to == from).
+    // issue #95 DIAGNOSTIC (env-gated, reverted once CI pinpoints the stuck op): confirms whether a hung download's request
+    // even reaches the loopback listener and whether it is served, distinguishing a route/network stall from a
+    // download-event stall (the listener throwing here would otherwise kill the serve loop and hang every later download).
+    private static readonly bool _diag = string.Equals(Environment.GetEnvironmentVariable("CRAWLDAD_STEP_DIAG"), "1", StringComparison.Ordinal);
+
     private void ServeDownload(HttpListenerContext context)
     {
+        if (_diag)
+        {
+            Console.Error.WriteLine($"[DLDIAG] listener request url={context.Request.Url}");
+        }
+
         try
         {
             var index = int.Parse(QueryValue(context.Request.Url!, "index"), CultureInfo.InvariantCulture);
@@ -138,6 +148,10 @@ internal sealed class FixtureSite : IDisposable
             context.Response.AddHeader("Content-Disposition", $"attachment; filename=\"{download.SuggestedFilename}\"");
             context.Response.OutputStream.Write(body);
             context.Response.Close();
+            if (_diag)
+            {
+                Console.Error.WriteLine($"[DLDIAG] listener served {body.Length} bytes for index={index}");
+            }
         }
         catch (HttpListenerException)
         {

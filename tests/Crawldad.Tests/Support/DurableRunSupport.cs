@@ -281,10 +281,12 @@ public static class DurableHost
         // whether a stuck scrape is merely slow or never finishes, and on timeout dump the run state + timeline to stderr.
         if (_stepDiag)
         {
-            await Console.Error.WriteLineAsync($"[POLLDIAG] run {runId} auto-upgraded (202 running); polling up to 15 min. cores={Environment.ProcessorCount}");
+            await Console.Error.WriteLineAsync($"[POLLDIAG] run {runId} auto-upgraded (202 running); polling up to 6 min. cores={Environment.ProcessorCount}");
             try
             {
-                return await PollUntilTerminalAsync(host, runId, TimeSpan.FromMinutes(15));
+                // 6 min comfortably outlasts the payload's own 180 s download timeout + one retry, so the trace shows
+                // whether the scrape's download step times out and re-attempts (vs. finishes slow) without a 15-min wait/hang.
+                return await PollUntilTerminalAsync(host, runId, TimeSpan.FromMinutes(6));
             }
             catch (TimeoutException)
             {
