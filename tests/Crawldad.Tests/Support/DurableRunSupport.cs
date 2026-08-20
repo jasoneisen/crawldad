@@ -276,8 +276,50 @@ public static class DurableHost
         // Auto-upgraded (or queued) onto the async surface: follow the documented poll contract to the identical terminal
         // disposition. PollUntilTerminalAsync waits past both `running` and `queued`, so a queued 202 resolves here too.
         var runId = root.GetProperty("runId").GetGuid();
+
+        // issue #95 DIAGNOSTIC (env-gated, reverted once CI pinpoints the stuck op): raise the window to 15 min so we learn
+        // whether a stuck scrape is merely slow or never finishes, and on timeout dump the run state + timeline to stderr.
+        if (_stepDiag)
+        {
+            await Console.Error.WriteLineAsync($"[POLLDIAG] run {runId} auto-upgraded (202 running); polling up to 15 min. cores={Environment.ProcessorCount}");
+            try
+            {
+                return await PollUntilTerminalAsync(host, runId, TimeSpan.FromMinutes(15));
+            }
+            catch (TimeoutException)
+            {
+                await DumpStuckRunAsync(host, runId);
+                throw;
+            }
+        }
+
         return await PollUntilTerminalAsync(host, runId, pollTimeout ?? _upgradedRunPollTimeout);
     }
+
+    private static readonly bool _stepDiag =
+        string.Equals(Environment.GetEnvironmentVariable("CRAWLDAD_STEP_DIAG"), "1", StringComparison.Ordinal);
+
+#pragma warning disable CA1031 // best-effort diagnostic dump: a dump failure must not mask the real TimeoutException
+    private static async Task DumpStuckRunAsync(IAlbaHost host, Guid runId)
+    {
+        foreach (var url in new[] { $"/runs/{runId}", $"/runs/{runId}/timeline" })
+        {
+            try
+            {
+                var r = await host.Scenario(x =>
+                {
+                    x.Get.Url(url);
+                    x.IgnoreStatusCode();
+                });
+                await Console.Error.WriteLineAsync($"[POLLDIAG] GET {url} -> {r.Context.Response.StatusCode}\n{await r.ReadAsTextAsync()}");
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[POLLDIAG] GET {url} threw {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+#pragma warning restore CA1031
 
     /// <summary>Polls <c>GET /runs/{id}</c> until the run reaches a terminal state (past <c>queued</c> and <c>running</c>),
     /// returning its terminal state body.</summary>

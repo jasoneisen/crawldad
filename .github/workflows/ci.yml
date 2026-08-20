@@ -109,8 +109,14 @@ jobs:
           /p:Threshold=0
 
       - name: Test — real-Chromium category alone (whole runner), merge coverage + enforce 100% gate
+        # CRAWLDAD_STEP_DIAG=1 is a TEMPORARY issue-#95 diagnostic: it turns on a per-step stderr trace in the interpreter
+        # and a 15-min poll-with-dump in the test driver, so this CI log pinpoints where the record-01/03/06 + canary
+        # scrapes actually stall in CI (they pass locally). Reverted once the stuck op is identified.
+        env:
+          CRAWLDAD_STEP_DIAG: "1"
         run: >
           dotnet test Crawldad.slnx -c Debug
           --filter "Category=RealChromium"
+          --logger "console;verbosity=detailed"
           /p:MergeWith=${{ github.workspace }}/coverage/coverage.json
           /p:CoverletOutput=${{ github.workspace }}/coverage/
