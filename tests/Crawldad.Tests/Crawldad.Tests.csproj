@@ -68,14 +68,18 @@
     <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!-- Serialize collections (xunit.runner.json: maxParallelThreads=1): the ~15 integration/parity/leak/durable/webhook
-       collections each stand up their own Alba host — a full Marten schema migration — against one shared Postgres, and
-       every concurrent host also runs a live Wolverine durability agent. Any overlap is what makes CI flake (issue #106):
-       concurrent migrations contend on Postgres's per-database advisory lock ("Unable to attain a global lock in time"),
-       and a host torn down while another is live throws ObjectDisposedException from the surviving agent. A "modest cap"
-       of 2 still overlapped host builds and left the class intermittently red; serializing removes it outright. Production
-       runs a SINGLE host, so one-host-at-a-time is the faithful topology, not a throttle — and the cost is small now that
-       #105 dropped suite time to ~1 min (measured: ~62 s at 2-way vs ~110 s serialized, both far under the old ~21 min). -->
+  <!-- Serialize collections (xunit.runner.json: parallelizeTestCollections=false + maxParallelThreads=1): the ~15
+       integration/parity/leak/durable/webhook collections each stand up their own Alba host — a full Marten schema
+       migration — against one shared Postgres, and every concurrent host also runs a live Wolverine durability agent.
+       Any overlap is what makes CI flake (issue #106): concurrent migrations contend on Postgres's per-database advisory
+       lock ("Unable to attain a global lock in time"), and a host torn down while another is live throws
+       ObjectDisposedException from the surviving agent. A "modest cap" of 2 left the class intermittently red. Note
+       maxParallelThreads=1 alone is NOT strict: its single-worker sync context still lets collection runners interleave
+       at await points, so two fixtures' async InitializeAsync migrations (I/O-bound awaits) can be in flight against
+       Postgres at once — and their Wolverine agents run on the real thread pool, outside that sync context. So we ALSO
+       disable collection parallelization, which runs collections strictly one-at-a-time. Production runs a SINGLE host,
+       so this is the faithful topology, not a throttle — and the cost is small now that #105 dropped suite time to
+       ~1 min (measured: ~62 s at 2-way vs ~110 s serialized, both far under the old ~21 min). -->
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
