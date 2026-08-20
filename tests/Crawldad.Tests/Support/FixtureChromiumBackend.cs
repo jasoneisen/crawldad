@@ -97,7 +97,14 @@ internal sealed class FixtureBrowserSession(IBrowserContext context, FixtureSite
         var request = route.Request;
         if (request.Url.StartsWith(site.DownloadBase, StringComparison.Ordinal))
         {
-            await route.ContinueAsync(); // the loopback download listener answers this — a genuine, readable download
+            var dl = site.DownloadResponse(request.Url); // DIAGNOSTIC: fulfill in-process instead of the loopback listener
+            await route.FulfillAsync(new RouteFulfillOptions
+            {
+                Status = dl.Status,
+                ContentType = dl.ContentType,
+                Headers = dl.Headers,
+                BodyBytes = dl.Body,
+            });
             return;
         }
 
@@ -122,9 +129,5 @@ internal sealed class FixtureBrowserSession(IBrowserContext context, FixtureSite
         await route.FulfillAsync(options);
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await context.CloseAsync();
-        site.Dispose();
-    }
+    public async ValueTask DisposeAsync() => await context.CloseAsync();
 }
