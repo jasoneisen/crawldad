@@ -4,6 +4,7 @@ using Alba;
 using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
+using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Infrastructure.Security;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
@@ -197,6 +198,144 @@ public class DurableRunTests(DurableFixture fixture)
             x.StatusCodeShouldBe(202);
         });
         (await EventTypesAsync((await fixture.EnsureAsync()), runId)).ShouldNotContain(typeof(RunCancellationRequested));
+    }
+
+    // ----- #108: the running-branch cancel append survives a concurrent executor append -----
+
+    [Fact]
+    public async Task Cancel_retries_its_record_when_the_executor_races_the_same_stream()
+    {
+        // The executor is a lock-free writer that appends trace events to a run's stream while it executes. This test forces
+        // the exact race #108 fixes — a concurrent append landing between the cancel's optimistic version read and its commit
+        // — deterministically, via a one-shot Marten listener, rather than relying on timing or test-host parallelism.
+        var injector = new StreamVersionRaceInjector();
+        await using var host = await DurableHost.BuildAsync(
+            "crawldad_cancel_race_retry", new GatedFakeBackend(Runner.FixturesRoot, new GateHolder()),
+            configureServices: services => services.ConfigureMarten(options => options.Listeners.Add(injector)));
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        var clock = host.Services.GetRequiredService<TimeProvider>();
+
+        var runId = Guid.NewGuid();
+        await SeedRunningRunAsync(store, clock, runId);
+
+        // On the cancel's first append attempt, a competitor bumps the SAME stream (as a live trace append would). The run
+        // stays running, so the cancel re-reads it and lands the breadcrumb on the next, uncontended attempt.
+        injector.Arm(store, runId, (competing, _) =>
+        {
+            competing.Events.Append(runId, new LogEmitted("info", "concurrent step", clock.GetUtcNow()));
+            return Task.CompletedTask;
+        });
+
+        await CancelViaHttpAsync(host, runId); // 202, not the 500 the unguarded append raised on the losing side
+
+        injector.Fired.ShouldBeTrue(); // the race really happened — the first append attempt conflicted
+        var types = await EventTypesAsync(host, runId);
+        types.ShouldContain(typeof(LogEmitted));               // the competitor's version bump
+        types.ShouldContain(typeof(RunCancellationRequested)); // ...and the cancel breadcrumb still landed, on the retry
+    }
+
+    [Fact]
+    public async Task Cancel_records_nothing_when_the_run_reaches_terminal_between_attempts()
+    {
+        // Same forced race, but the competitor drives the run to terminal through the REAL RunFinalization path — the exact
+        // plain-Append finaliser that races the cancel record on the sync-upgrade side of #108 (PR-review finding #4), not a
+        // hand-rolled stand-in. The cancel's retry must then observe the terminal run and record nothing, so an
+        // already-finished run is never re-annotated or double-terminated.
+        var injector = new StreamVersionRaceInjector();
+        await using var host = await DurableHost.BuildAsync(
+            "crawldad_cancel_race_terminal", new GatedFakeBackend(Runner.FixturesRoot, new GateHolder()),
+            configureServices: services => services.ConfigureMarten(options => options.Listeners.Add(injector)));
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        var clock = host.Services.GetRequiredService<TimeProvider>();
+
+        var runId = Guid.NewGuid();
+        await SeedRunningRunAsync(store, clock, runId);
+
+        // The real finaliser's collaborators; Release/Delete on this un-occupied, saga-less seed are safe no-ops.
+        var scrubber = host.Services.GetRequiredService<CredentialScrubber>();
+        var gate = host.Services.GetRequiredService<IRunAdmissionGate>();
+        injector.Arm(store, runId, async (competing, token) =>
+        {
+            var progress = (await competing.LoadAsync<RunProgress>(runId, token))!;
+            var cancelled = new RunOutcome(RunStatus.Cancelled, null, null, null, new RunStats(0, 0, 0, 0, 0, 0), []);
+            RunFinalization.Apply(competing, runId, TestTenants.PrimaryId, cancelled, RunStopReason.Cancelled, progress, scrubber, gate, clock);
+        });
+
+        await CancelViaHttpAsync(host, runId); // still 202 — an already-terminal run is a no-op, not a 500
+
+        injector.Fired.ShouldBeTrue();
+        var types = await EventTypesAsync(host, runId);
+        types.ShouldContain(typeof(RunCancelled));                // the terminal event the real finaliser wrote
+        types.ShouldNotContain(typeof(RunCancellationRequested)); // the retry saw terminal and re-annotated nothing
+        (await StateAsync(host, runId)).GetProperty("status").GetString().ShouldBe("cancelled");
+    }
+
+    // Seeds a running run directly (its stream + RunProgress) with no executor driving it, so the cancel endpoint's append
+    // is the only writer — save for the conflict the test injects — mirroring SlotQueueTests' white-box run seeding.
+    private static async Task SeedRunningRunAsync(IDocumentStore store, TimeProvider clock, Guid runId)
+    {
+        await using var session = store.LightweightSession(TestTenants.PrimaryId);
+        session.Events.StartStream<Run>(runId, new RunStarted("cancel.race", "hash", clock.GetUtcNow(), [], null, null));
+        session.Store(new RunProgress { Id = runId, Status = RunStatus.Running });
+        await session.SaveChangesAsync();
+    }
+
+    private static async Task CancelViaHttpAsync(IAlbaHost host, Guid runId) =>
+        await host.Scenario(x =>
+        {
+            x.Post.Json(new JsonObject()).ToUrl($"/runs/{runId}/cancel");
+            x.StatusCodeShouldBe(202);
+        });
+
+    private static async Task<JsonElement> StateAsync(IAlbaHost host, Guid runId)
+    {
+        var result = await host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{runId}");
+            x.StatusCodeShouldBe(200);
+        });
+        return (await result.ReadAsJsonAsync<JsonElement>()).Clone();
+    }
+
+    // A one-shot Marten session listener that forces the #108 stream-version race deterministically: when a session is about
+    // to commit a RunCancellationRequested for the armed run, it first advances that SAME stream from another session. The
+    // endpoint's append uses AppendOptimistic, whose expected version is captured BEFORE this pre-commit hook runs, so the
+    // injected advance is always seen as a conflict at commit — no timing or parallelism involved. Fires exactly once, so the
+    // cancel's retry then proceeds uncontended.
+    private sealed class StreamVersionRaceInjector : DocumentSessionListenerBase
+    {
+        private IDocumentStore _store = null!;
+        private Func<IDocumentSession, CancellationToken, Task> _compete = null!;
+        private int _fired;
+
+        public Guid RunId { get; private set; }
+
+        public bool Fired => Volatile.Read(ref _fired) == 1;
+
+        public void Arm(IDocumentStore store, Guid runId, Func<IDocumentSession, CancellationToken, Task> compete)
+        {
+            _store = store;
+            RunId = runId;
+            _compete = compete;
+        }
+
+        public override async Task BeforeSaveChangesAsync(IDocumentSession session, CancellationToken token)
+        {
+            if (Volatile.Read(ref _fired) == 1)
+            {
+                return; // one-shot: the competing session's own commit (and every later save) re-enters here — do nothing
+            }
+
+            var racesCancel = session.PendingChanges.Streams().Any(s => s.Id == RunId && s.Events.Any(e => e.Data is RunCancellationRequested));
+            if (!racesCancel || Interlocked.Exchange(ref _fired, 1) == 1)
+            {
+                return;
+            }
+
+            await using var competing = _store.LightweightSession(session.TenantId);
+            await _compete(competing, token);
+            await competing.SaveChangesAsync(token); // commits before the endpoint's guarded append executes -> its optimistic guard trips
+        }
     }
 
     // ----- wall-clock deadline ----------------------------------------

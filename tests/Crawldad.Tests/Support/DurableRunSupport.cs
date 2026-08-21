@@ -186,15 +186,17 @@ public static class DurableHost
     /// and the given <c>fake</c> backend override. Set <paramref name="resetData"/> false for the SECOND host of a
     /// kill-and-restart, which must inherit the first host's persisted checkpoint on the same schema.</summary>
     public static Task<IAlbaHost> BuildAsync(
-        string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null, TimeProvider? clock = null) =>
-        BuildAsync(schema, (_, _) => fakeBackend, resetData, settings, clock);
+        string schema, IBrowserBackend fakeBackend, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null, TimeProvider? clock = null,
+        Action<IServiceCollection>? configureServices = null) =>
+        BuildAsync(schema, (_, _) => fakeBackend, resetData, settings, clock, configureServices);
 
-    /// <summary>As <see cref="BuildAsync(string, IBrowserBackend, bool, IEnumerable{KeyValuePair{string, string?}}, TimeProvider)"/>, but the
+    /// <summary>As <see cref="BuildAsync(string, IBrowserBackend, bool, IEnumerable{KeyValuePair{string, string?}}, TimeProvider, Action{IServiceCollection})"/>, but the
     /// <c>fake</c> backend is built by a DI factory — so a backend can resolve a host service (e.g. the <c>IRunSecretScope</c> a
     /// credential test's backend registers a secret into). Pass <paramref name="clock"/> to drive time (e.g. an
     /// <see cref="AdvanceableClock"/> for the SSE keepalive tail); it defaults to the frozen <see cref="FakeClock"/>.</summary>
     public static async Task<IAlbaHost> BuildAsync(
-        string schema, Func<IServiceProvider, object?, IBrowserBackend> fakeBackendFactory, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null, TimeProvider? clock = null)
+        string schema, Func<IServiceProvider, object?, IBrowserBackend> fakeBackendFactory, bool resetData = true, IEnumerable<KeyValuePair<string, string?>>? settings = null, TimeProvider? clock = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var host = (await AlbaHost.For<Program>(builder =>
         {
@@ -208,6 +210,7 @@ public static class DurableHost
             {
                 services.AddSingleton<TimeProvider>(clock ?? new FakeClock());
                 services.AddKeyedSingleton<IBrowserBackend>("fake", fakeBackendFactory);
+                configureServices?.Invoke(services); // a test can layer extra wiring on (e.g. a Marten session listener that forces a stream-version race)
             });
         })).AuthenticatedAsPrimaryTenant();
 
