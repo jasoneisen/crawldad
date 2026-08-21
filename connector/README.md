@@ -93,6 +93,8 @@ A healthy tunnel returns `200 { "status": "succeeded", "result": { "title": "Exa
 | `CRAWLDAD_API_KEY` | **yes** | — | Your Crawldad tenant API key. Never printed or written to a log. |
 | `CRAWLDAD_URL` | no | `https://ca-crawldad-stg.politeflower-5d65f34e.centralus.azurecontainerapps.io` (staging) | Crawldad base URL to register against. |
 | `BROWSER_NAME` | no | `my-laptop` | The name the browser registers under — this is your `credentialRef`. Must be a slug (lowercase `a-z`, `0-9`, `-`; 1–64 chars; no leading/trailing hyphen). |
+| `CDP_PORT` | no | `9222` | Advanced. Chromium's loopback DevTools port inside the container (also what the healthcheck probes and nginx rewrites `Host` to). Loopback-only and never published, so rarely worth changing. Must differ from `PROXY_PORT`. |
+| `PROXY_PORT` | no | `9223` | Advanced. The in-container port nginx listens on and the tunnel targets. Loopback-only and never published, so rarely worth changing. Must differ from `CDP_PORT`. |
 
 Set them inline, in your shell, or in a `.env` file next to `docker-compose.yml`:
 
@@ -149,10 +151,13 @@ curl -X DELETE -H "X-Api-Key: $CRAWLDAD_API_KEY" "$CRAWLDAD_URL/browsers/my-lapt
 ## How it works (and why the proxy)
 
 Chromium's DevTools port rejects any request whose `Host` header isn't
-`localhost`/an IP (a DNS-rebinding guard) with `403`. A request arriving via the
-tunnel carries `Host: <sub>.trycloudflare.com`, so a small **nginx** reverse
-proxy sits between the tunnel and Chromium and rewrites `Host` to
-`127.0.0.1:9222`.
+`localhost`/an IP (a DNS-rebinding guard): the `/json` HTTP endpoints answer
+`500` (`Host header is specified and is not an IP address or localhost.`) and the
+`/devtools/browser/<id>` WebSocket upgrade — the form this connector registers —
+is refused with `403`. A request arriving via the tunnel carries
+`Host: <sub>.trycloudflare.com`, so a small **nginx** reverse proxy sits between
+the tunnel and Chromium and rewrites `Host` to Chromium's loopback address. (The
+exact codes are Chromium's own and can drift between versions.)
 
 The registered secret is the **browser-WebSocket** form
 (`wss://<host>/devtools/browser/<id>`), not the `https://` endpoint form. That's

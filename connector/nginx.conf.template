@@ -1,10 +1,19 @@
-# Crawldad connector reverse proxy.
+# Crawldad connector reverse proxy (template).
+#
+# entrypoint.sh renders this to a writable path with the two runtime ports
+# substituted (render_nginx_conf in lib.sh): __PROXY_PORT__ is the port nginx
+# listens on for the tunnel, __CDP_PORT__ is Chromium's loopback DevTools port it
+# proxies to. Editing the literal ports here has no effect; set CDP_PORT /
+# PROXY_PORT instead (they default to 9222 / 9223 and must differ).
 #
 # Chromium's remote-debugging endpoint rejects any request whose Host header is
-# not localhost/an IP (a DNS-rebinding guard) with a 403. A request arriving via
-# the tunnel carries Host: <sub>.trycloudflare.com, so this proxy rewrites Host
-# to 127.0.0.1:9222 before forwarding. It also carries the WebSocket upgrade
-# through for the long-lived CDP connection.
+# not localhost/an IP (a DNS-rebinding guard): the /json HTTP endpoints answer
+# 500 "Host header is specified and is not an IP address or localhost.", and the
+# /devtools/browser/<id> WebSocket upgrade is refused with 403. A request
+# arriving via the tunnel carries Host: <sub>.trycloudflare.com, so this proxy
+# rewrites Host to Chromium's loopback address before forwarding. It also carries
+# the WebSocket upgrade through for the long-lived CDP connection. (The exact
+# codes are Chromium's own and can drift between versions.)
 #
 # Runs unprivileged: no `user` directive, a high listen port, and every writable
 # path lives under /tmp/crawldad-connector.
@@ -33,11 +42,11 @@ http {
     }
 
     server {
-        listen 127.0.0.1:9223;
+        listen 127.0.0.1:__PROXY_PORT__;
         server_name _;
 
         # The DevTools port only trusts a localhost Host header.
-        proxy_set_header Host "127.0.0.1:9222";
+        proxy_set_header Host "127.0.0.1:__CDP_PORT__";
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -48,7 +57,7 @@ http {
         proxy_buffering off;
 
         location / {
-            proxy_pass http://127.0.0.1:9222;
+            proxy_pass http://127.0.0.1:__CDP_PORT__;
         }
     }
 }

@@ -33,7 +33,8 @@ PROXY_PORT="${PROXY_PORT:-9223}" # nginx listen port the tunnel targets
 RUN_DIR="/tmp/crawldad-connector"
 USER_DATA_DIR="${RUN_DIR}/chrome"
 NGINX_PREFIX="${RUN_DIR}/nginx"
-NGINX_CONF="${SCRIPT_DIR}/nginx.conf"
+NGINX_TEMPLATE="${SCRIPT_DIR}/nginx.conf.template"
+NGINX_CONF="${NGINX_PREFIX}/nginx.conf" # rendered from the template at start-up (ports substituted)
 CF_LOG="${RUN_DIR}/cloudflared.log"
 
 MAX_RESTARTS="${MAX_RESTARTS:-10}" # per-component restart budget before giving up
@@ -72,6 +73,13 @@ preflight() {
         https://* | http://*) : ;;
         *) die "CRAWLDAD_URL must start with http:// or https:// (got '${CRAWLDAD_URL}')." ;;
     esac
+    # CDP_PORT/PROXY_PORT are threaded into Chromium's flags, the tunnel target,
+    # the healthcheck, and the rendered nginx config; reject a bad or colliding
+    # override up front rather than let it become a silently broken proxy (#103).
+    valid_port "$CDP_PORT" || die "CDP_PORT '${CDP_PORT}' is not a valid TCP port (1-65535)."
+    valid_port "$PROXY_PORT" || die "PROXY_PORT '${PROXY_PORT}' is not a valid TCP port (1-65535)."
+    [ "$CDP_PORT" != "$PROXY_PORT" ] ||
+        die "CDP_PORT and PROXY_PORT must differ (both '${CDP_PORT}'): nginx listens on PROXY_PORT and proxies to Chromium on CDP_PORT."
     if [ -z "$CHROMIUM_BIN" ]; then
         CHROMIUM_BIN="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
     fi
@@ -118,9 +126,13 @@ wait_for_cdp() {
 
 # Read the browser CDP path (/devtools/browser/<id>) straight from Chromium over
 # loopback, where the Host header is already localhost and needs no rewrite.
+# curl's stderr is left to flow to fd 2 (the container log) rather than /dev/null:
+# on the rare post-startup CDP fault this names the transport error instead of
+# hiding it. It cannot pollute the path this function echoes on stdout, which is
+# all the caller's $(...) captures.
 discover_ws_path() {
     local json
-    json="$(curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version" 2>/dev/null)" || return 1
+    json="$(curl -fsS "http://127.0.0.1:${CDP_PORT}/json/version")" || return 1
     cdp_ws_path "$json"
 }
 
@@ -128,6 +140,10 @@ discover_ws_path() {
 
 start_nginx() {
     mkdir -p "$NGINX_PREFIX"
+    # Render the config with the runtime ports (CDP_PORT/PROXY_PORT) substituted,
+    # to a writable path, so an overridden port actually reaches nginx (#103).
+    render_nginx_conf "$NGINX_TEMPLATE" "$CDP_PORT" "$PROXY_PORT" >"$NGINX_CONF" ||
+        die "Could not render the nginx config from ${NGINX_TEMPLATE}."
     nginx -p "$NGINX_PREFIX" -c "$NGINX_CONF" -g 'daemon off;' >"${RUN_DIR}/nginx.log" 2>&1 &
     NGINX_PID=$!
     log "nginx started (pid ${NGINX_PID}) proxying 127.0.0.1:${PROXY_PORT} -> 127.0.0.1:${CDP_PORT} (Host rewritten)."
@@ -162,21 +178,33 @@ await_tunnel_url() {
 # and the body (which contains the secret tunnel URL) travels in a 0600 file, so
 # neither ever appears in the process list or a log line. Echoes the HTTP code.
 register() {
-    local secret="$1" url hdr body code
+    local secret="$1" url hdr body err code
     url="${CRAWLDAD_URL}/browsers/${BROWSER_NAME}"
     hdr="$(mktemp)"
     body="$(mktemp)"
+    err="$(mktemp)"
     chmod 600 "$hdr" "$body"
     printf 'header = "X-Api-Key: %s"\n' "$CRAWLDAD_API_KEY" >"$hdr"
     jq -nc --arg secret "$secret" \
         '{adapter:"browserbase",mode:"connectUrl",secret:$secret}' >"$body"
+    # On a connect-level failure curl exits non-zero (and prints "000"); normalise
+    # to that. curl's own stderr — the transport fault (DNS, refused, TLS) — goes
+    # to a file so it never pollutes the HTTP code echoed on stdout.
     code="$(curl -sS -o /dev/null -w '%{http_code}' \
         -X PUT \
         -K "$hdr" \
         -H 'Content-Type: application/json' \
         --data-binary "@${body}" \
-        "$url" 2>/dev/null || echo 000)"
-    rm -f "$hdr" "$body"
+        "$url" 2>"$err")" || code="000"
+    # Surface that transport fault on fd 2 (the container log) instead of hiding
+    # it behind a bare "HTTP 000" — the diagnosability the opaque path lacked.
+    # curl runs without -v, so the text is its own one-line error (never a header
+    # or the api key); the URL it names is the non-secret Crawldad endpoint, and
+    # the connect secret travels only in the 0600 body file, never on curl's stderr.
+    if [ -s "$err" ]; then
+        log "curl: $(tr '\n' ' ' <"$err")" >&2
+    fi
+    rm -f "$hdr" "$body" "$err"
     printf '%s' "$code"
 }
 
@@ -243,7 +271,7 @@ supervise() {
         step="$(restart_budget_step "$chr_up" "$chr_restarts" "$chr_last" "$now" "$HEALTHY_RESET_SECONDS" "$MAX_RESTARTS")"
         read -r chr_restarts chr_last verdict <<<"$step"
         case "$verdict" in
-            exhausted) die "Chromium restarted ${chr_restarts} times without staying up ${HEALTHY_RESET_SECONDS}s; giving up." ;;
+            exhausted) die "Chromium exceeded its restart budget (${MAX_RESTARTS} restarts) without staying up ${HEALTHY_RESET_SECONDS}s between them; giving up." ;;
             forgiven) log "Chromium healthy for ${HEALTHY_RESET_SECONDS}s; restart budget reset." ;;
             restart)
                 log "Chromium exited; restarting (browser id changes, so re-registering)."
@@ -258,7 +286,7 @@ supervise() {
         step="$(restart_budget_step "$ngx_up" "$ngx_restarts" "$ngx_last" "$now" "$HEALTHY_RESET_SECONDS" "$MAX_RESTARTS")"
         read -r ngx_restarts ngx_last verdict <<<"$step"
         case "$verdict" in
-            exhausted) die "nginx restarted ${ngx_restarts} times without staying up ${HEALTHY_RESET_SECONDS}s; giving up." ;;
+            exhausted) die "nginx exceeded its restart budget (${MAX_RESTARTS} restarts) without staying up ${HEALTHY_RESET_SECONDS}s between them; giving up." ;;
             forgiven) log "nginx healthy for ${HEALTHY_RESET_SECONDS}s; restart budget reset." ;;
             restart)
                 log "nginx exited; restarting."
@@ -270,7 +298,7 @@ supervise() {
         step="$(restart_budget_step "$cf_up" "$cf_restarts" "$cf_last" "$now" "$HEALTHY_RESET_SECONDS" "$MAX_RESTARTS")"
         read -r cf_restarts cf_last verdict <<<"$step"
         case "$verdict" in
-            exhausted) die "cloudflared restarted ${cf_restarts} times without staying up ${HEALTHY_RESET_SECONDS}s; giving up." ;;
+            exhausted) die "cloudflared exceeded its restart budget (${MAX_RESTARTS} restarts) without staying up ${HEALTHY_RESET_SECONDS}s between them; giving up." ;;
             forgiven) log "cloudflared healthy for ${HEALTHY_RESET_SECONDS}s; restart budget reset." ;;
             restart)
                 log "cloudflared exited; opening a new quick tunnel (URL changes, so re-registering)."
