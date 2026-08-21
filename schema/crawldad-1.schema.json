@@ -210,7 +210,8 @@
             },
             "onPageCrashed": {
               "type": "string",
-              "description": "Page-crash handling (reopenPage → close+reopen on the same context)."
+              "enum": ["reopenPage", "fail"],
+              "description": "How a page crash is handled, orthogonal to `retryOn` (which decides whether a `pageCrashed` is retried at all). `reopenPage` (default): close the crashed page and open a fresh one on the same session/context, then rebind and re-run the program. `fail`: do not reopen — the crash fails the attempt on the page it crashed on, and is retried only when `pageCrashed` is in `retryOn` (on the not-reopened page), otherwise terminal. Absent ⇒ `reopenPage`, unchanged from before."
             }
           }
         },

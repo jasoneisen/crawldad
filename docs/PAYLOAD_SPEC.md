@@ -81,6 +81,13 @@ Between attempts the engine waits `delayMs`, scaled by **`backoff`**:
 
 An optional **`maxDelayMs`** caps the computed wait (bounding `linear`/`exponential` growth; absent ⇒ uncapped), and **`jitter: true`** applies *full jitter* — the actual wait is a uniform random value in `[0, computed]`, de-correlating retriers. An unknown `backoff` is rejected at save/validate time. Every backoff wait respects the run deadline: a wait that would outlive `config.deadlineMs` ends the run terminally (`run_deadline_exceeded`) rather than sleeping past it. Omitting `backoff`/`maxDelayMs`/`jitter` reproduces the historical constant-delay behaviour exactly.
 
+**`onPageCrashed`** is orthogonal to `retryOn` — `retryOn` decides *whether* a `pageCrashed` is retried, `onPageCrashed` decides *what happens to the page* first:
+
+- **`reopenPage`** (the default, and the behaviour before this knob existed) — close the crashed page and open a fresh one on the same session/context, then rebind and re-run the program from the top.
+- **`fail`** — do not reopen; the crash fails the attempt on the page it crashed on. It is retried only when `pageCrashed` is in `retryOn` (on that same page, never a fresh one), and is otherwise terminal (`retryable-exhausted`) — the fail-fast-on-a-crash posture, so a crash is never silently papered over by a reopen.
+
+An unknown `onPageCrashed` is rejected at save/validate time (a tightened schema `enum`); an inline run lands on `invalid_retry_on_page_crashed`. (A fresh-*context* variant was considered and deliberately not shipped — see the option set above; `reopenPage` already discards the crashed page's DOM/JS on the same context, and dropping cookies/storage is rarely what a crash-recovery retry wants.)
+
 ## Expressions
 
 The expression sublanguage is modelled on **Google CEL**: a real, non-Turing-complete grammar with **no** user-defined functions, recursion, assignment, iteration, or IO. It is pure, total, and side-effect-free — precisely strong enough to express ugly string surgery and content-aware branching, and precisely weak enough to keep the safety argument (an expression cannot loop, recurse, allocate unboundedly, or reach the filesystem/network/clock).

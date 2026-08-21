@@ -197,8 +197,15 @@ omitting `backoff`/`maxDelayMs`/`jitter` reproduces the historical constant-dela
 wait honours the run wall-clock deadline — a wait that would outlive `config.deadlineMs` ends the run terminally
 (`run_deadline_exceeded`) rather than sleeping past it.
 
+`onPageCrashed` governs what happens to the page on a `pageCrashed` — **orthogonally** to `retryOn`, which decides
+whether a crash is retried at all. `reopenPage` (the default) closes the crashed page and opens a fresh one on the same
+session/context before the retry re-runs the program from the top; `fail` opts out of the reopen, so the crash fails the
+attempt on the page it crashed on — retried only when `pageCrashed` is in `retryOn` (on that same page), otherwise
+terminal (`retryable-exhausted`). Like `backoff`, an unknown `onPageCrashed` is rejected at **save/validate** time (a
+tightened schema `enum`) and lands on `invalid_retry_on_page_crashed` on an inline run; absent ⇒ `reopenPage`, unchanged.
+
 ```jsonc
-"retry": { "maxAttempts": 5, "delayMs": 1000, "backoff": "exponential", "maxDelayMs": 30000, "jitter": true }
+"retry": { "maxAttempts": 5, "delayMs": 1000, "backoff": "exponential", "maxDelayMs": 30000, "jitter": true, "onPageCrashed": "reopenPage" }
 ```
 
 ---
@@ -865,6 +872,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `handle_in_result` | terminal | a locator/frame handle leaked into `result` |
 | `unknown_backend_adapter` / `invalid_backend_binding` | terminal | `config.backend` did not resolve |
 | `invalid_retry_backoff` | terminal | `config.retry.backoff` named a strategy outside `constant`/`linear`/`exponential` (rejected at save/validate time; an inline run lands here) |
+| `invalid_retry_on_page_crashed` | terminal | `config.retry.onPageCrashed` named an option outside `reopenPage`/`fail` (rejected at save/validate time; an inline run lands here) |
 | `backend_unavailable` | terminal | the backend connect/setup faulted — single-shot unless `config.connectRetry` retries a **transient** fault (a tunnel reconnect, a refused socket, a 5xx, a 429/408 throttle); an auth-shaped fault (rejected key, a 4xx other than 429/408, absent credential) fails fast, and exhausting the bounded attempts stays terminal here |
 | `malformed_node` | terminal | a node was structurally malformed at run time |
 | `invalid_download_target` / `unknown_download_sink` | terminal | `download.to` did not resolve to a registered sink |
