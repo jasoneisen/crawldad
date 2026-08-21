@@ -107,7 +107,7 @@ public class RunTimelineProjectionTests
         var t = projection.Create(Started());
         t = projection.Apply(new StepStarted(0, "set", _t0), t);
         t = projection.Apply(new SelectorMiss("#recordNumber", 0, _t0), t);
-        t = projection.Apply(new StepFailed(0, "selector_miss", "screenshots/miss.png", _t0), t);
+        t = projection.Apply(new StepFailed(0, "selector_miss", "screenshots/miss.png", null, _t0), t);
         t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0, 1), _t0.AddSeconds(1)), t);
 
         t.MissedSelectors.ShouldBe(["#recordNumber"]);
@@ -116,7 +116,7 @@ public class RunTimelineProjectionTests
     }
 
     [Fact]
-    public void A_failed_run_carries_the_step_failure_and_its_screenshot_ref()
+    public void A_failed_run_carries_the_step_failure_and_its_screenshot_ref() // no captureOnFailure ⇒ captureRef stays null
     {
         var projection = new RunTimelineProjection();
         var failure = new RunFailureDetail("terminal", "boom", "kaboom", new RunStepRef(1, "fail"));
@@ -124,11 +124,39 @@ public class RunTimelineProjectionTests
         var t = projection.Create(Started());
         t = projection.Apply(new StepStarted(0, "goto", _t0), t);
         t = projection.Apply(new StepStarted(1, "fail", _t0), t);
-        t = projection.Apply(new StepFailed(1, "boom", "screenshots/xyz.png", _t0), t);
+        t = projection.Apply(new StepFailed(1, "boom", "screenshots/xyz.png", null, _t0), t);
         t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(2)), t);
 
         t.Status.ShouldBe(RunStatus.Failed);
-        t.Failure.ShouldBe(new RunTimelineFailure("boom", "kaboom", new RunStepRef(1, "fail"), "screenshots/xyz.png"));
+        t.Failure.ShouldBe(new RunTimelineFailure("boom", "kaboom", new RunStepRef(1, "fail"), "screenshots/xyz.png", null));
+    }
+
+    [Fact]
+    public void A_captureOnFailure_run_links_the_failure_to_its_captured_page_by_ref() // issue #101: an explicit ref, not positional
+    {
+        // A run that captures an earlier page (a capture node), then fails with captureOnFailure enabled: the failing
+        // page's HTML is folded into captures[] AND its ref is carried on the failure, so a consumer resolves the failing
+        // page's document by matching failure.captureRef against a captures[] entry — never by guessing which entry it is.
+        var projection = new RunTimelineProjection();
+        var failure = new RunFailureDetail("terminal", "selector_miss", "gone", new RunStepRef(2, "waitFor"));
+
+        var t = projection.Create(Started());
+        t = projection.Apply(new StepStarted(0, "capture", _t0), t);
+        t = projection.Apply(new Captured("earlier.html", 256, "sha-earlier", _t0), t);   // an explicit capture node's doc
+        t = projection.Apply(new StepStarted(1, "goto", _t0), t);
+        t = projection.Apply(new StepStarted(2, "waitFor", _t0), t);
+        t = projection.Apply(new Captured("failing.html", 512, "sha-failing", _t0), t);    // the captureOnFailure doc (emitted just before StepFailed)
+        t = projection.Apply(new StepFailed(2, "selector_miss", "screenshots/fail.png", "failing.html", _t0), t);
+        t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0, 1), _t0.AddSeconds(1)), t);
+
+        // The failure links its captured page explicitly by ref, alongside the failure screenshot ref.
+        t.Failure!.CaptureRef.ShouldBe("failing.html");
+        t.Failure.ScreenshotRef.ShouldBe("screenshots/fail.png");
+
+        // And that ref resolves to exactly one captures[] entry — the failing page, distinct from the earlier capture node's doc.
+        t.Captures.Select(c => c.BlobRef).ShouldBe(["earlier.html", "failing.html"]);
+        var linked = t.Captures.Where(c => string.Equals(c.BlobRef, t.Failure.CaptureRef, StringComparison.Ordinal)).ShouldHaveSingleItem();
+        linked.ShouldBe(new RunTimelineCapture("failing.html", 512, "sha-failing"));
     }
 
     [Fact]
@@ -139,12 +167,13 @@ public class RunTimelineProjectionTests
         var failure = new RunFailureDetail("terminal", "invalid_backend_binding", "bad", new RunStepRef(0, "config"));
 
         var t = projection.Create(Started());
-        t = projection.Apply(new StepFailed(0, "invalid_backend_binding", null, _t0), t);
+        t = projection.Apply(new StepFailed(0, "invalid_backend_binding", null, null, _t0), t);
         t = projection.Apply(new RunFailed(failure, new RunStats(0, 0, 0, 0, 0, 0), _t0.AddSeconds(1)), t);
 
         t.Steps.ShouldBeEmpty();
         t.Status.ShouldBe(RunStatus.Failed);
         t.Failure!.ScreenshotRef.ShouldBeNull();
+        t.Failure.CaptureRef.ShouldBeNull(); // a setup failure has no page, so no captured page either
     }
 
     [Fact]

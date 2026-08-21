@@ -201,6 +201,52 @@ public class RunObservabilityTests(DurableFixture fixture)
         var failure = (await result.ReadAsJsonAsync<JsonElement>()).GetProperty("failure");
         failure.GetProperty("code").GetString().ShouldBe("obs_boom");
         failure.GetProperty("screenshotRef").GetString().ShouldStartWith("screenshots/");
+        failure.GetProperty("captureRef").ValueKind.ShouldBe(JsonValueKind.Null); // no captureOnFailure configured ⇒ null on the wire
+    }
+
+    [Fact]
+    public async Task Timeline_failure_links_the_captureOnFailure_document_by_ref() // issue #101: an explicit failure→captures[] ref, end to end
+    {
+        var host = await fixture.EnsureAsync();
+        fixture.Gate.Arm(gate: null);
+
+        // A run that navigates then fails with captureOnFailure enabled: the executor banks the failing page's HTML to the
+        // fake BYO sink and the failure links it by ref — so a consumer resolves the failing page's document without
+        // guessing which captures[] entry is the on-failure one.
+        var body = new JsonObject
+        {
+            ["payload"] = JsonNode.Parse(
+                """
+                { "crawldad": "1", "name": "obs.capfail",
+                  "config": { "backend": "input.backend", "captureOnFailure": { "to": "{ kind: 'fake', name: 'onfail' }" } }, "vars": {},
+                  "steps": [
+                    { "goto": { "url": "https://aca-prod.accela.com/LJCMG/Cap/CapHome.aspx?module=Enforcement&TabName=Enforcement" } },
+                    { "fail": { "class": "terminal", "code": "cap_boom", "message": "stop" } }
+                  ],
+                  "result": "'x'" }
+                """),
+            ["inputs"] = new JsonObject { ["backend"] = new JsonObject { ["adapter"] = "fake", ["options"] = new JsonObject { ["fixture"] = "caphome-multipage" } } },
+            ["async"] = true,
+        };
+        var runId = await StartAsyncAsync(host, body);
+        (await DurableHost.PollUntilTerminalAsync(host, runId, TimeSpan.FromSeconds(20))).GetProperty("status").GetString().ShouldBe("failed");
+
+        var result = await host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{runId}/timeline");
+            x.StatusCodeShouldBe(200);
+        });
+        var timeline = await result.ReadAsJsonAsync<JsonElement>();
+
+        // The failure carries an explicit ref that resolves to exactly one captures[] entry — the failing page's document
+        // (banked to the tenant's BYO sink), matched byte-for-byte after the shared scrubber ran on both events.
+        var captureRef = timeline.GetProperty("failure").GetProperty("captureRef").GetString();
+        captureRef.ShouldNotBeNullOrEmpty();
+        var captured = timeline.GetProperty("captures").EnumerateArray()
+            .Where(c => string.Equals(c.GetProperty("blobRef").GetString(), captureRef, StringComparison.Ordinal))
+            .ToList()
+            .ShouldHaveSingleItem();
+        captured.GetProperty("sha256").GetString()!.Length.ShouldBe(64);
     }
 
     // ----- metadata-only trace discipline (the PII re-assertion) ----------

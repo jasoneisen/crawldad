@@ -451,7 +451,7 @@ The observability read model (the lag-tolerant cross-run view): ordered steps wi
 **redacted** input key *names*, extracted-value shape refs (never values), download, screenshot, and **capture**
 blob refs (never bytes), the `missedSelectors` (the run's distinct extraction selectors that matched nothing — the
 per-run drift signal [`GET /payloads/{id}/drift-status`](#get-payloadsiddrift-status) folds), the terminal failure +
-its screenshot ref, the pinned revision + script hash, and the backend region. Everything derives from
+its screenshot and capture refs, the pinned revision + script hash, and the backend region. Everything derives from
 already-scrubbed trace events, so no raw credential or bulk PII surfaces.
 `404` for an unknown run. Each `screenshotRef` here (and `failure.screenshotRef`) is fetched as an actual PNG
 via [`GET /runs/{id}/screenshots/{ref}`](#get-runsidscreenshotsref) below.
@@ -460,7 +460,9 @@ via [`GET /runs/{id}/screenshots/{ref}`](#get-runsidscreenshotsref) below.
 storage — `{ blobRef, size, sha256 }`, never the HTML. Unlike screenshots, captured bytes live in the customer's
 own storage target under the customer's own retention, so Crawldad serves no read-back endpoint for them (the ref
 is resolved against the tenant's storage, not ours). A run that fails a selector wait with `captureOnFailure`
-configured leaves the failing page's HTML in `captures[]`, next to `failure.screenshotRef`.
+configured leaves the failing page's HTML in `captures[]`, and `failure.captureRef` carries that entry's `blobRef`
+(null when nothing was captured) — so you resolve the failing page's document by an explicit ref match rather than by
+guessing which `captures[]` entry it is, exactly as `failure.screenshotRef` links the failure screenshot.
 
 ### `GET /runs/{id}/screenshots/{ref}`
 Streams a captured screenshot — an authored `screenshot` node, or a screenshot-on-failure — back as

@@ -353,7 +353,7 @@ public class DriftMonitoringTests(DriftFixture fixture)
             MissedSelectors = missed ?? [],
             Captures = [.. (captures ?? []).Select(reference => new RunTimelineCapture(reference, 1, "sha"))],
             Screenshots = [.. (screenshots ?? []).Select(reference => new RunTimelineScreenshot(reference, null, 1))],
-            Failure = failureScreenshotRef is null ? null : new RunTimelineFailure("selector_miss", "gone", new RunStepRef(0, "set"), failureScreenshotRef),
+            Failure = failureScreenshotRef is null ? null : new RunTimelineFailure("selector_miss", "gone", new RunStepRef(0, "set"), failureScreenshotRef, null),
         };
 
     private static async Task SeedAsync(IAlbaHost host, string tenantId, params RunTimeline[] timelines)

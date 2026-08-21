@@ -66,7 +66,12 @@ public sealed record RunTimeline
     /// <summary>The failure screenshot's ref captured on the failing step, carried into <see cref="Failure"/> at the terminal event.</summary>
     public string? ScreenshotRef { get; init; }
 
-    /// <summary>The terminal failure + screenshot ref, or null when the run did not fail.</summary>
+    /// <summary>The failing page's <c>config.captureOnFailure</c> HTML document ref, carried into <see cref="Failure"/> at
+    /// the terminal event — the same content-addressed ref that also appears in <see cref="Captures"/>, so the failure
+    /// links its captured page explicitly. Null when capture-on-failure was disabled or captured nothing.</summary>
+    public string? CaptureRef { get; init; }
+
+    /// <summary>The terminal failure + its screenshot/capture refs, or null when the run did not fail.</summary>
     public RunTimelineFailure? Failure { get; init; }
 }
 
@@ -139,8 +144,8 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
             ? timeline
             : timeline with { MissedSelectors = [.. timeline.MissedSelectors, miss.Selector] };
 
-    /// <summary>Captures the failing step's screenshot ref (carried into the failure at the terminal event).</summary>
-    public RunTimeline Apply(StepFailed failed, RunTimeline timeline) => timeline with { ScreenshotRef = failed.ScreenshotRef };
+    /// <summary>Captures the failing step's screenshot + captureOnFailure HTML refs (carried into the failure at the terminal event).</summary>
+    public RunTimeline Apply(StepFailed failed, RunTimeline timeline) => timeline with { ScreenshotRef = failed.ScreenshotRef, CaptureRef = failed.CaptureRef };
 
     /// <summary>Closes the timeline as succeeded.</summary>
     public RunTimeline Apply(RunSucceeded succeeded, RunTimeline timeline) => Finish(timeline, RunStatus.Succeeded, succeeded.FinishedAt, null);
@@ -176,7 +181,7 @@ public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTi
             DurationMs = (long)(finishedAt - closed.StartedAt).TotalMilliseconds,
             Failure = failure is null
                 ? closed.Failure
-                : new RunTimelineFailure(failure.Code, failure.Message, failure.AtStep, closed.ScreenshotRef),
+                : new RunTimelineFailure(failure.Code, failure.Message, failure.AtStep, closed.ScreenshotRef, closed.CaptureRef),
         };
     }
 }

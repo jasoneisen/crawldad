@@ -1292,14 +1292,13 @@ internal sealed class RunInterpreter
         // `screenshot` is set only when a page is bound (the retry/exhaustion path), which is exactly the precondition
         // both failure artifacts need — so the failing page's HTML lands next to its screenshot when both are enabled.
         var screenshotRef = screenshot ? await CaptureFailureScreenshotAsync(ct) : null;
-        if (screenshot)
-        {
-            await CaptureFailureHtmlAsync(ct);
-        }
+        var captureRef = screenshot ? await CaptureFailureHtmlAsync(ct) : null;
 
         // The terminal StepFailed marker bypasses the event budget (like the RunFailed the executor appends after): a
         // max_events_exceeded failure must still be able to report itself, not re-trip the cap while emitting its own marker.
-        await EmitTerminalStepAsync(new StepFailed(_currentStepIndex, code, screenshotRef, _clock.GetUtcNow()), ct);
+        // It carries both failure-artifact refs — the screenshot and the captureOnFailure HTML doc — so the failure links
+        // each explicitly (the capture ref matches its captures[] entry, byte-exact once the shared scrubber runs on both).
+        await EmitTerminalStepAsync(new StepFailed(_currentStepIndex, code, screenshotRef, captureRef, _clock.GetUtcNow()), ct);
         return Failed(failureClass, code, message, startedAt);
     }
 
@@ -1330,15 +1329,16 @@ internal sealed class RunInterpreter
 
     // Captures the failing page's full HTML to the config.captureOnFailure BYO sink and records a Captured event with
     // only its ref — the diagnostic companion to the failure screenshot (selector drift is easiest to read off the DOM).
-    // Durable path only: no observer (sync path) or no configured sink ⇒ nothing to do, like the failure screenshot.
-    // Reached only from the retry/exhaustion failure path (a page is bound), so the sink being set ⇒ a page to serialise.
-    // The failing page is exempt from the capture byte cap (one diagnostic page is not a runaway), and a crashed page's
-    // serialisation failure is tolerated so a failed capture never masks the run's own failure.
-    private async ValueTask CaptureFailureHtmlAsync(CancellationToken ct)
+    // Returns the captured document's content-addressed ref so the StepFailed marker can link it explicitly, or null when
+    // nothing was captured. Durable path only: no observer (sync path) or no configured sink ⇒ nothing to do, like the
+    // failure screenshot. Reached only from the retry/exhaustion failure path (a page is bound), so the sink being set ⇒
+    // a page to serialise. The failing page is exempt from the capture byte cap (one diagnostic page is not a runaway),
+    // and a crashed page's serialisation failure is tolerated so a failed capture never masks the run's own failure.
+    private async ValueTask<string?> CaptureFailureHtmlAsync(CancellationToken ct)
     {
         if (_observer is null || _captureOnFailureSink is null)
         {
-            return;
+            return null;
         }
 
         try
@@ -1347,10 +1347,12 @@ internal sealed class RunInterpreter
             var artifact = await StoreArtifactAsync(_captureOnFailureSink, data, _captureFileName, ct);
             // Budget-exempt like the terminal StepFailed marker: a run that failed on max_events must still bank its failing page.
             await EmitTerminalStepAsync(new Captured(artifact.StoredAs, artifact.SizeBytes, artifact.Sha256, _clock.GetUtcNow()), ct);
+            return artifact.StoredAs; // the same ref its Captured twin carries — StepFailed links the failing page's doc by it
         }
         catch (BrowserException)
         {
             // a crashed/torn-down page can fail to serialise — tolerate it (best-effort, like the failure screenshot)
+            return null;
         }
     }
 

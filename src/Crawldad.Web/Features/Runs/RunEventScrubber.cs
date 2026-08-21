@@ -59,7 +59,10 @@ internal static class RunEventScrubber
         // SelectorMiss carries the declared selector text (a payload identifier, never page content) — scrub it
         // defensively like Clicked.SelectorText, since a selector template could interpolate a credential-shaped value.
         SelectorMiss miss => miss with { Selector = scrubber.Scrub(miss.Selector) },
-        StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error) },
+
+        // CaptureRef is scrubbed IDENTICALLY to its Captured.BlobRef twin so the explicit failure→captures[] correlation
+        // (issue #101) stays byte-exact; ScreenshotRef is left as-is — the sole carrier of the screenshot's fetch key.
+        StepFailed failed => failed with { Error = scrubber.Scrub(failed.Error), CaptureRef = failed.CaptureRef is null ? null : scrubber.Scrub(failed.CaptureRef) },
         RunSessionOpened opened => opened with { Region = scrubber.Scrub(opened.Region) },
 
         // RunSucceeded/RunAttemptFailed/RunConnectAttemptFailed (stats or attempt-number + fixed slug), and StepStarted/
