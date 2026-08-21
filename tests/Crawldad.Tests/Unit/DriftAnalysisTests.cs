@@ -212,7 +212,7 @@ public class DriftAnalysisTests
             StartedAt = _t0,
             FinishedAt = null, // no finish recorded → ObservedAt falls back to StartedAt
             MissedSelectors = ["#title"],
-            Failure = new RunTimelineFailure("selector_miss", "gone", new RunStepRef(1, "set"), "screenshots/fail.png"),
+            Failure = new RunTimelineFailure("selector_miss", "gone", new RunStepRef(1, "set"), "screenshots/fail.png", null),
         };
 
         var observation = DriftObservation.FromTimeline(timeline);

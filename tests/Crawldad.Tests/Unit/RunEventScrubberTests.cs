@@ -170,13 +170,30 @@ public class RunEventScrubberTests
     }
 
     [Fact]
-    public void StepFailed_scrubs_the_error_and_keeps_the_screenshot_ref()
+    public void StepFailed_scrubs_the_error_and_keeps_the_artifact_refs()
     {
-        var scrubbed = (StepFailed)RunEventScrubber.Scrub(new StepFailed(3, $"boom-{_secret}", "screenshots/abc.png", _at), Scrubber());
+        var scrubbed = (StepFailed)RunEventScrubber.Scrub(new StepFailed(3, $"boom-{_secret}", "screenshots/abc.png", "captures/def.html", _at), Scrubber());
 
         scrubbed.Error.ShouldBe($"boom-{_redacted}");
-        scrubbed.ScreenshotRef.ShouldBe("screenshots/abc.png"); // content-addressed ref, credential-free
+        scrubbed.ScreenshotRef.ShouldBe("screenshots/abc.png"); // content-addressed ref, credential-free — the screenshot's fetch key, kept as-is
+        scrubbed.CaptureRef.ShouldBe("captures/def.html");      // content-addressed ref, credential-free — kept, matching its captures[] twin
         scrubbed.Index.ShouldBe(3);
+    }
+
+    [Fact]
+    public void StepFailed_scrubs_its_capture_ref_identically_to_the_captured_twin_it_links()
+    {
+        // The failing-page capture ref (issue #101) is duplicated on both StepFailed.CaptureRef and its Captured twin.
+        // A registered secret that happens to appear in the content-addressed ref must redact the SAME way on both, or the
+        // explicit failure→captures[] correlation would break. A ref containing the secret proves the scrub is applied.
+        var scrubber = Scrubber();
+        var forgedRef = $"captures/{_secret}beef.html"; // a (pathological) ref carrying the registered secret
+
+        var stepFailed = (StepFailed)RunEventScrubber.Scrub(new StepFailed(0, "boom", null, forgedRef, _at), scrubber);
+        var captured = (Captured)RunEventScrubber.Scrub(new Captured(forgedRef, 1, "sha", _at), scrubber);
+
+        stepFailed.CaptureRef.ShouldBe($"captures/{_redacted}beef.html"); // scrubbed...
+        stepFailed.CaptureRef.ShouldBe(captured.BlobRef);                  // ...and byte-exact with its captures[] twin
     }
 
     [Fact]

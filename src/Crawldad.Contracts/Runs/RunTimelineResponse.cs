@@ -21,13 +21,16 @@ public sealed record RunTimelineScreenshot(string ScreenshotRef, string? Name, l
 /// under the customer's own retention).</summary>
 public sealed record RunTimelineCapture(string BlobRef, long Size, string Sha256);
 
-/// <summary>A run's terminal failure as surfaced in its timeline: the typed failure plus the screenshot ref captured
-/// on the failing step, or null when none was taken (disabled, no page bound, or a cancelled deadline).</summary>
-public sealed record RunTimelineFailure(string Code, string Message, RunStepRef AtStep, string? ScreenshotRef);
+/// <summary>A run's terminal failure as surfaced in its timeline: the typed failure plus the failing step's artifact refs.
+/// <see cref="ScreenshotRef"/> is the failure screenshot's ref (null when none was taken — disabled, no page bound, or a
+/// cancelled deadline). <see cref="CaptureRef"/> is the <c>config.captureOnFailure</c> HTML document's ref: the same
+/// content-addressed ref as its entry in the response's <c>captures[]</c>, so a consumer correlates the failing page to
+/// its captured document explicitly by ref rather than by position (null when capture-on-failure was disabled or captured nothing).</summary>
+public sealed record RunTimelineFailure(string Code, string Message, RunStepRef AtStep, string? ScreenshotRef, string? CaptureRef);
 
 /// <summary>The <c>GET /runs/{id}/timeline</c> response: the <c>RunTimeline</c> projection as a DTO — ordered steps
 /// with durations, redacted input key names, extracted/blob refs, the missed extraction selectors (the per-run drift
-/// signal, issue #47), and the failure + screenshot ref.</summary>
+/// signal, issue #47), and the failure + its screenshot and capture refs.</summary>
 public sealed record RunTimelineResponse(
     Guid RunId,
     string PayloadName,

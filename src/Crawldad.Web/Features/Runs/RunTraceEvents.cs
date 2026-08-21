@@ -52,9 +52,13 @@ public sealed record Screenshotted(string ScreenshotRef, string? Name, long Size
 public sealed record Captured(string BlobRef, long Size, string Sha256, DateTimeOffset At);
 
 /// <summary>A step failed: emitted just before the run reports a terminal / retryable-exhausted failure, so the trace
-/// pinpoints the failing step and links its screenshot. <see cref="ScreenshotRef"/> is null when none was captured
-/// (disabled, no page bound, or a forcibly-cancelled deadline) — the image lives in blob storage, only the ref here.</summary>
-public sealed record StepFailed(int Index, string Error, string? ScreenshotRef, DateTimeOffset At);
+/// pinpoints the failing step and links its failure artifacts. <see cref="ScreenshotRef"/> is null when no screenshot was
+/// captured (disabled, no page bound, or a forcibly-cancelled deadline) — the image lives in blob storage, only the ref
+/// here. <see cref="CaptureRef"/> is the failing page's <c>config.captureOnFailure</c> HTML document ref — the same
+/// content-addressed ref its <see cref="Captured"/> twin folds into the timeline's <c>captures[]</c>, so the failure
+/// links its captured page explicitly rather than by position; null when capture-on-failure is disabled or captured
+/// nothing (no observer/page, or a crashed page's serialisation was tolerated).</summary>
+public sealed record StepFailed(int Index, string Error, string? ScreenshotRef, string? CaptureRef, DateTimeOffset At);
 
 /// <summary>An extraction selector matched no element (the soft-mode drift signal for #47): a <c>text</c>/<c>innerText</c>/
 /// <c>innerHtml</c>/<c>attr</c> whose target found zero matches — distinct from a matched-but-empty element (legitimately

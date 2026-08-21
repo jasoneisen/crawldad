@@ -49,8 +49,11 @@ public class CaptureOnFailureTests
         html.ShouldContain("Parcel 42");
         html.ShouldContain("token=abc123SECRETtoken"); // the failing page is byte-faithful too — the scrubber never runs on it
 
-        // Next to the screenshot: StepFailed still carries the failure-screenshot ref, so both artifacts sit on the run.
-        observer.Events.OfType<StepFailed>().ShouldHaveSingleItem().ScreenshotRef.ShouldNotBeNull();
+        // Next to the screenshot: StepFailed carries the failure-screenshot ref AND an explicit ref to the captured HTML
+        // doc (issue #101), so the failure links its captured page by ref rather than by position in captures[].
+        var stepFailed = observer.Events.OfType<StepFailed>().ShouldHaveSingleItem();
+        stepFailed.ScreenshotRef.ShouldNotBeNull();
+        stepFailed.CaptureRef.ShouldBe(captured.BlobRef); // points at the exact document the Captured event banked
     }
 
     [Fact]
@@ -62,6 +65,7 @@ public class CaptureOnFailureTests
         outcome.Status.ShouldBe(RunStatus.Failed);
         observer.Events.OfType<Captured>().ShouldBeEmpty();
         sink.Stored.ShouldBeEmpty();
+        observer.Events.OfType<StepFailed>().ShouldHaveSingleItem().CaptureRef.ShouldBeNull(); // nothing captured ⇒ no ref to link
     }
 
     [Fact]
@@ -77,6 +81,7 @@ public class CaptureOnFailureTests
         outcome.Failure!.Code.ShouldBe("boom");
         observer.Events.OfType<Captured>().ShouldBeEmpty();
         sink.Stored.ShouldBeEmpty();
+        observer.Events.OfType<StepFailed>().ShouldHaveSingleItem().CaptureRef.ShouldBeNull(); // a tolerated capture failure links no ref
     }
 
     [Fact]
