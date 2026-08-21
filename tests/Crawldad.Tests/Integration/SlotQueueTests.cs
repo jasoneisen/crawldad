@@ -580,11 +580,11 @@ public class SlotQueueTests
         terminal.GetProperty("status").GetString().ShouldBe("failed");
         terminal.GetProperty("failure").GetProperty("code").GetString().ShouldBe("invalid_backend_binding"); // it RAN (no backend → fails)
 
-        // Cleanup: cancel the blocker while it is still PARKED at the gate (the executor is idle on the gate wait, so the
-        // cancel's RunCancellationRequested append has no concurrent writer), THEN release the gate so the cooperative
-        // cancel unwinds it to cancelled — the same order every other blocker teardown in this file uses. The inverse
-        // (release, then cancel) lets the executor run the blocker forward and append concurrently with the cancel,
-        // racing a duplicate stream version (EventStreamUnexpectedMaxEventIdException -> 500).
+        // Cleanup: cancel the blocker while it is still PARKED at the gate, THEN release the gate so the cooperative cancel
+        // unwinds it to cancelled — the same order every other blocker teardown in this file uses. (The inverse, release
+        // then cancel, would let the executor run the blocker forward and append concurrently with the cancel record; since
+        // #108 the endpoint rides out that stream-version race with a retry instead of 500ing, but parking keeps this
+        // teardown deterministic.)
         await CancelAsync(host, blocked);
         gate.Release();
         await DrainAsync(host, blocked, arriving);

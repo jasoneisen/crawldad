@@ -4,6 +4,7 @@ using Alba;
 using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Crawldad.Web.Features.Runs;
+using Crawldad.Web.Features.Runs.Interpreter;
 using Crawldad.Web.Infrastructure.Security;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
@@ -236,9 +237,10 @@ public class DurableRunTests(DurableFixture fixture)
     [Fact]
     public async Task Cancel_records_nothing_when_the_run_reaches_terminal_between_attempts()
     {
-        // Same forced race, but the competitor doesn't merely bump the version — it drives the run to terminal, exactly as
-        // the executor's own finalisation does when it honours the cooperative cancel. The cancel's retry must then observe
-        // the terminal run and record nothing, so an already-finished run is never re-annotated or double-terminated.
+        // Same forced race, but the competitor drives the run to terminal through the REAL RunFinalization path — the exact
+        // plain-Append finaliser that races the cancel record on the sync-upgrade side of #108 (PR-review finding #4), not a
+        // hand-rolled stand-in. The cancel's retry must then observe the terminal run and record nothing, so an
+        // already-finished run is never re-annotated or double-terminated.
         var injector = new StreamVersionRaceInjector();
         await using var host = await DurableHost.BuildAsync(
             "crawldad_cancel_race_terminal", new GatedFakeBackend(Runner.FixturesRoot, new GateHolder()),
@@ -249,19 +251,21 @@ public class DurableRunTests(DurableFixture fixture)
         var runId = Guid.NewGuid();
         await SeedRunningRunAsync(store, clock, runId);
 
+        // The real finaliser's collaborators; Release/Delete on this un-occupied, saga-less seed are safe no-ops.
+        var scrubber = host.Services.GetRequiredService<CredentialScrubber>();
+        var gate = host.Services.GetRequiredService<IRunAdmissionGate>();
         injector.Arm(store, runId, async (competing, token) =>
         {
-            competing.Events.Append(runId, new RunCancelled(new RunStats(0, 0, 0, 0, 0, 0), clock.GetUtcNow()));
             var progress = (await competing.LoadAsync<RunProgress>(runId, token))!;
-            progress.Status = RunStatus.Cancelled;
-            competing.Store(progress);
+            var cancelled = new RunOutcome(RunStatus.Cancelled, null, null, null, new RunStats(0, 0, 0, 0, 0, 0), []);
+            RunFinalization.Apply(competing, runId, TestTenants.PrimaryId, cancelled, RunStopReason.Cancelled, progress, scrubber, gate, clock);
         });
 
         await CancelViaHttpAsync(host, runId); // still 202 — an already-terminal run is a no-op, not a 500
 
         injector.Fired.ShouldBeTrue();
         var types = await EventTypesAsync(host, runId);
-        types.ShouldContain(typeof(RunCancelled));                // the terminal event the competitor wrote
+        types.ShouldContain(typeof(RunCancelled));                // the terminal event the real finaliser wrote
         types.ShouldNotContain(typeof(RunCancellationRequested)); // the retry saw terminal and re-annotated nothing
         (await StateAsync(host, runId)).GetProperty("status").GetString().ShouldBe("cancelled");
     }
