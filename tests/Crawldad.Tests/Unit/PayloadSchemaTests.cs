@@ -24,6 +24,9 @@ public class PayloadSchemaTests
     private static string Steps(string steps) =>
         $$"""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend" }, "vars": {}, "steps": {{steps}}, "result": "null" }""";
 
+    private static string WithRetry(string retry) =>
+        $$"""{ "crawldad": "1", "name": "t", "config": { "backend": "input.backend", "retry": {{retry}} }, "steps": [], "result": "null" }""";
+
     [Theory]
     [InlineData("search-full.json")]
     [InlineData("scrape-full.json")]
@@ -133,6 +136,27 @@ public class PayloadSchemaTests
     public void A_bad_enum_value_fails_the_schema() =>
         PayloadSchema.Validate(Parse(Steps("""[ { "log": { "level": "loud", "message": "x" } } ]""")))
             .ShouldNotBeEmpty();
+
+    [Theory]
+    // config.retry.backoff is now a tightened enum; the optional maxDelayMs cap and jitter flag ride alongside it, and an
+    // omitted backoff still validates (it defaults to constant).
+    [InlineData("""{ "maxAttempts": 3, "delayMs": 100, "backoff": "constant" }""")]
+    [InlineData("""{ "maxAttempts": 3, "delayMs": 100, "backoff": "linear" }""")]
+    [InlineData("""{ "maxAttempts": 3, "delayMs": 100, "backoff": "exponential", "maxDelayMs": 5000 }""")]
+    [InlineData("""{ "maxAttempts": 3, "delayMs": 100, "backoff": "exponential", "jitter": true }""")]
+    [InlineData("""{ "maxAttempts": 3, "delayMs": 100 }""")]
+    public void A_valid_retry_backoff_satisfies_the_schema(string retry) =>
+        PayloadSchema.Validate(Parse(WithRetry(retry))).ShouldBeEmpty();
+
+    [Theory]
+    [InlineData("""{ "backoff": "fibonacci" }""")]   // outside the shipped enum
+    [InlineData("""{ "backoff": "Exponential" }""")] // the tokens are lowercase
+    [InlineData("""{ "backoff": 2 }""")]             // not a string
+    [InlineData("""{ "maxDelayMs": -1 }""")]         // minimum 0
+    [InlineData("""{ "maxDelayMs": 1.5 }""")]        // integer only
+    [InlineData("""{ "jitter": "yes" }""")]          // boolean only
+    public void An_invalid_retry_backoff_fails_the_schema(string retry) =>
+        PayloadSchema.Validate(Parse(WithRetry(retry))).ShouldNotBeEmpty();
 
     [Fact]
     public void A_two_headed_node_fails_the_schema() =>

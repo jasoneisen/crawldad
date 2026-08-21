@@ -20,6 +20,26 @@ public sealed class MutableClock(DateTimeOffset start) : TimeProvider
     public override DateTimeOffset GetUtcNow() => Now;
 }
 
+/// <summary>A frozen <see cref="TimeProvider"/> that RECORDS every <see cref="System.Threading.Tasks.Task"/>-delay wait
+/// asked of it — capturing the exact backoff schedule a run drives through the injected clock — and completes each one
+/// immediately, so a delay-driven run neither hangs on the frozen clock nor waits real time. <see cref="Delays"/> is the
+/// ordered list of requested waits (milliseconds). The same injected-clock seam the retry suite already uses, just observable.</summary>
+public sealed class RecordingDelayClock : TimeProvider
+{
+    private readonly List<int> _delays = [];
+
+    /// <summary>The waits requested through the clock, in order — the observed backoff sequence in milliseconds.</summary>
+    public IReadOnlyList<int> Delays => _delays;
+
+    public override DateTimeOffset GetUtcNow() => FakeClock.Fixed;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        _delays.Add((int)dueTime.TotalMilliseconds);
+        return base.CreateTimer(callback, state, TimeSpan.Zero, period); // fire ASAP so the recorded wait never actually elapses
+    }
+}
+
 /// <summary>A <b>thread-safe</b> advanceable <see cref="TimeProvider"/>: "now" is stored as interlocked ticks so one
 /// thread may <see cref="Advance"/> it while another reads it concurrently — the case a live server holds (e.g. the SSE
 /// tail's heartbeat check runs on the request thread while the test advances the clock). <see cref="MutableClock"/>'s

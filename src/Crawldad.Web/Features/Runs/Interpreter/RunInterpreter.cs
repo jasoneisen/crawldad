@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -263,15 +264,32 @@ internal sealed class RunInterpreter
                         await ReopenPageAsync(session, ct); // reopen on the SAME context and rebind
                     }
 
-                    if (policy.DelayMs > 0)
-                    {
-                        await Task.Delay(TimeSpan.FromMilliseconds(policy.DelayMs), _clock, ct);
-                    }
+                    await BackoffAsync(policy, attempt, ct); // strategy-scaled backoff on the injected clock (honours the deadline)
                 }
             }
         }
 
         return await ReportFailedAsync("retryable-exhausted", exhaustedCode, exhaustedMessage, startedAt, screenshot: true, ct);
+    }
+
+    // Waits the strategy's backoff before the next attempt, on the injected clock: DelayMs scaled by the just-failed
+    // attempt number, saturated at maxDelayMs, and (when enabled) spread across [0, delay] with full jitter. A 0 delay
+    // (constant delayMs:0, or a jitter draw of 0) skips the wait. The wait honours run cancellation/deadline — a delay the
+    // deadline elapses under throws OperationCanceledException here, terminal, exactly like the constant delay it replaced.
+    [SuppressMessage("Security", "CA5394:Do not use insecure randomness",
+        Justification = "Retry jitter is a thundering-herd mitigation, not a security primitive — a fast non-cryptographic draw is exactly right.")]
+    private async ValueTask BackoffAsync(RetryPolicy policy, int failedAttempt, CancellationToken ct)
+    {
+        var delayMs = policy.BackoffDelayMs(failedAttempt);
+        if (policy.Jitter)
+        {
+            delayMs = RetryBackoff.FullJitter(delayMs, Random.Shared.NextDouble());
+        }
+
+        if (delayMs > 0)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(delayMs), _clock, ct);
+        }
     }
 
     // isRetryableClass: the failure is retryable-class (→ "retryable-exhausted" if not retried). eligibleForRetry:
@@ -314,18 +332,40 @@ internal sealed class RunInterpreter
     {
         if (NodeJson.OptionalObject(_payload.GetProperty("config"), "retry") is not { } retry)
         {
-            return new RetryPolicy(1, 0, _defaultRetryOn); // absent ⇒ a single attempt
+            return new RetryPolicy(1, 0, RetryBackoffStrategy.Constant, null, false, _defaultRetryOn); // absent ⇒ a single attempt
         }
 
         var maxAttempts = NodeJson.OptionalInt(retry, "maxAttempts", 1);
         var delayMs = NodeJson.OptionalInt(retry, "delayMs", 0);
+        var backoff = ParseBackoff(retry);
+        var maxDelayMs = retry.TryGetProperty("maxDelayMs", out _) ? NodeJson.OptionalInt(retry, "maxDelayMs", 0) : (int?)null; // absent ⇒ uncapped
+        var jitter = NodeJson.OptionalBool(retry, "jitter", false);
         var retryOn = retry.TryGetProperty("retryOn", out _)
             ? new HashSet<string>(NodeJson.OptionalStringArray(retry, "retryOn"), StringComparer.Ordinal) // present (even empty) overrides the default
             : _defaultRetryOn;
-        return new RetryPolicy(maxAttempts, delayMs, retryOn);
+        return new RetryPolicy(maxAttempts, delayMs, backoff, maxDelayMs, jitter, retryOn);
     }
 
-    private sealed record RetryPolicy(int MaxAttempts, int DelayMs, IReadOnlySet<string> RetryOn);
+    // The backoff strategy: absent ⇒ constant (the pre-backoff default, so an existing payload is unchanged). The schema
+    // rejects an unknown token at save/validate time; an inline run skips the schema, so an unrecognised strategy is
+    // classified terminally HERE rather than silently applying a constant delay it never asked for.
+    private static RetryBackoffStrategy ParseBackoff(JsonElement retry)
+    {
+        if (NodeJson.OptionalString(retry, "backoff") is not { } token)
+        {
+            return RetryBackoffStrategy.Constant;
+        }
+
+        return RetryBackoff.TryParse(token, out var strategy)
+            ? strategy
+            : throw new InterpreterException(InterpreterErrorCodes.InvalidRetryBackoff, $"config.retry.backoff '{token}' is not a known strategy (constant, linear, exponential)");
+    }
+
+    private sealed record RetryPolicy(int MaxAttempts, int DelayMs, RetryBackoffStrategy Backoff, int? MaxDelayMs, bool Jitter, IReadOnlySet<string> RetryOn)
+    {
+        // The pre-jitter backoff before the retry after the (1-based) failed attempt: DelayMs scaled by the strategy, capped at MaxDelayMs.
+        public int BackoffDelayMs(int failedAttempt) => RetryBackoff.DelayMs(Backoff, DelayMs, failedAttempt, MaxDelayMs);
+    }
 
     // ----- connect boundary (its own bounded retry) --------------------
 

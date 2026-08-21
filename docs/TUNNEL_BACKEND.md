@@ -209,10 +209,12 @@ The verified behavior, because a tunnel is the flakiest backend Crawldad support
     is capped at 10 and `delayMs` at 60 s — the connect holds a backend admission slot across real network waits.
 - **`config.retry` wraps only the post-connect program** and never reaches the connect. `maxAttempts` re-runs
   the steps on the **same** already-established session — it never re-establishes the backend connection.
-  `delayMs` is a **constant** delay between attempts (there is no exponential backoff; the schema's
-  `retry.backoff` field is accepted but the engine applies a constant delay regardless of its value). Only
-  `timeout` and `pageCrashed` are retryable (`retryOn`, defaulting to both); every other **post-connect** fault
-  is terminal. The connect boundary is `config.connectRetry`'s job, not this one's.
+  `delayMs` is the base delay between attempts, scaled by `backoff`: `constant` (the default, and the historical
+  behaviour — the same delay every time), `linear` (`delayMs · n`), or `exponential` (`delayMs · 2ⁿ⁻¹`). An
+  optional `maxDelayMs` caps the growth and `jitter: true` spreads each wait across `[0, delay]`; every wait
+  honours the run deadline (a backoff that would outlive `config.deadlineMs` ends the run terminally), exactly
+  like the connect backoff above. Only `timeout` and `pageCrashed` are retryable (`retryOn`, defaulting to both);
+  every other **post-connect** fault is terminal. The connect boundary is `config.connectRetry`'s job, not this one's.
 - **Consequence for a mid-run tunnel drop.** `config.connectRetry` covers the connect **at run start**; a tunnel
   that dies **mid-run** drops the already-established session, which neither retry knob re-establishes (the
   program retry reuses the same session). Keep the laptop awake and the tunnel up for the duration of a run;
