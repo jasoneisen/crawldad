@@ -52,7 +52,9 @@ RUN source /opt/connector/lib.sh; \
     rm -f /tmp/cloudflared; \
     cloudflared --version
 
-COPY nginx.conf /opt/connector/nginx.conf
+# The nginx config is a template; entrypoint.sh renders it (with CDP_PORT/
+# PROXY_PORT substituted) to a writable path under /tmp at start-up.
+COPY nginx.conf.template /opt/connector/nginx.conf.template
 COPY entrypoint.sh /opt/connector/entrypoint.sh
 RUN chmod 0755 /opt/connector/entrypoint.sh
 

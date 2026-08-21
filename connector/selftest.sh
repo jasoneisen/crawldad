@@ -105,6 +105,63 @@ check "slug: leading hyphen is rejected" "$(slug_ok "-laptop")" "1"
 check "slug: trailing hyphen is rejected" "$(slug_ok "laptop-")" "1"
 check "slug: empty is rejected" "$(slug_ok "")" "1"
 
+echo "== nginx port templating (render_nginx_conf) =="
+
+NGINX_TMPL="${SELF_DIR}/nginx.conf.template"
+
+# Default ports: the rendered config must listen on PROXY_PORT and wire both the
+# Host rewrite and the proxy_pass upstream to CDP_PORT.
+DEFAULT_CONF="$(render_nginx_conf "$NGINX_TMPL" 9222 9223)"
+check_contains "default render listens on PROXY_PORT 9223" \
+    "$DEFAULT_CONF" "listen 127.0.0.1:9223;"
+check_contains "default render rewrites Host to CDP_PORT 9222" \
+    "$DEFAULT_CONF" 'proxy_set_header Host "127.0.0.1:9222";'
+check_contains "default render proxies to CDP_PORT 9222" \
+    "$DEFAULT_CONF" "proxy_pass http://127.0.0.1:9222;"
+check_absent "default render leaves no CDP_PORT placeholder" "$DEFAULT_CONF" "__CDP_PORT__"
+check_absent "default render leaves no PROXY_PORT placeholder" "$DEFAULT_CONF" "__PROXY_PORT__"
+# Substitution must not disturb nginx's own $-variables (a naive envsubst would).
+# The needle is literal nginx config text, so no shell expansion is wanted here.
+# shellcheck disable=SC2016
+check_contains "default render preserves nginx \$connection_upgrade map" \
+    "$DEFAULT_CONF" 'map $http_upgrade $connection_upgrade'
+
+# Overridden ports: the same three sites must follow, with no default port left
+# behind — the exact wiring a user who sets CDP_PORT/PROXY_PORT depends on (#103).
+OVERRIDE_CONF="$(render_nginx_conf "$NGINX_TMPL" 9333 9444)"
+check_contains "override render listens on PROXY_PORT 9444" \
+    "$OVERRIDE_CONF" "listen 127.0.0.1:9444;"
+check_contains "override render rewrites Host to CDP_PORT 9333" \
+    "$OVERRIDE_CONF" 'proxy_set_header Host "127.0.0.1:9333";'
+check_contains "override render proxies to CDP_PORT 9333" \
+    "$OVERRIDE_CONF" "proxy_pass http://127.0.0.1:9333;"
+# The default directives must be gone (the header comment still names the default
+# ports as documentation, so assert on the directives, not the bare numbers).
+check_absent "override render drops the default listen directive" "$OVERRIDE_CONF" "listen 127.0.0.1:9223;"
+check_absent "override render drops the default proxy_pass upstream" "$OVERRIDE_CONF" "http://127.0.0.1:9222;"
+check_absent "override render drops the default Host rewrite" "$OVERRIDE_CONF" 'Host "127.0.0.1:9222"'
+check_absent "override render leaves no placeholders" "$OVERRIDE_CONF" "__CDP_PORT__"
+
+# A missing template is a hard failure, not a silently empty config.
+set +e
+render_nginx_conf "${WORK}/no-such-template" 9222 9223 >/dev/null 2>&1
+RC_TMPL_MISSING=$?
+set -e
+check "render refuses a missing template" \
+    "$([ "$RC_TMPL_MISSING" -ne 0 ] && echo refused || echo rendered)" "refused"
+
+echo "== port validation (valid_port) =="
+port_ok() { if valid_port "$1"; then echo 0; else echo 1; fi; }
+check "port: 9222 is valid" "$(port_ok 9222)" "0"
+check "port: 1 is valid" "$(port_ok 1)" "0"
+check "port: 65535 is valid" "$(port_ok 65535)" "0"
+check "port: 0 is rejected" "$(port_ok 0)" "1"
+check "port: 65536 (out of range) is rejected" "$(port_ok 65536)" "1"
+check "port: non-numeric is rejected" "$(port_ok abc)" "1"
+check "port: empty is rejected" "$(port_ok "")" "1"
+check "port: leading zero is rejected" "$(port_ok 0080)" "1"
+check "port: negative is rejected" "$(port_ok -5)" "1"
+
 echo "== registration shape (mock server, synthetic key) =="
 
 # A throwaway HTTP server that records the PUT it receives and answers 200.
@@ -178,6 +235,25 @@ check "body.secret == the wss connectUrl" "$(printf '%s' "$BODY_JSON" | jq -r '.
 # Secret hygiene: the key must never surface in the connector's own log output.
 check_absent "API key absent from connector log output" "$REG_LOG" "$SYNTH_KEY"
 check_contains "log confirms registration by name" "$REG_LOG" "Registered browser 'my-laptop'"
+
+echo "== connect-error diagnosability (register surfaces curl stderr) =="
+
+# A port the OS just handed back as free (bound, then immediately closed): a connect
+# to it refuses at once — no waiting, and no risk of hitting the live mock above.
+CLOSED_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+CRAWLDAD_URL="http://127.0.0.1:${CLOSED_PORT}"
+CRAWLDAD_API_KEY="$SYNTH_KEY"
+BROWSER_NAME="my-laptop"
+
+# On a transport-level failure register must (a) echo a clean "000" on stdout and
+# (b) surface curl's own error on stderr rather than hide it behind an opaque
+# "HTTP 000" (#103) — while still never leaking the api key. stdout and stderr are
+# captured separately (two calls) so each stream is asserted on its own.
+REG_CODE="$(register "$SECRET_UNDER_TEST" 2>/dev/null)"
+REG_ERR="$(register "$SECRET_UNDER_TEST" 2>&1 >/dev/null)"
+check "connect failure echoes a clean 000 code" "$REG_CODE" "000"
+check_contains "curl transport error is surfaced on stderr" "$REG_ERR" "curl:"
+check_absent "surfaced curl error still hides the api key" "$REG_ERR" "$SYNTH_KEY"
 
 echo "== cloudflared checksum verification (verify_sha256) =="
 

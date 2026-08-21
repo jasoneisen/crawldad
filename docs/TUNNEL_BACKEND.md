@@ -79,10 +79,12 @@ cloudflared tunnel --url http://localhost:9222 --http-host-header localhost:9222
 ```
 
 **Chrome's host check (tool behavior, not Crawldad's).** Chrome's remote-debugging endpoint rejects requests
-whose `Host` header is not `localhost`/an IP (a DNS-rebinding guard), answering `403` for a raw tunnel host. The
-`--host-header` (ngrok) / `--http-host-header` (cloudflared) rewrite above makes the tunnel present
-`localhost:9222` upstream so the handshake succeeds. Exact flag names drift between tool versions — verify
-against the tool's current docs if the connect returns `backend_unavailable`.
+whose `Host` header is not `localhost`/an IP (a DNS-rebinding guard): the `/json` HTTP endpoints answer `500`
+(`Host header is specified and is not an IP address or localhost.`) and the `/devtools/browser/<id>` WebSocket
+upgrade is refused with `403`. The `--host-header` (ngrok) / `--http-host-header` (cloudflared) rewrite above
+makes the tunnel present `localhost:9222` upstream so both succeed. Exact codes and flag names are Chrome's/the
+tunnel's and drift between versions — verify against the tool's current docs if the connect returns
+`backend_unavailable`.
 
 ## 4. The connect URL to hand Crawldad
 
@@ -174,7 +176,7 @@ message is used instead ([§8 security](#8-security-the-url-is-a-secret)).
 
 | What went wrong | `failure.code` | `failure.message` |
 |---|---|---|
-| Tunnel down / URL unreachable / not a live CDP endpoint / Host-check `403` | `backend_unavailable` | `failed to establish a 'browserbase' backend session` |
+| Tunnel down / URL unreachable / not a live CDP endpoint / Host-check rejection (`403` WS handshake, `500` `/json`) | `backend_unavailable` | `failed to establish a 'browserbase' backend session` |
 | `credentialRef` omitted from the binding | `backend_unavailable` | `the 'browserbase' backend requires a credentialRef (an apiKey or a connectUrl)` |
 | `credentialRef` resolves to no registered browser and no tenant config fallback (including another tenant's name) | `backend_unavailable` | `failed to establish a 'browserbase' backend session` (the missing-secret detail is folded into the secret-free connect message) |
 | `adapter` misspelled (no such adapter registered) | `unknown_backend_adapter` | `no backend is registered for adapter '<name>'` |
