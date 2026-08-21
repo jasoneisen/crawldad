@@ -185,11 +185,21 @@
             "delayMs": {
               "type": "integer",
               "minimum": 0,
-              "description": "Delay between attempts."
+              "description": "Base delay before a retry, in milliseconds. The `backoff` strategy scales it per attempt."
             },
             "backoff": {
               "type": "string",
-              "description": "Backoff strategy (e.g. constant)."
+              "enum": ["constant", "linear", "exponential"],
+              "description": "How `delayMs` scales across attempts (Polly-style). `constant` (default): the same `delayMs` every time. `linear`: `delayMs · n` before the retry after the n-th failed attempt. `exponential`: `delayMs · 2^(n-1)` (doubling). Absent ⇒ `constant`, unchanged from before."
+            },
+            "maxDelayMs": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Optional ceiling (milliseconds) each computed backoff saturates at — bounds `linear`/`exponential` growth. Absent ⇒ uncapped (the run deadline still governs the total)."
+            },
+            "jitter": {
+              "type": "boolean",
+              "description": "When true, apply full jitter: the actual wait is a uniform random value in `[0, computed]` (after `maxDelayMs`), de-correlating retriers. Absent ⇒ false (the exact computed delay)."
             },
             "retryOn": {
               "type": "array",

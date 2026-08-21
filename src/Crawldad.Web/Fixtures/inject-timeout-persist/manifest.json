@@ -1,0 +1,25 @@
+{
+  "manifest": "1",
+  "description": "Scripted-fault fixture for the retry backoff layer (#59). The form→results click times out on its first 8 triggers — enough to exhaust any test's retry budget — so a payload retries into a retryable-exhausted failure and every retry between attempts backs off. Used to assert the per-strategy backoff delay sequence (constant/linear/exponential) flows through the injected clock. The attempt count is per-transition on the session (resets with a fresh run).",
+  "initialState": "form",
+  "states": {
+    "form": {
+      "gotoUrl": "https://fixture.test/form",
+      "url": "https://fixture.test/form",
+      "html": "form.html"
+    },
+    "results": {
+      "url": "https://fixture.test/results",
+      "html": "results.html"
+    }
+  },
+  "transitions": [
+    {
+      "from": "form",
+      "on": { "click": "#go" },
+      "to": "results",
+      "emit": { "url": "https://fixture.test/postback", "method": "POST" },
+      "inject": { "type": "timeout", "failAttempts": 8 }
+    }
+  ]
+}

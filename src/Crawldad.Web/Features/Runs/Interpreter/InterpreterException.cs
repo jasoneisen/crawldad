@@ -47,6 +47,11 @@ internal static class InterpreterErrorCodes
     /// <summary>The run's <c>config.backend</c> did not resolve to a <c>{ adapter, options }</c> shape.</summary>
     public const string InvalidBackendBinding = "invalid_backend_binding";
 
+    /// <summary><c>config.retry.backoff</c> named a strategy outside the shipped set (<c>constant</c>/<c>linear</c>/
+    /// <c>exponential</c>). The JSON Schema rejects it at save/validate time; an inline run (which skips the schema) lands
+    /// here rather than silently applying a constant delay it never asked for.</summary>
+    public const string InvalidRetryBackoff = "invalid_retry_backoff";
+
     /// <summary>A node was structurally malformed (missing/mistyped required field) — currently caught at execution time.</summary>
     public const string MalformedNode = "malformed_node";
 

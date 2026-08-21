@@ -134,11 +134,122 @@ public class RetryTests
         outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
     }
 
+    // ----- backoff strategies (delay sequence through the recording clock) ---
+
+    [Theory]
+    // The persistent fixture times out on every attempt, so all 4 attempts fail and the 3 gaps between them each back
+    // off. constant holds delayMs; linear scales it by the attempt; exponential doubles it.
+    [InlineData("constant", new[] { 100, 100, 100 })]
+    [InlineData("linear", new[] { 100, 200, 300 })]
+    [InlineData("exponential", new[] { 100, 200, 400 })]
+    public async Task Each_backoff_strategy_drives_its_delay_sequence_through_the_clock(string backoff, int[] expected)
+    {
+        var clock = new RecordingDelayClock();
+        var (outcome, _) = await Runner.RunWithFakeAsync(
+            RetryPayload($$"""{ "maxAttempts": 4, "delayMs": 100, "backoff": "{{backoff}}", "retryOn": ["timeout"] }"""),
+            Inputs("inject-timeout-persist"),
+            clock);
+
+        Fail(outcome).Class.ShouldBe("retryable-exhausted"); // 8 scripted timeouts outlast the 4 attempts
+        clock.Delays.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task Absent_backoff_behaves_exactly_like_constant()
+    {
+        // Backward compatibility: a retry block with no `backoff` waits delayMs before every retry, unchanged from before
+        // the feature. inject-timeout clears after 2, so attempts 1 and 2 each back off 100 ms, then attempt 3 succeeds.
+        var clock = new RecordingDelayClock();
+        var (outcome, _) = await Runner.RunWithFakeAsync(
+            RetryPayload("""{ "maxAttempts": 3, "delayMs": 100, "retryOn": ["timeout"] }"""),
+            Inputs("inject-timeout"),
+            clock);
+
+        outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
+        clock.Delays.ShouldBe([100, 100]); // the historical constant delay
+    }
+
+    [Fact]
+    public async Task Max_delay_ms_caps_the_backoff_growth()
+    {
+        // exponential would be 100, 200, 400 — but maxDelayMs 250 saturates the third gap.
+        var clock = new RecordingDelayClock();
+        var (outcome, _) = await Runner.RunWithFakeAsync(
+            RetryPayload("""{ "maxAttempts": 4, "delayMs": 100, "backoff": "exponential", "maxDelayMs": 250, "retryOn": ["timeout"] }"""),
+            Inputs("inject-timeout-persist"),
+            clock);
+
+        Fail(outcome).Class.ShouldBe("retryable-exhausted");
+        clock.Delays.ShouldBe([100, 200, 250]); // 400 → capped at 250
+    }
+
+    [Fact]
+    public async Task Jitter_keeps_every_backoff_strictly_below_its_computed_ceiling()
+    {
+        // With full jitter each wait is a uniform draw in [0, ceiling) — so every recorded delay is < its exponential
+        // ceiling (the un-jittered schedule would top out AT 4000, distinguishing the two). Deterministic bounds; the
+        // exact-sample math is asserted in RetryBackoffTests.
+        var clock = new RecordingDelayClock();
+        var (outcome, _) = await Runner.RunWithFakeAsync(
+            RetryPayload("""{ "maxAttempts": 4, "delayMs": 1000, "backoff": "exponential", "jitter": true, "retryOn": ["timeout"] }"""),
+            Inputs("inject-timeout-persist"),
+            clock);
+
+        Fail(outcome).Class.ShouldBe("retryable-exhausted");
+        clock.Delays.ShouldAllBe(d => d >= 0 && d < 4000); // full jitter ⇒ strictly under the top ceiling the un-jittered run would hit
+    }
+
+    [Fact]
+    public async Task A_backoff_that_the_deadline_elapses_under_is_cut_short_terminally()
+    {
+        // Deadline interaction: the interpreter threads the run's deadline token straight into the backoff's Task.Delay,
+        // so a wait the deadline breaches under throws (terminal), exactly like the connect-retry backoff. The clock fires
+        // the deadline the instant the first (60 s) backoff is requested; the wait observes it and the run is not retried.
+        using var cts = new CancellationTokenSource();
+        var clock = new CancelOnDelayClock(cts);
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => Runner.RunWithFakeAsync(
+                RetryPayload("""{ "maxAttempts": 3, "delayMs": 60000, "backoff": "exponential", "retryOn": ["timeout"] }"""),
+                Inputs("inject-timeout"),
+                clock,
+                ct: cts.Token));
+    }
+
+    [Fact]
+    public async Task An_unknown_backoff_strategy_is_a_terminal_failure_on_an_inline_run()
+    {
+        // An inline run skips the schema (which rejects the enum at save/validate time), so an unrecognised strategy is
+        // classified terminally rather than silently applying a constant delay it never asked for.
+        var outcome = await Runner.RunAsync(
+            RetryPayload("""{ "maxAttempts": 3, "delayMs": 0, "backoff": "fibonacci", "retryOn": ["timeout"] }"""),
+            Inputs("inject-timeout"));
+
+        var failure = Fail(outcome);
+        failure.Class.ShouldBe("terminal");
+        failure.Code.ShouldBe("invalid_retry_backoff");
+        outcome.Events.OfType<RunAttemptFailed>().ShouldBeEmpty(); // rejected before the first attempt ran
+    }
+
     [Fact]
     public async Task Close_quietly_tolerates_a_crashed_pages_close_failure()
     {
         // The reopen closes the crashed page best-effort; a real adapter's crashed page can throw on close.
         await Should.NotThrowAsync(() => RunInterpreter.CloseQuietlyAsync(new ThrowOnClosePage(), CancellationToken.None));
+    }
+
+    // Fires the run's deadline the instant the first backoff wait is requested, so the wait observes cancellation — the
+    // deadline breaching mid-backoff. The interpreter threads the run's deadline token into Task.Delay, so the already
+    // cancelled token completes the wait as OperationCanceledException without the (60 s) timer ever elapsing.
+    private sealed class CancelOnDelayClock(CancellationTokenSource cts) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => FakeClock.Fixed;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            cts.Cancel();
+            return base.CreateTimer(callback, state, dueTime, period);
+        }
     }
 
     // A page whose close fails with a browser fault (as a crashed Playwright page can), for the tolerate path above.

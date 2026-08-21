@@ -175,6 +175,32 @@ enters an expression, a variable, or the trace (which records only `secret:<name
 { "fill": { "selector": { "role": "textbox", "name": "Password" }, "secret": "input.password" } }
 ```
 
+### 2.6 Resilience (`config.retry`)
+
+`config.retry` wraps the whole program on the **already-established** session (it never reconnects — the connect
+boundary is `config.connectRetry`'s job). It re-runs up to `maxAttempts` times, retrying **only** the `retryOn`
+conditions (default `["timeout","pageCrashed"]`); anything else — and any `class:"terminal"` `guard`/`fail` — is
+terminal at once, and a retryable condition that exhausts the budget surfaces as `retryable-exhausted`.
+
+Between attempts the engine waits `delayMs` scaled by `backoff`:
+
+| `backoff` | Wait before the retry after the n-th failed attempt |
+|---|---|
+| `constant` (default) | `delayMs` — the same every time (the behaviour before this knob shipped) |
+| `linear` | `delayMs · n` — base, 2·base, 3·base, … |
+| `exponential` | `delayMs · 2ⁿ⁻¹` — base, 2·base, 4·base, … (Polly-style doubling) |
+
+An optional `maxDelayMs` caps the computed wait (bounds `linear`/`exponential` growth; absent ⇒ uncapped), and
+`jitter: true` applies **full jitter** — the actual wait is a uniform random value in `[0, computed]`,
+de-correlating retriers. An unknown `backoff` is rejected at **save/validate** time (a tightened schema `enum`);
+omitting `backoff`/`maxDelayMs`/`jitter` reproduces the historical constant-delay behaviour exactly. Every backoff
+wait honours the run wall-clock deadline — a wait that would outlive `config.deadlineMs` ends the run terminally
+(`run_deadline_exceeded`) rather than sleeping past it.
+
+```jsonc
+"retry": { "maxAttempts": 5, "delayMs": 1000, "backoff": "exponential", "maxDelayMs": 30000, "jitter": true }
+```
+
 ---
 
 ## 3. Running a payload — `POST /runs`
@@ -838,6 +864,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `undefined_push_target` | terminal | `push` target is undefined / not an array |
 | `handle_in_result` | terminal | a locator/frame handle leaked into `result` |
 | `unknown_backend_adapter` / `invalid_backend_binding` | terminal | `config.backend` did not resolve |
+| `invalid_retry_backoff` | terminal | `config.retry.backoff` named a strategy outside `constant`/`linear`/`exponential` (rejected at save/validate time; an inline run lands here) |
 | `backend_unavailable` | terminal | the backend connect/setup faulted — single-shot unless `config.connectRetry` retries a **transient** fault (a tunnel reconnect, a refused socket, a 5xx, a 429/408 throttle); an auth-shaped fault (rejected key, a 4xx other than 429/408, absent credential) fails fast, and exhausting the bounded attempts stays terminal here |
 | `malformed_node` | terminal | a node was structurally malformed at run time |
 | `invalid_download_target` / `unknown_download_sink` | terminal | `download.to` did not resolve to a registered sink |

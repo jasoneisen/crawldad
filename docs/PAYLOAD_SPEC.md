@@ -69,6 +69,18 @@ Control flow and state mutation are **structural nodes**, never expressions. Eve
 - **`guard` / `fail`.** `guard { cond, elseFail:Failure }` asserts-or-raises; `fail { Failure }` raises unconditionally. A `class:"terminal"` failure is **not retried** — this is how you avoid burning the retry budget on an unrecoverable state (e.g. a redirect to a login page).
 - **`comment`.** `{ "comment": "…" }` is a no-op annotation, ignored at execution and exempt from unknown-head-key validation.
 
+## Resilience (`config.retry`)
+
+`config.retry` wraps the whole program (the post-connect steps on an already-established session — it never re-establishes the connection). It re-runs up to `maxAttempts` times, retrying **only** the conditions in `retryOn` (default `["timeout","pageCrashed"]`); every other fault, and any `class:"terminal"` `guard`/`fail`, is terminal on the first hit. A retryable condition that exhausts the budget surfaces as `retryable-exhausted`.
+
+Between attempts the engine waits `delayMs`, scaled by **`backoff`**:
+
+- **`constant`** (the default, and the behaviour before this knob existed) — the same `delayMs` every time.
+- **`linear`** — `delayMs · n` before the retry after the n-th failed attempt: base, 2·base, 3·base, ….
+- **`exponential`** — `delayMs · 2ⁿ⁻¹` (Polly-style doubling): base, 2·base, 4·base, ….
+
+An optional **`maxDelayMs`** caps the computed wait (bounding `linear`/`exponential` growth; absent ⇒ uncapped), and **`jitter: true`** applies *full jitter* — the actual wait is a uniform random value in `[0, computed]`, de-correlating retriers. An unknown `backoff` is rejected at save/validate time. Every backoff wait respects the run deadline: a wait that would outlive `config.deadlineMs` ends the run terminally (`run_deadline_exceeded`) rather than sleeping past it. Omitting `backoff`/`maxDelayMs`/`jitter` reproduces the historical constant-delay behaviour exactly.
+
 ## Expressions
 
 The expression sublanguage is modelled on **Google CEL**: a real, non-Turing-complete grammar with **no** user-defined functions, recursion, assignment, iteration, or IO. It is pure, total, and side-effect-free — precisely strong enough to express ugly string surgery and content-aware branching, and precisely weak enough to keep the safety argument (an expression cannot loop, recurse, allocate unboundedly, or reach the filesystem/network/clock).
