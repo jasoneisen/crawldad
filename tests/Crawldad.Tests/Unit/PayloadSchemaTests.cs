@@ -158,6 +158,23 @@ public class PayloadSchemaTests
     public void An_invalid_retry_backoff_fails_the_schema(string retry) =>
         PayloadSchema.Validate(Parse(WithRetry(retry))).ShouldNotBeEmpty();
 
+    [Theory]
+    // config.retry.onPageCrashed is a tightened enum (reopenPage/fail); omitting it validates (it defaults to reopenPage).
+    [InlineData("""{ "onPageCrashed": "reopenPage" }""")]
+    [InlineData("""{ "onPageCrashed": "fail" }""")]
+    [InlineData("""{ "maxAttempts": 3, "onPageCrashed": "fail", "retryOn": ["pageCrashed"] }""")]
+    [InlineData("""{ "maxAttempts": 3 }""")]
+    public void A_valid_on_page_crashed_satisfies_the_schema(string retry) =>
+        PayloadSchema.Validate(Parse(WithRetry(retry))).ShouldBeEmpty();
+
+    [Theory]
+    [InlineData("""{ "onPageCrashed": "newContext" }""")] // considered in design, deliberately not shipped
+    [InlineData("""{ "onPageCrashed": "restart" }""")]    // outside the shipped enum
+    [InlineData("""{ "onPageCrashed": "ReopenPage" }""")] // the tokens are lowerCamel
+    [InlineData("""{ "onPageCrashed": 2 }""")]            // not a string
+    public void An_invalid_on_page_crashed_fails_the_schema(string retry) =>
+        PayloadSchema.Validate(Parse(WithRetry(retry))).ShouldNotBeEmpty();
+
     [Fact]
     public void A_two_headed_node_fails_the_schema() =>
         PayloadSchema.Validate(Parse(Steps("""[ { "goto": { "url": "x" }, "click": { "selector": "y" } } ]""")))

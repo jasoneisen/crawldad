@@ -94,6 +94,74 @@ public class RetryTests
         backend.LastSession!.Pages.Count.ShouldBe(1); // no reopen
     }
 
+    // ----- onPageCrashed handling (reopenPage default vs fail) ---------------
+
+    [Fact]
+    public async Task An_absent_on_page_crashed_reopens_exactly_like_reopenPage()
+    {
+        // The field defaults to reopenPage: with onPageCrashed omitted entirely, a crash still closes the page and opens
+        // a fresh one on the same session — byte-for-byte the explicit-reopenPage behaviour asserted above.
+        var (outcome, backend) = await Runner.RunWithFakeAsync(
+            RetryPayload("""{ "maxAttempts": 3, "delayMs": 0, "retryOn": ["timeout","pageCrashed"] }"""),
+            Inputs("inject-crash"));
+
+        outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
+        var session = backend.LastSession!;
+        session.Pages.Count.ShouldBe(2);                       // reopened, exactly like the explicit reopenPage case
+        session.Pages[0].CloseAttempted.ShouldBeTrue();
+        session.Pages[1].ShouldNotBeSameAs(session.Pages[0]);
+    }
+
+    [Fact]
+    public async Task Page_crash_with_fail_retries_without_reopening_when_pageCrashed_is_retryable()
+    {
+        // onPageCrashed:"fail" opts OUT of the reopen: the crash still fails the attempt, and because pageCrashed is in
+        // retryOn the attempt retries per policy — but on the page it crashed on, never a fresh one. (The fake's
+        // per-session attempt counter clears the scripted fault on the retry, so the re-run from the top succeeds.)
+        var (outcome, backend) = await Runner.RunWithFakeAsync(
+            RetryPayload("""{ "maxAttempts": 3, "delayMs": 0, "retryOn": ["timeout","pageCrashed"], "onPageCrashed": "fail" }"""),
+            Inputs("inject-crash"));
+
+        outcome.Status.ShouldBe(RunStatus.Succeeded, outcome.Failure?.Code);
+        outcome.Events.OfType<RunAttemptFailed>().Single().Code.ShouldBe("pageCrashed"); // the crash was retried, not reopened
+
+        var session = backend.LastSession!;
+        session.Pages.Count.ShouldBe(1);                  // no reopen — the SAME page served both attempts
+        session.Pages[0].CloseAttempted.ShouldBeFalse();  // the crashed page was never torn down
+    }
+
+    [Fact]
+    public async Task Page_crash_with_fail_and_pageCrashed_not_retryable_is_terminal_without_reopening()
+    {
+        // fail + pageCrashed absent from retryOn: the crash is terminal on the first hit, with no reopen and no retry —
+        // the fail-fast-on-a-crash posture. onPageCrashed never changes the classification (retryOn does), so the
+        // taxonomy is exactly what reopenPage yields for an un-retried crash: retryable-exhausted, code pageCrashed.
+        var (outcome, backend) = await Runner.RunWithFakeAsync(
+            RetryPayload("""{ "maxAttempts": 3, "delayMs": 0, "retryOn": ["timeout"], "onPageCrashed": "fail" }"""),
+            Inputs("inject-crash"));
+
+        var failure = Fail(outcome);
+        failure.Class.ShouldBe("retryable-exhausted");
+        failure.Code.ShouldBe("pageCrashed");
+        outcome.Events.OfType<RunAttemptFailed>().ShouldBeEmpty(); // not eligible for retry ⇒ no attempt events
+        backend.LastSession!.Pages.Count.ShouldBe(1);             // no reopen
+    }
+
+    [Fact]
+    public async Task An_unknown_on_page_crashed_option_is_a_terminal_failure_on_an_inline_run()
+    {
+        // An inline run skips the schema (which rejects the enum at save/validate time), so an unrecognised option is
+        // classified terminally rather than silently reopening a page it never asked to reopen.
+        var outcome = await Runner.RunAsync(
+            RetryPayload("""{ "maxAttempts": 3, "delayMs": 0, "retryOn": ["timeout","pageCrashed"], "onPageCrashed": "restart" }"""),
+            Inputs("inject-crash"));
+
+        var failure = Fail(outcome);
+        failure.Class.ShouldBe("terminal");
+        failure.Code.ShouldBe("invalid_retry_on_page_crashed");
+        outcome.Events.OfType<RunAttemptFailed>().ShouldBeEmpty(); // rejected before the first attempt ran
+    }
+
     [Fact]
     public async Task A_terminal_guard_failure_is_never_retried()
     {

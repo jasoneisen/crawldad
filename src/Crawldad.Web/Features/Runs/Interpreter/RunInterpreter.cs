@@ -252,16 +252,17 @@ internal sealed class RunInterpreter
                     return await ReportFailedAsync(isRetryableClass ? "retryable-exhausted" : "terminal", code, ex.Message, startedAt, screenshot: true, ct);
                 }
 
-                // Retryable and permitted: record the attempt, reopen the page on a crash, delay, then let the
-                // loop re-run the whole program. The last attempt falls through to the exhaustion return below.
+                // Retryable and permitted: record the attempt, reopen the page on a crash (unless onPageCrashed:fail
+                // opted out — the retry then re-runs against the page it crashed on), delay, then let the loop re-run the
+                // whole program. The last attempt falls through to the exhaustion return below.
                 exhaustedCode = code;
                 exhaustedMessage = ex.Message;
                 if (attempt < policy.MaxAttempts)
                 {
                     await EmitAsync(new RunAttemptFailed(attempt, code, _clock.GetUtcNow()), ct);
-                    if (ex is BrowserPageCrashedException)
+                    if (ex is BrowserPageCrashedException && policy.OnPageCrashed == PageCrashHandlingStrategy.ReopenPage)
                     {
-                        await ReopenPageAsync(session, ct); // reopen on the SAME context and rebind
+                        await ReopenPageAsync(session, ct); // reopenPage: close the crashed page, open a fresh one on the SAME context, rebind
                     }
 
                     await BackoffAsync(policy, attempt, ct); // strategy-scaled backoff on the injected clock (honours the deadline)
@@ -332,7 +333,7 @@ internal sealed class RunInterpreter
     {
         if (NodeJson.OptionalObject(_payload.GetProperty("config"), "retry") is not { } retry)
         {
-            return new RetryPolicy(1, 0, RetryBackoffStrategy.Constant, null, false, _defaultRetryOn); // absent ⇒ a single attempt
+            return new RetryPolicy(1, 0, RetryBackoffStrategy.Constant, null, false, _defaultRetryOn, PageCrashHandlingStrategy.ReopenPage); // absent ⇒ a single attempt
         }
 
         var maxAttempts = NodeJson.OptionalInt(retry, "maxAttempts", 1);
@@ -343,7 +344,8 @@ internal sealed class RunInterpreter
         var retryOn = retry.TryGetProperty("retryOn", out _)
             ? new HashSet<string>(NodeJson.OptionalStringArray(retry, "retryOn"), StringComparer.Ordinal) // present (even empty) overrides the default
             : _defaultRetryOn;
-        return new RetryPolicy(maxAttempts, delayMs, backoff, maxDelayMs, jitter, retryOn);
+        var onPageCrashed = ParseOnPageCrashed(retry);
+        return new RetryPolicy(maxAttempts, delayMs, backoff, maxDelayMs, jitter, retryOn, onPageCrashed);
     }
 
     // The backoff strategy: absent ⇒ constant (the pre-backoff default, so an existing payload is unchanged). The schema
@@ -361,7 +363,23 @@ internal sealed class RunInterpreter
             : throw new InterpreterException(InterpreterErrorCodes.InvalidRetryBackoff, $"config.retry.backoff '{token}' is not a known strategy (constant, linear, exponential)");
     }
 
-    private sealed record RetryPolicy(int MaxAttempts, int DelayMs, RetryBackoffStrategy Backoff, int? MaxDelayMs, bool Jitter, IReadOnlySet<string> RetryOn)
+    // The page-crash handling: absent ⇒ reopenPage (the pre-existing unconditional reopen, so an existing payload is
+    // unchanged). The schema rejects an unknown token at save/validate time; an inline run skips the schema, so an
+    // unrecognised value is classified terminally HERE rather than silently reopening a page it never asked to reopen.
+    // Orthogonal to retryOn: retryOn decides WHETHER a pageCrashed is retried; this decides what happens to the page first.
+    private static PageCrashHandlingStrategy ParseOnPageCrashed(JsonElement retry)
+    {
+        if (NodeJson.OptionalString(retry, "onPageCrashed") is not { } token)
+        {
+            return PageCrashHandlingStrategy.ReopenPage;
+        }
+
+        return PageCrashHandling.TryParse(token, out var strategy)
+            ? strategy
+            : throw new InterpreterException(InterpreterErrorCodes.InvalidRetryOnPageCrashed, $"config.retry.onPageCrashed '{token}' is not a known option (reopenPage, fail)");
+    }
+
+    private sealed record RetryPolicy(int MaxAttempts, int DelayMs, RetryBackoffStrategy Backoff, int? MaxDelayMs, bool Jitter, IReadOnlySet<string> RetryOn, PageCrashHandlingStrategy OnPageCrashed)
     {
         // The pre-jitter backoff before the retry after the (1-based) failed attempt: DelayMs scaled by the strategy, capped at MaxDelayMs.
         public int BackoffDelayMs(int failedAttempt) => RetryBackoff.DelayMs(Backoff, DelayMs, failedAttempt, MaxDelayMs);

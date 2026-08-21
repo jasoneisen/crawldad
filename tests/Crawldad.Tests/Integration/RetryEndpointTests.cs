@@ -91,6 +91,26 @@ public class RetryEndpointTests(AppFixture fixture)
     }
 
     [Fact]
+    public async Task Injected_page_crash_with_fail_retries_on_the_same_page_without_reopening()
+    {
+        // onPageCrashed:"fail" opts out of the reopen: the crash still retries (pageCrashed is in retryOn), but on the
+        // page it crashed on — so the durable stream still records the attempt, and the session opens no second page.
+        var root = await PostAsync(Body(
+            RetryPayload("""{ "maxAttempts": 3, "delayMs": 0, "retryOn": ["timeout","pageCrashed"], "onPageCrashed": "fail" }"""),
+            "inject-crash"));
+
+        root.GetProperty("status").GetString().ShouldBe("succeeded");
+
+        var runId = root.GetProperty("runId").GetGuid();
+        (await StreamEventTypesAsync(runId)).ShouldBe([typeof(RunStarted), typeof(RunAttemptFailed), typeof(RunSucceeded)]);
+
+        var backend = (FakeBrowserBackend)Host.Services.GetRequiredKeyedService<IBrowserBackend>("fake");
+        var session = backend.LastSession!;
+        session.Pages.Count.ShouldBe(1);                  // no reopen — one page served both attempts
+        session.Pages[0].CloseAttempted.ShouldBeFalse();  // the crashed page was never torn down
+    }
+
+    [Fact]
     public async Task Unconditional_timeout_exhausts_to_a_retryable_exhausted_failure()
     {
         var root = await PostAsync(Body(

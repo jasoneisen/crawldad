@@ -52,6 +52,11 @@ internal static class InterpreterErrorCodes
     /// here rather than silently applying a constant delay it never asked for.</summary>
     public const string InvalidRetryBackoff = "invalid_retry_backoff";
 
+    /// <summary><c>config.retry.onPageCrashed</c> named an option outside the shipped set (<c>reopenPage</c>/<c>fail</c>).
+    /// The JSON Schema rejects it at save/validate time; an inline run (which skips the schema) lands here rather than
+    /// silently reopening a crashed page it never asked to reopen.</summary>
+    public const string InvalidRetryOnPageCrashed = "invalid_retry_on_page_crashed";
+
     /// <summary>A node was structurally malformed (missing/mistyped required field) — currently caught at execution time.</summary>
     public const string MalformedNode = "malformed_node";
 
