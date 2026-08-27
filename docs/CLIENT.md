@@ -85,6 +85,40 @@ var pinned = await crawldad.CreatePinnedRunAsync(payloadId, revision: 3, inputs:
 Other run operations: `CancelRunAsync`, `EraseRunAsync`, `ReplayRunAsync`, `GetRunTimelineAsync`, `GetRunDriftAsync`,
 `GetRunScreenshotAsync`, and `GetQueueStatsAsync`.
 
+## List runs
+
+`ListRunsAsync` reads `GET /runs` — a filterable, offset-paginated page of the tenant's runs, **newest first** (by
+`startedAt`, run id as the stable tiebreaker). It returns a `RunListResponse` of lightweight `RunListItem` rows (list-view
+fields only — the full result, timeline, and drift stay on the per-run surfaces). Every filter is optional and
+AND-combined; paging defaults and clamps are applied server-side, so a null or out-of-range value simply takes the
+default (`page` floors at 1, `size` defaults to 25 and clamps to 1..100).
+
+```csharp
+// Newest 25 runs (the defaults):
+RunListResponse page = await crawldad.ListRunsAsync();
+
+// Second page of failed runs for one payload, in an August window:
+var failures = await crawldad.ListRunsAsync(
+    status: RunStatus.Failed,
+    payloadId: payloadId,
+    from: new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero),
+    to:   new DateTimeOffset(2026, 8, 31, 23, 59, 59, TimeSpan.Zero),
+    page: 2,
+    size: 50);
+
+foreach (RunListItem run in failures.Runs)
+{
+    // run.Status, run.DurationMs, run.PayloadName (+ run.PayloadRevision, or run.Inline),
+    // run.Region, run.Stats (terminal-only), run.Failure (failed-only).
+}
+
+bool morePages = failures.HasMore; // true when a further page exists past this one
+int matched    = failures.Total;   // the count across the whole filtered set, not just this page
+```
+
+A running/queued row omits the terminal-only fields (`DurationMs`, `Stats`, `Failure`) and `Region`. The listing
+projection is lag-tolerant, so a just-created run may take a moment to appear.
+
 ## Stream the trace (SSE)
 
 `StreamRunEventsAsync` reads `GET /runs/{id}/events` as an `IAsyncEnumerable<RunEventFrame>`. The server backfills the

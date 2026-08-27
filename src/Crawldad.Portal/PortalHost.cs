@@ -1,5 +1,6 @@
 using Crawldad.Portal.Auth;
 using Crawldad.Portal.Components;
+using Crawldad.Portal.Runs;
 using Crawldad.Portal.Tenancy;
 using Marten;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -96,6 +97,8 @@ public static class PortalHost
         app.MapStaticAssets();
 
         app.MapPortalAuth();
+        // The cookie-gated screenshot proxy the run-detail page's <img> tags point at (the browser holds no API key).
+        app.MapPortalRunScreenshots();
         app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode();
 

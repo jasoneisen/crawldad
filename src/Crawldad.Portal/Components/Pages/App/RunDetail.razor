@@ -1,0 +1,266 @@
+@page "/app/runs/{RunId:guid}"
+@layout AppLayout
+@attribute [Authorize]
+@using Crawldad.Client
+@using Crawldad.Contracts.Runs
+@using Crawldad.Portal.Runs
+@using Crawldad.Portal.Tenancy
+@inject IPortalTenantContext Tenant
+
+<PageTitle>Run @RunView.ShortId(RunId) · Crawldad</PageTitle>
+
+@if (_timeline is not null)
+{
+    var timeline = _timeline;
+
+    <div class="page-header d-print-none">
+        <div class="row g-2 align-items-center">
+            <div class="col">
+                <div class="page-pretitle text-secondary">
+                    <a href="/app/runs" class="text-secondary">Runs</a>
+                    /
+                    @if (timeline.PayloadId is not null)
+                    {
+                        <a href="/app/payloads" data-testid="crumb-payload">@timeline.PayloadName · r@(timeline.PayloadRevision)</a>
+                    }
+                    else
+                    {
+                        <span data-testid="crumb-payload">@timeline.PayloadName · inline</span>
+                    }
+                </div>
+                <h1 class="page-title">
+                    Run <span class="run-id ms-2">@RunView.ShortId(RunId)</span>
+                    <span class="status @RunView.StatusCss(timeline.Status) ms-2 align-middle"><span class="status-dot"></span>@timeline.Status</span>
+                </h1>
+            </div>
+        </div>
+    </div>
+
+    <div class="row row-cards g-2 mt-1 mb-3" data-testid="stat-tiles">
+        <div class="col-6 col-sm-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Duration</div><div class="h2 m-0 mono">@RunView.Duration(timeline.DurationMs)</div></div></div></div>
+        <div class="col-6 col-sm-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Steps</div><div class="h2 m-0 mono">@timeline.Steps.Count</div></div></div></div>
+        <div class="col-6 col-sm-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Extracted</div><div class="h2 m-0 mono">@timeline.Extracted.Count</div></div></div></div>
+        <div class="col-6 col-sm-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Downloads</div><div class="h2 m-0 mono">@timeline.Downloads.Count</div></div></div></div>
+        <div class="col-6 col-sm-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Screenshots</div><div class="h2 m-0 mono">@timeline.Screenshots.Count</div></div></div></div>
+        <div class="col-6 col-sm-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Selector misses</div><div class="h2 m-0 mono">@timeline.MissedSelectors.Count</div></div></div></div>
+    </div>
+
+    @if (timeline.Failure is not null)
+    {
+        var failure = timeline.Failure!;
+
+        <div class="card mb-3 run-failure-banner" data-testid="failure-banner">
+            <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                <span class="badge bg-red-lt">failed</span>
+                <code class="mono fw-bold run-failure-code">@failure.Code</code>
+                <span class="text-secondary">·</span>
+                <span class="text-secondary">at step <strong>@failure.AtStep.Index</strong> <span class="rev-pill">@failure.AtStep.Kind</span></span>
+                <div class="w-100 mt-1">@failure.Message</div>
+            </div>
+        </div>
+    }
+
+    <div class="row row-cards">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Timeline</h3>
+                    <div class="card-actions text-secondary">@timeline.Steps.Count steps</div>
+                </div>
+                <div class="card-body py-2">
+                    <div class="tl" data-testid="timeline">
+                        @foreach (var step in timeline.Steps)
+                        {
+                            <div class="@RunView.StepCss(timeline.Failure, step)" data-testid="timeline-step">
+                                <div class="tl-badge">@step.Index</div>
+                                <div>
+                                    <div class="tl-kind">@step.Kind</div>
+                                    <div class="tl-detail">step @step.Index</div>
+                                </div>
+                                <div class="tl-dur">@RunView.Duration(step.DurationMs)</div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            @if (timeline.Screenshots.Count > 0)
+            {
+                <div class="card mt-3" data-testid="screenshots">
+                    <div class="card-header"><h3 class="card-title">Screenshots</h3></div>
+                    <div class="card-body">
+                        <div class="row g-2">
+                            @foreach (var shot in timeline.Screenshots)
+                            {
+                                <div class="col-6 col-md-4">
+                                    <a class="thumb d-block" href="@RunView.ScreenshotUrl(RunId, shot.ScreenshotRef)" target="_blank" rel="noopener">
+                                        <img class="img-fluid" src="@RunView.ScreenshotUrl(RunId, shot.ScreenshotRef)" alt="Run screenshot" />
+                                    </a>
+                                    <div class="mono text-secondary text-truncate mt-1 screenshot-name">@(shot.Name ?? shot.ScreenshotRef)</div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="col-lg-4">
+            @if (timeline.Failure is not null)
+            {
+                var failure = timeline.Failure!;
+
+                <div class="card mb-3" data-testid="failure-detail">
+                    <div class="card-header"><h3 class="card-title">Failure detail</h3></div>
+                    <div class="card-body">
+                        <dl class="kv mb-3">
+                            <dt>code</dt>
+                            <dd><code class="mono">@failure.Code</code></dd>
+                            <dt>atStep</dt>
+                            <dd class="mono">{ index: @failure.AtStep.Index, kind: "@failure.AtStep.Kind" }</dd>
+                            <dt>message</dt>
+                            <dd>@failure.Message</dd>
+                        </dl>
+                        @if (failure.ScreenshotRef is not null)
+                        {
+                            var screenshotRef = failure.ScreenshotRef;
+                            <div class="subheader mb-1">failure screenshot</div>
+                            <a class="thumb d-block mb-1" href="@RunView.ScreenshotUrl(RunId, screenshotRef)" target="_blank" rel="noopener" data-testid="failure-screenshot">
+                                <img class="img-fluid" src="@RunView.ScreenshotUrl(RunId, screenshotRef)" alt="Failure screenshot" />
+                            </a>
+                            <div class="mono text-secondary mb-2 screenshot-ref">@screenshotRef</div>
+                        }
+                        @if (failure.CaptureRef is not null)
+                        {
+                            <div class="subheader mb-1">failure.captureRef</div>
+                            <div class="mono text-secondary" data-testid="failure-capture">@failure.CaptureRef</div>
+                            <div class="text-secondary mt-1 small">The captured HTML lives in your BYO storage under your retention — Crawldad stores the ref only.</div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (timeline.Captures.Count > 0)
+            {
+                <div class="card mb-3" data-testid="captures">
+                    <div class="card-header"><h3 class="card-title">Captures</h3><div class="card-actions text-secondary">@timeline.Captures.Count</div></div>
+                    <div class="list-group list-group-flush">
+                        @foreach (var capture in timeline.Captures)
+                        {
+                            <div class="list-group-item">
+                                <div class="mono text-truncate capture-ref">@capture.BlobRef</div>
+                                <div class="text-secondary small">@capture.Size bytes · sha256 @capture.Sha256</div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (_drift is not null)
+            {
+                var drift = _drift!;
+
+                <div class="card mb-3" data-testid="drift">
+                    <div class="card-header"><h3 class="card-title">Drift</h3></div>
+                    <div class="card-body">
+                        <dl class="kv mb-2">
+                            <dt>pinned</dt>
+                            <dd><span class="rev-pill">r@(drift.PinnedRevision)</span></dd>
+                            <dt>head</dt>
+                            <dd><span class="rev-pill">r@(drift.HeadRevision)</span></dd>
+                        </dl>
+                        @if (drift.Drifted)
+                        {
+                            <span class="badge bg-orange-lt" data-testid="drift-chip">drifted — head has moved on</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-green-lt" data-testid="drift-chip">current — pinned to head</span>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="card">
+                <div class="card-header"><h3 class="card-title">Run</h3></div>
+                <div class="card-body">
+                    <dl class="kv mb-0">
+                        <dt>runId</dt>
+                        <dd class="mono">@RunId</dd>
+                        <dt>payload</dt>
+                        <dd>@RunView.PayloadLabel(timeline.PayloadId, timeline.PayloadName, timeline.PayloadRevision)</dd>
+                        <dt>region</dt>
+                        <dd class="region">@(timeline.Region ?? "—")</dd>
+                        <dt>started</dt>
+                        <dd class="mono">@RunView.Timestamp(timeline.StartedAt)</dd>
+                        <dt>finished</dt>
+                        <dd class="mono">@RunView.TimestampOrDash(timeline.FinishedAt)</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+else if (_notFound)
+{
+    <div class="card mt-3" data-testid="not-found">
+        <div class="empty">
+            <p class="empty-title">Run not found</p>
+            <p class="empty-subtitle text-secondary">
+                No run with id <span class="mono">@RunView.ShortId(RunId)</span> exists in this workspace — it may have
+                been erased, or the link is stale.
+            </p>
+            <div class="empty-action">
+                <a href="/app/runs" class="btn btn-primary">Back to runs</a>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    @* No tenant resolved (unlinked), or still loading on the first render pass. *@
+    <div class="card mt-3" data-testid="not-linked">
+        <div class="empty">
+            <p class="empty-title">No workspace linked</p>
+            <p class="empty-subtitle text-secondary">
+                This account isn't linked to a Crawldad workspace yet. Link a workspace from your account to view runs.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account" class="btn btn-primary">Go to Account</a>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid RunId { get; set; }
+
+    private bool _notFound;
+    private RunTimelineResponse? _timeline;
+    private RunDriftResponse? _drift;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var tenant = await Tenant.TryResolveAsync();
+        if (tenant is null)
+        {
+            return; // no linked tenant => _timeline stays null and the not-linked empty state renders
+        }
+
+        try
+        {
+            _timeline = await tenant.Client.GetRunTimelineAsync(RunId);
+        }
+        catch (CrawldadNotFoundException)
+        {
+            _notFound = true;
+            return;
+        }
+
+        // Drift only exists for a pinned run (an inline run never drifts) — skip the call otherwise.
+        if (_timeline.PayloadId is not null)
+        {
+            _drift = await tenant.Client.GetRunDriftAsync(RunId);
+        }
+    }
+}
