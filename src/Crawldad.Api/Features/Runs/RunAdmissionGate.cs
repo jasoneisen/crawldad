@@ -8,6 +8,11 @@ namespace Crawldad.Api.Features.Runs;
 /// only "is a slot free?" — a run that cannot be admitted is queued, not rejected, by <see cref="RunQueue"/>.</summary>
 public interface IRunAdmissionGate
 {
+    /// <summary>Resolves the tenant's per-tenant cap so the following <see cref="TryAdmit"/>/<see cref="HasCapacity"/> read
+    /// it correctly. The admission call sites await this before admitting, so a registry tenant's slot allowance is honoured
+    /// on the background promotion path (which can run long after — or without — a recent auth), not just at request time.</summary>
+    Task PrimeAsync(string tenantId, CancellationToken ct);
+
     /// <summary>Atomically admits a run if the tenant is under its cap and this run is not already counted, occupying a slot
     /// when so. Check-and-occupy is atomic per process, so two simultaneous starts at cap-1 cannot both pass, and refusing an
     /// already-counted run means two concurrent promotions cannot both claim it. False at the cap.</summary>
@@ -30,11 +35,14 @@ public interface IRunAdmissionGate
 /// <summary>The in-process, per-tenant set of run ids holding a slot, guarded by one lock so check-and-occupy is atomic;
 /// the cap is a per-tenant override or the global default. Counts are per-process only — a multi-instance deployment can
 /// transiently over-admit (cross-instance, or ~2× during restart catch-up) until runs finalise or self-heal via <see cref="Occupy"/>.</summary>
-public sealed class RunAdmissionGate(TenantRegistry tenants, IOptions<RunLimitsOptions> limits) : IRunAdmissionGate
+public sealed class RunAdmissionGate(ITenantConcurrencyOverrides tenants, IOptions<RunLimitsOptions> limits) : IRunAdmissionGate
 {
     private readonly int _defaultCap = limits.Value.MaxConcurrentRunsPerTenant;
     private readonly Dictionary<string, HashSet<Guid>> _active = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
+
+    /// <inheritdoc />
+    public Task PrimeAsync(string tenantId, CancellationToken ct) => tenants.PrimeAsync(tenantId, ct);
 
     /// <inheritdoc />
     public bool TryAdmit(string tenantId, Guid runId)

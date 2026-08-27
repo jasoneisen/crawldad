@@ -184,6 +184,10 @@ public sealed class RunQueue(
             return false; // nothing queued — no drain
         }
 
+        // Resolve the tenant's cap from the registry store before the admit — this path can run long after (or, on restart
+        // recovery, entirely without) an auth, so it must not depend on the short-TTL auth cache to honour a registry cap.
+        await gate.PrimeAsync(tenantId, ct);
+
         if (!gate.TryAdmit(tenantId, oldest.Id))
         {
             return false; // no free slot (or already reserved by a concurrent promotion) — leave it queued for the next trigger

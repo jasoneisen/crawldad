@@ -115,6 +115,10 @@ public static class StartRunEndpoint
         var tenantId = session.TenantId!;
         var runId = Guid.NewGuid();
 
+        // Resolve the tenant's per-tenant cap from the registry store (not the short-TTL auth cache) before admitting, so a
+        // registry tenant's slot allowance is honoured here exactly as it is on the background promotion path.
+        await gate.PrimeAsync(tenantId, ct);
+
         // Admit a slot only when the queue is empty (FIFO fairness): a fresh run must not jump ahead of runs already
         // waiting, so once anything is queued a new arrival queues behind it — even if a slot is momentarily free.
         // Otherwise TryAdmit atomically reserves a free slot.

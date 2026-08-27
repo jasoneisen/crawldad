@@ -123,4 +123,17 @@ public class RunAdmissionGateTests
         gate.ActiveCount(_tenantA).ShouldBe(1);          // the real slot is untouched
         gate.ActiveCount("no-such-tenant").ShouldBe(0); // never seen
     }
+
+    [Fact]
+    public async Task Priming_is_a_no_op_for_the_configured_env_directory()
+    {
+        // The env overrides are already in memory, so priming resolves nothing; admission still reads the configured cap.
+        var gate = Gate(globalCap: 1, (_tenantA, 2));
+
+        await gate.PrimeAsync(_tenantA, CancellationToken.None);
+
+        gate.TryAdmit(_tenantA, Guid.NewGuid()).ShouldBeTrue();
+        gate.TryAdmit(_tenantA, Guid.NewGuid()).ShouldBeTrue();
+        gate.TryAdmit(_tenantA, Guid.NewGuid()).ShouldBeFalse(); // caps at the configured override of 2
+    }
 }

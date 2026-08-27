@@ -1057,3 +1057,88 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 
 `✔` = requires authentication ([§1](#1-authentication)). All `2xx` bodies are JSON except SSE (`text/event-stream`),
 the schema (`application/schema+json`), and `llms.txt` (`text/plain`).
+
+## 20. Management API — tenants & API keys — `/management`
+
+> **Interim, server-side surface.** These endpoints administer the DB-backed **tenant registry** — creating tenants and
+> issuing/revoking the API keys tenants authenticate with. They are consumed **server-side** (by the future portal), not
+> by tenant clients, and they authenticate with a **single management key**, not a tenant API key. This is a deliberate
+> stop-gap until portal operator auth matures; the surface is intentionally **not** part of the OpenAPI envelope ([§17](#17-served-docs--health))
+> or the [§19](#19-endpoint-quick-reference) table, which describe the tenant-facing API only.
+
+### 20.1 Enabling & authentication
+
+The management surface is **disabled by default**. It is enabled only when a management key is configured:
+
+```
+Management__ApiKey = <a long, high-entropy secret>
+```
+
+- **Disabled ⇒ 404.** With no key configured, the `/management/*` routes are never mapped — every request is a plain
+  `404`, indistinguishable from any other unmatched path. There is no half-open state.
+- **Enabled.** Present the key as `Authorization: Bearer <management-key>`. It is compared in **constant time** (both
+  sides hashed to a fixed-length digest first, so the compare leaks neither length nor how much matched). A missing or
+  wrong key is `401` with no body — it never reveals whether a tenant or route exists.
+
+The management key is an **operator credential** with full authority over the registry (it can mint a key for any
+tenant). Treat it like a root secret: inject it from your secret store, rotate it out of band, never place it in a
+tenant-reachable config. It is compared, never logged.
+
+### 20.2 The tenant registry & key model
+
+- A **tenant** is `{ id, displayName, actor, status (active|suspended), tier, slotAllowance }`. The `id` is a lowercase
+  slug (letters, digits, hyphens; no `:`), and becomes the Marten tenant partition and billing subject — the same
+  identity a configured `Crawldad:Tenants` tenant has. `actor` defaults to `id`; `slotAllowance` (nullable) is the
+  per-tenant concurrent-run override that flows into the admission cap ([§4](#4-the-three-run-shapes-sync-async-queued)),
+  exactly as a configured tenant's override does — a registry tenant with `slotAllowance: 5` is capped at 5 concurrent
+  runs, and a null defers to the global default. The cap is resolved from the registry on **every** admission (the
+  immediate start **and** the background queue-promotion paths), so it holds for long-running and post-restart runs, not
+  only while a recent auth is cached. Note the concurrent-run cap is the **only** per-tenant plan knob the registry carries
+  today: the queue-**depth** override (the at-cap wait room) has no registry field yet, so a registry tenant uses the
+  global default depth; the per-tenant depth override remains a `Crawldad:Tenants` (env) knob for now.
+- **API keys are `ck_<env>_<random>`** — 256 bits of CSPRNG entropy. The **raw key is returned exactly once**, at issue
+  time, and is **never stored**: only its SHA-256 (plus a short, non-secret display `prefix`) is persisted. A tenant may
+  hold many keys (rotation); each carries `createdAt`, best-effort `lastUsedAt`, and `revokedAt`.
+- **Resolution & fallback.** A presented key is resolved against the registry first (behind a short-TTL, revocation-safe
+  cache) and, when it matches no registry key, against the env-configured `Crawldad:Tenants` — so existing staging/beta
+  wiring keeps working unchanged. **Revoking a key** or **suspending a tenant** takes effect immediately on the serving
+  instance (the cache is invalidated in-process) and within the cache TTL elsewhere. A **suspended** tenant's keys are
+  rejected exactly like an unknown key (`401`, no existence oracle).
+
+### 20.3 Endpoints
+
+| Method + route | Body | Success | Errors |
+|---|---|---|---|
+| `POST /management/tenants` | `{ id, displayName, actor?, tier?, slotAllowance? }` | `201` tenant | `400` invalid field, `409 tenant_exists` |
+| `GET /management/tenants/{id}` | — | `200` tenant | `404 tenant_not_found` |
+| `POST /management/tenants/{id}/suspend` | — | `200` tenant (`status: "suspended"`) | `404 tenant_not_found` |
+| `POST /management/tenants/{id}/reactivate` | — | `200` tenant (`status: "active"`) | `404 tenant_not_found` |
+| `POST /management/tenants/{id}/keys` | — | `201 { keyId, prefix, apiKey, createdAt }` | `404 tenant_not_found` |
+| `GET /management/tenants/{id}/keys` | — | `200 { keys: [{ keyId, prefix, createdAt, lastUsedAt, revokedAt, active }] }` | `404 tenant_not_found` |
+| `DELETE /management/tenants/{id}/keys/{keyId}` | — | `204` | `404 key_not_found` |
+
+All requests require the management bearer key ([§20.1](#201-enabling--authentication)); absent/wrong ⇒ `401`. The
+issue-key `201` body is the **only** time the raw `apiKey` is returned — store it immediately. The list endpoint returns
+**prefixes only**, never a raw key or its hash. Revoke is **idempotent**: a second revoke of the same key, a key that
+belongs to another tenant, or an unknown key id is `404 key_not_found`.
+
+### 20.4 Issue → use → rotate
+
+```bash
+# Create a tenant (management key)
+curl -sX POST https://api.example.com/management/tenants \
+  -H "Authorization: Bearer $MANAGEMENT_KEY" -H 'Content-Type: application/json' \
+  -d '{"id":"acme","displayName":"Acme Corp","tier":"pro","slotAllowance":12}'
+
+# Issue a key — the raw key is in this response and nowhere else
+curl -sX POST https://api.example.com/management/tenants/acme/keys \
+  -H "Authorization: Bearer $MANAGEMENT_KEY"
+# → 201 { "keyId":"…", "prefix":"ck_prod_A1b2C3", "apiKey":"ck_prod_A1b2C3…<secret>", "createdAt":"…" }
+
+# The tenant now authenticates the normal API with that key
+curl -s https://api.example.com/payloads -H "Authorization: Bearer ck_prod_A1b2C3…<secret>"
+
+# Rotate: issue a new key, cut over, then revoke the old one (takes effect immediately)
+curl -sX DELETE https://api.example.com/management/tenants/acme/keys/<oldKeyId> \
+  -H "Authorization: Bearer $MANAGEMENT_KEY"   # → 204
+```
