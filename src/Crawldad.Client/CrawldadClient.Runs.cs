@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -48,6 +49,48 @@ public sealed partial class CrawldadClient
     /// <exception cref="CrawldadRunRejectedException">The payload/revision is unknown or archived (<c>400</c>), or the queue is full (<c>429</c>).</exception>
     public Task<StartRunResult> CreatePinnedRunAsync(Guid payloadId, int? revision = null, JsonElement? inputs = null, bool async = false, CancellationToken ct = default) =>
         CreateRunAsync(new StartRunRequest(default, inputs ?? default, payloadId, revision, async), ct);
+
+    /// <summary>Lists the tenant's runs (<c>GET /runs</c>), newest first (by <c>startedAt</c>, run id as the stable
+    /// tiebreaker), filtered and offset-paginated. Reads the lightweight <see cref="RunListItem"/> listing rows — the full
+    /// result, timeline, and drift stay on the per-run surfaces. All filters are optional and AND-combined; the paging
+    /// defaults and clamps are applied server-side (<paramref name="page"/> floors at 1, <paramref name="size"/> defaults
+    /// to 25 and clamps to 1..100), so a null or out-of-range value simply takes the default.</summary>
+    /// <param name="status">Filter to one run disposition, or null for every status.</param>
+    /// <param name="payloadId">Filter to runs pinned to a managed payload, or null for every payload.</param>
+    /// <param name="from">Inclusive lower bound on <c>startedAt</c> (ISO-8601), or null for unbounded.</param>
+    /// <param name="to">Inclusive upper bound on <c>startedAt</c> (ISO-8601), or null for unbounded.</param>
+    /// <param name="page">The 1-based page number, or null for the first page.</param>
+    /// <param name="size">The page size (1..100), or null for the default (25).</param>
+    /// <param name="ct">Cancels the request.</param>
+    /// <returns>The filtered, paginated page of run summaries with its <c>total</c> and <c>hasMore</c>.</returns>
+    public Task<RunListResponse> ListRunsAsync(
+        RunStatus? status = null,
+        Guid? payloadId = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        int? page = null,
+        int? size = null,
+        CancellationToken ct = default)
+    {
+        var parameters = new List<string>(6);
+        Append("status", status?.ToString());
+        Append("payloadId", payloadId?.ToString());
+        Append("from", from?.ToString("O", CultureInfo.InvariantCulture));
+        Append("to", to?.ToString("O", CultureInfo.InvariantCulture));
+        Append("page", page?.ToString(CultureInfo.InvariantCulture));
+        Append("size", size?.ToString(CultureInfo.InvariantCulture));
+
+        var path = parameters.Count == 0 ? "runs" : $"runs?{string.Join('&', parameters)}";
+        return GetAsync<RunListResponse>(path, ct);
+
+        void Append(string key, string? value)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                parameters.Add($"{key}={Uri.EscapeDataString(value)}");
+            }
+        }
+    }
 
     /// <summary>Polls a run's state (<c>GET /runs/{id}</c>): <c>queued</c> (with a live 1-based <c>position</c>),
     /// <c>running</c>, then the terminal disposition with the scrubbed result/failure/partial and stats. A purely
@@ -135,7 +178,10 @@ public sealed partial class CrawldadClient
         ArgumentException.ThrowIfNullOrEmpty(reference);
         var bare = reference.StartsWith(_screenshotsPrefix, StringComparison.Ordinal) ? reference[_screenshotsPrefix.Length..] : reference;
 
-        using var request = BuildRequest(HttpMethod.Get, $"runs/{runId}/screenshots/{bare}");
+        // Escape the ref into its single path segment (as every other path-param method does): a stray '/' encodes to
+        // %2F rather than adding a segment, so a traversal-shaped ref can't collapse the path — the no-traversal
+        // guarantee is local here, not left to server-side URL normalization.
+        using var request = BuildRequest(HttpMethod.Get, $"runs/{runId}/screenshots/{Uri.EscapeDataString(bare)}");
         using var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {

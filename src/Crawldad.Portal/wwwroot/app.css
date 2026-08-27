@@ -8,3 +8,147 @@ body {
     max-width: 30rem;
     margin-inline: auto;
 }
+
+/* ===== Runs list + run detail (issue #119) ===== */
+.mono,
+.run-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.run-id {
+    font-size: 0.8125rem;
+    letter-spacing: -0.01em;
+}
+
+.run-failure {
+    font-size: 0.72rem;
+}
+
+/* A pinned-revision / inline / step-kind pill. */
+.rev-pill {
+    font-size: 0.6875rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    background: var(--tblr-bg-surface-secondary);
+    color: var(--tblr-secondary);
+    font-family: ui-monospace, monospace;
+}
+
+/* The steps · requests · misses triad in a list row. */
+.metric-triad {
+    display: inline-flex;
+    gap: 0.7rem;
+    font-size: 0.8125rem;
+    white-space: nowrap;
+}
+
+.metric-triad .m {
+    color: var(--tblr-secondary);
+}
+
+.metric-triad .m.warn {
+    color: #c15515;
+    font-weight: 600;
+}
+
+.region {
+    color: var(--tblr-secondary);
+    font-size: 0.8125rem;
+}
+
+/* Run-detail timeline steps (tl-* avoids Tabler's own .steps/.step stepper). */
+.tl {
+    display: block;
+}
+
+.tl-step {
+    display: grid;
+    grid-template-columns: 1.9rem 1fr auto;
+    gap: 0.85rem;
+    padding: 0.6rem 0.35rem;
+    align-items: start;
+}
+
+.tl-step + .tl-step {
+    border-top: 1px solid var(--tblr-border-color);
+}
+
+.tl-badge {
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--tblr-bg-surface-secondary);
+    color: var(--tblr-secondary);
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+}
+
+.tl-step.ok .tl-badge {
+    background: rgba(47, 179, 68, 0.13);
+    color: #2fb344;
+}
+
+.tl-step.fail {
+    background: rgba(214, 57, 57, 0.05);
+    border-radius: 10px;
+    box-shadow: inset 0 0 0 1px rgba(214, 57, 57, 0.2);
+}
+
+.tl-step.fail .tl-badge {
+    background: rgba(214, 57, 57, 0.16);
+    color: #d63939;
+}
+
+.tl-kind {
+    font-weight: 600;
+}
+
+.tl-detail,
+.tl-dur {
+    color: var(--tblr-secondary);
+    font-size: 0.8125rem;
+}
+
+.tl-dur {
+    font-family: ui-monospace, monospace;
+    white-space: nowrap;
+}
+
+.run-failure-banner {
+    border-left: 3px solid #d63939;
+}
+
+.run-failure-code {
+    color: #d63939;
+}
+
+/* Definition-list grid used by the detail-side cards. */
+.kv {
+    display: grid;
+    grid-template-columns: 8rem 1fr;
+    gap: 0.35rem 0.75rem;
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+.kv dt {
+    color: var(--tblr-secondary);
+    font-weight: 500;
+}
+
+.kv dd {
+    margin: 0;
+}
+
+.thumb {
+    border: 1px solid var(--tblr-border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.page-pretitle {
+    font-size: 0.8125rem;
+}

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -227,6 +228,22 @@ public class CrawldadClientRunsTests
     }
 
     [Fact]
+    public async Task Screenshot_fetch_percent_encodes_a_traversal_shaped_ref_into_one_segment()
+    {
+        var runId = Guid.NewGuid();
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1]) });
+        var client = ClientTestHarness.ClientFor(handler);
+
+        await client.GetRunScreenshotAsync(runId, "../../evil.png");
+
+        // The '/' chars are percent-encoded, so the ref stays a single segment under /screenshots/ — the request path
+        // never collapses upward to a foreign resource (the no-traversal guarantee is local, not left to the server).
+        handler.Last.Path.ShouldBe($"/runs/{runId}/screenshots/..%2F..%2Fevil.png");
+        handler.Last.Path.ShouldStartWith($"/runs/{runId}/screenshots/");
+        handler.Last.Path.ShouldNotContain("screenshots/../"); // no un-encoded traversal segment survived
+    }
+
+    [Fact]
     public async Task Queue_stats_reads_the_snapshot()
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(3, 10, 1200)));
@@ -237,5 +254,53 @@ public class CrawldadClientRunsTests
         stats.Queued.ShouldBe(3);
         stats.P95QueueWaitMs.ShouldBe(1200);
         handler.Last.Path.ShouldBe("/runs/queue-stats");
+    }
+
+    [Fact]
+    public async Task List_runs_with_no_filters_hits_the_bare_path_and_reads_the_page()
+    {
+        var runId = Guid.NewGuid();
+        var row = new RunListItem(runId, RunStatus.Succeeded, DateTimeOffset.UnixEpoch, 1500, null, "demo", null, null, Inline: true, null, null);
+        var handler = new StubHttpMessageHandler(_ =>
+            ClientTestHarness.Json(new RunListResponse([row], 1, 25, 1, HasMore: false)));
+        var client = ClientTestHarness.ClientFor(handler);
+
+        var page = await client.ListRunsAsync();
+
+        page.Total.ShouldBe(1);
+        page.HasMore.ShouldBeFalse();
+        page.Runs.ShouldHaveSingleItem().RunId.ShouldBe(runId);
+        handler.Last.Method.ShouldBe(HttpMethod.Get);
+        handler.Last.Path.ShouldBe("/runs");
+        handler.Last.Query.ShouldBeEmpty(); // no filter/paging params => the bare path, no query string
+        handler.Last.Authorization.ShouldBe($"Bearer {ClientTestHarness.ApiKey}");
+    }
+
+    [Fact]
+    public async Task List_runs_encodes_every_filter_and_paging_parameter()
+    {
+        var payloadId = Guid.NewGuid();
+        var from = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
+        var to = new DateTimeOffset(2026, 8, 27, 23, 59, 59, TimeSpan.Zero);
+        var handler = new StubHttpMessageHandler(_ =>
+            ClientTestHarness.Json(new RunListResponse([], 2, 50, 400, HasMore: true)));
+        var client = ClientTestHarness.ClientFor(handler);
+
+        var page = await client.ListRunsAsync(RunStatus.Failed, payloadId, from, to, page: 2, size: 50);
+
+        page.HasMore.ShouldBeTrue();
+        page.Page.ShouldBe(2);
+        page.Size.ShouldBe(50);
+        handler.Last.Path.ShouldBe("/runs");
+
+        var query = handler.Last.Query;
+        query.ShouldContain("status=Failed");
+        query.ShouldContain($"payloadId={payloadId}");
+        query.ShouldContain("page=2");
+        query.ShouldContain("size=50");
+        // The ISO-8601 bounds are URL-encoded — the '+' offset and ':' separators escape rather than ride raw.
+        query.ShouldContain($"from={Uri.EscapeDataString(from.ToString("O", CultureInfo.InvariantCulture))}");
+        query.ShouldContain($"to={Uri.EscapeDataString(to.ToString("O", CultureInfo.InvariantCulture))}");
+        query.ShouldNotContain("+00:00");
     }
 }

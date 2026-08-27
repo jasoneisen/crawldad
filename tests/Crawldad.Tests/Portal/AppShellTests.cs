@@ -10,11 +10,12 @@ public class AppShellTests(PortalFixture fixture)
 {
     private static string NewEmail() => $"shell-{Guid.NewGuid():N}@example.com";
 
-    // Route → a plain-text marker unique to that page's empty state / overview.
+    // Route → a plain-text marker unique to that page's empty state / overview. The test user is authenticated but has
+    // no tenant link (no Portal:DevTenantLink in the test host), so the data-backed runs page shows its not-linked state.
     private static readonly (string Route, string Marker)[] _sections =
     [
         ("/app", "Welcome to Crawldad"),
-        ("/app/runs", "No runs yet"),
+        ("/app/runs", "No workspace linked"),
         ("/app/live", "Nothing running right now"),
         ("/app/payloads", "No workspace linked"),
         ("/app/webhooks", "No workspace linked"),
