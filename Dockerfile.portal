@@ -1,8 +1,9 @@
 # Crawldad.Portal — multi-stage container image.
 #
 # The customer-facing portal: a .NET 10 Blazor Web App (Interactive Server render mode, no WebAssembly) with its own
-# Marten document store on the SAME Postgres as the API, isolated in the code-configured "portal" schema. It is
-# self-contained — it does NOT reference Crawldad.Api/Contracts, so its restore graph is just the Marten package. This
+# Marten document store on the SAME Postgres as the API, isolated in the code-configured "portal" schema. Its build
+# graph is Portal → Crawldad.Client → Crawldad.Contracts (the tenant-linked dashboard consumes the API exclusively
+# through the typed SDK); it still does NOT reference Crawldad.Api. This
 # image publishes a Release build on the .NET 10 SDK pinned by global.json and runs it on the aspnet runtime base as a
 # non-root user. It is built server-side by `az acr build` in the deploy workflow (no local docker needed there);
 # `docker build -f Dockerfile.portal .` from the repo root works identically for local validation.
@@ -27,17 +28,21 @@ FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_SDK_TAG} AS build
 WORKDIR /src
 
 # Restore layer: copy ONLY the files that affect restore first, so the (slow) NuGet restore layer is cached and
-# reused across source-only edits. Central package versions + shared build props govern every project. The portal has
-# no ProjectReference, so its own csproj is the only project file the restore graph needs.
+# reused across source-only edits. Central package versions + shared build props govern every project. The portal's
+# restore graph is Portal → Client → Contracts, so all three csproj files must be present.
 COPY global.json Directory.Build.props Directory.Packages.props ./
 COPY src/Crawldad.Portal/Crawldad.Portal.csproj src/Crawldad.Portal/
+COPY src/Crawldad.Client/Crawldad.Client.csproj src/Crawldad.Client/
+COPY src/Crawldad.Contracts/Crawldad.Contracts.csproj src/Crawldad.Contracts/
 RUN dotnet restore src/Crawldad.Portal/Crawldad.Portal.csproj
 
-# Source layer: only the portal's own source (no sibling projects — the portal references none). The repo .editorconfig
-# carries the analyzer severity config (e.g. CA1062/MA0048 = none); it MUST be present at build time or those rules fire
-# as errors under warnings-as-errors. Placed at the WORKDIR root so it governs all of src/.
+# Source layer: the portal plus its referenced projects (Client, Contracts) — nothing from Crawldad.Api. The repo
+# .editorconfig carries the analyzer severity config (e.g. CA1062/MA0048 = none); it MUST be present at build time or
+# those rules fire as errors under warnings-as-errors. Placed at the WORKDIR root so it governs all of src/.
 COPY .editorconfig ./
 COPY src/Crawldad.Portal/ src/Crawldad.Portal/
+COPY src/Crawldad.Client/ src/Crawldad.Client/
+COPY src/Crawldad.Contracts/ src/Crawldad.Contracts/
 
 # Publish Release. TreatWarningsAsErrors + analyzers are inherited from Directory.Build.props (config-agnostic), so any
 # warning fails this build exactly as CI does. UseAppHost=false: we launch via `dotnet Crawldad.Portal.dll`, so no
