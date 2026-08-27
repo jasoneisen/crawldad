@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Crawldad.Web.Infrastructure.Browser;
+using Crawldad.Api.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Unit;
 

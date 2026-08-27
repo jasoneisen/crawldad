@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Alba;
+using Crawldad.Api.Features.Browsers;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Features.Browsers;
 using Marten;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;

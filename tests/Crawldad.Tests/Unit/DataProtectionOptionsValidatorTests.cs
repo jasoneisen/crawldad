@@ -1,4 +1,4 @@
-using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Api.Infrastructure.Security;
 using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;

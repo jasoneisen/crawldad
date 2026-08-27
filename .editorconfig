@@ -72,7 +72,7 @@ dotnet_diagnostic.CA1812.severity = none
 # and discoverability, so don't require one-type-per-file-named-after-the-type.
 dotnet_diagnostic.MA0048.severity = none
 
-[src/Crawldad.Web/Infrastructure/Browser/**.cs]
+[src/Crawldad.Api/Infrastructure/Browser/**.cs]
 # The browser seam mirrors Playwright for .NET 1:1 so the Phase 4 adapters map straight through: URLs,
 # selectors, and wait-states are plain strings (a Playwright selector like "xpath=…" or a comma-union
 # "#a, #b" is not a System.Uri). Turn off the URI-type design rules for this seam only.
@@ -80,13 +80,13 @@ dotnet_diagnostic.CA1054.severity = none
 dotnet_diagnostic.CA1055.severity = none
 dotnet_diagnostic.CA1056.severity = none
 
-[src/Crawldad.Web/Features/Runs/RunTraceEvents.cs]
+[src/Crawldad.Api/Features/Runs/RunTraceEvents.cs]
 # The Navigated trace event carries the page's (scrubbed) URL as a plain string — the same Playwright-style string URL
 # the browser seam exempts: a trace value, not a System.Uri to construct/validate. Off for this file only.
 dotnet_diagnostic.CA1054.severity = none
 dotnet_diagnostic.CA1056.severity = none
 
-[src/Crawldad.Web/Features/Webhooks/**.cs]
+[src/Crawldad.Api/Features/Webhooks/**.cs]
 # A webhook target is a caller-supplied delivery URL carried and validated as a plain string: WebhookUrlPolicy checks
 # scheme/host (SSRF) and surfaces a classified 400, so binding it as System.Uri would move malformed-URL handling into
 # a model-binding fault instead. Same string-URL treatment as the browser connect string. Off for this slice only.

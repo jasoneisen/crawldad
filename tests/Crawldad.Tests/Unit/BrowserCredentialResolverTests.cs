@@ -1,8 +1,8 @@
 using System.Collections.Generic;
+using Crawldad.Api.Features.Browsers;
+using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Contracts.Browsers;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Features.Browsers;
-using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Tests.Unit;
 

@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Api.Infrastructure.Security;
 using Microsoft.Extensions.Configuration;
 
 namespace Crawldad.Tests.Unit;

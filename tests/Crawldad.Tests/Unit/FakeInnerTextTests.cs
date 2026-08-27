@@ -1,5 +1,5 @@
 using AngleSharp.Html.Parser;
-using Crawldad.Web.Infrastructure.Browser.Fake;
+using Crawldad.Api.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Unit;
 

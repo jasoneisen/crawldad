@@ -1,4 +1,4 @@
-using Crawldad.Web.Features.Browsers;
+using Crawldad.Api.Features.Browsers;
 
 namespace Crawldad.Tests.Unit;
 

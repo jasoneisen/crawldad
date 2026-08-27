@@ -1,5 +1,5 @@
 using System.Threading;
-using Crawldad.Web.Infrastructure.Storage;
+using Crawldad.Api.Infrastructure.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 

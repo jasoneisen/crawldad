@@ -1,6 +1,6 @@
+using Crawldad.Api.Infrastructure.Storage;
+using Crawldad.Api.Infrastructure.Storage.FileSystem;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Storage;
-using Crawldad.Web.Infrastructure.Storage.FileSystem;
 using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;

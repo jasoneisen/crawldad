@@ -1,6 +1,6 @@
 using System.Collections.Generic;
+using Crawldad.Api.Features.Browsers;
 using Crawldad.Contracts.Browsers;
-using Crawldad.Web.Features.Browsers;
 
 namespace Crawldad.Tests.Unit;
 

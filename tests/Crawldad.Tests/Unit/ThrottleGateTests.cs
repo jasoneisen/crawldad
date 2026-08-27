@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Crawldad.Web.Infrastructure.Browser.Real;
+using Crawldad.Api.Infrastructure.Browser.Real;
 
 namespace Crawldad.Tests.Unit;
 

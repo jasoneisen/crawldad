@@ -1,6 +1,6 @@
 using System.Text.Json;
+using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Security;
 
 namespace Crawldad.Tests.Unit;
 
