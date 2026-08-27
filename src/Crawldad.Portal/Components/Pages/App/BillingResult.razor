@@ -1,0 +1,54 @@
+@page "/app/account/billing-result"
+@layout AppLayout
+@attribute [Authorize]
+
+<PageTitle>Billing · Crawldad</PageTitle>
+
+@*
+    The billing-result landing page (issue #119 P4). The checkout / portal actions redirect here after the (fake)
+    gateway "session" — static SSR, no API calls of its own. With the real gateway these redirects land on Stripe's
+    hosted pages instead; this page is where the development/test fake gateway's fake success/cancel URLs point, and
+    where a not-yet-available billing attempt lands so the user never sees a 500.
+*@
+<div class="page-header">
+    <h1 class="page-title">Billing</h1>
+</div>
+
+<div class="card mt-3">
+    <div class="card-body">
+        <div class="empty">
+            <p class="empty-title" data-testid="billing-result-title">@Title</p>
+            <p class="empty-subtitle text-secondary" data-testid="billing-result-body">@Body</p>
+            <div class="empty-action">
+                <a href="/app/account#billing" class="btn btn-primary" data-testid="billing-result-back">Back to account</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? Outcome { get; set; }
+
+    [SupplyParameterFromQuery]
+    public string? Tier { get; set; }
+
+    private string Title => Outcome switch
+    {
+        "checkout" => "Checkout started",
+        "portal" => "Billing portal",
+        "unavailable" => "Billing not yet available",
+        _ => "Billing",
+    };
+
+    private string Body => Outcome switch
+    {
+        "checkout" => $"You started an upgrade to the {DisplayTier} plan. In production this opens Stripe Checkout — your plan updates automatically once payment completes.",
+        "portal" => "This opens the Stripe billing portal, where you manage your payment method, invoices, and plan.",
+        "unavailable" => "Billing isn't available for this deployment yet, so nothing was changed.",
+        _ => "Nothing to show here — head back to your account.",
+    };
+
+    // The named tier when supplied, else a neutral placeholder (the fake gateway always supplies one; a hand-entered URL may not).
+    private string DisplayTier => string.IsNullOrWhiteSpace(Tier) ? "selected" : Tier;
+}

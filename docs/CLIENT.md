@@ -197,3 +197,31 @@ UsageResponse usage = await crawldad.GetUsageAsync();
 `GetTenantAsync` is the cheapest authenticated round-trip, so it doubles as a **key-validity probe**: a wrong or revoked
 key surfaces as `CrawldadUnauthorizedException` (`401`) rather than a valid response — which is exactly how the portal
 verifies a pasted key before storing it.
+
+## Billing
+
+Three tenant-scoped calls back the portal's billing card. The SDK only ever receives a **URL to follow** — it never holds
+a Stripe secret, and it cannot change a tenant's plan (that lands only via a Stripe subscription webhook the API receives
+out of band). See [docs/API.md §22](API.md) for the wire shapes and the scaffolding status (fake gateway in
+Development/tests; a fail-closed stub in Production until Stripe is wired).
+
+```csharp
+// GET /billing/config — is billing configured, the current tier, and the tier catalog to render.
+BillingConfigResponse config = await crawldad.GetBillingConfigAsync();
+if (!config.Configured)
+{
+    // Render a friendly "billing not yet available" state — do not call the session methods below.
+}
+
+// POST /billing/checkout-session — a redirect URL to open Stripe Checkout for a self-serve tier upgrade.
+BillingSessionResponse checkout = await crawldad.CreateCheckoutSessionAsync("team");
+// redirect the browser to checkout.Url
+
+// POST /billing/portal-session — a redirect URL to open the Stripe hosted Billing Portal.
+BillingSessionResponse portal = await crawldad.CreatePortalSessionAsync();
+// redirect the browser to portal.Url
+```
+
+`CreateCheckoutSessionAsync` throws `CrawldadValidationException` for a tier that is not purchasable (`400`), and any
+billing call throws `CrawldadApiException` when billing is not yet available for the deployment (`503`) — the portal
+catches either and shows the "not yet available" state rather than a 500.

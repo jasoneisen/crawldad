@@ -100,6 +100,28 @@ dotnet_diagnostic.CA1056.severity = none
 dotnet_diagnostic.CA1054.severity = none
 dotnet_diagnostic.CA1056.severity = none
 
+[src/Crawldad.Api/Features/Billing/**.cs]
+# A billing session / return URL is carried as a plain string: a provider-hosted redirect target, or — with the fake
+# gateway — a RELATIVE in-app result path (not a valid absolute System.Uri). Same string-URL treatment as the webhook
+# slice above; binding it as a Uri would break the relative fake case. Off for this slice only.
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+
+[src/Crawldad.Contracts/Billing/**.cs]
+# The billing session response carries the redirect target as a plain string (a provider-hosted URL, or a relative
+# in-app path with the fake gateway), matching the slice above — not a System.Uri property to construct. Off here only.
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1056.severity = none
+
+[src/Crawldad.Api/Features/Billing/BillingNotConfiguredException.cs]
+# BillingNotConfiguredException is a simple marker a billing endpoint catches to return a friendly 503; a single
+# message-carrying constructor is its whole purpose. The parameterless / message+inner constructors CA1032 & RCS1194
+# want would only add dead surface, so turn those two "standard exception constructor" rules off for this file only
+# (mirrors NotLinkedException.cs / CrawldadExceptions.cs).
+dotnet_diagnostic.CA1032.severity = none
+dotnet_diagnostic.RCS1194.severity = none
+
 [src/Crawldad.Client/CrawldadExceptions.cs]
 # Every Crawldad API exception carries the HTTP status code (and most a typed rejection/problem body), so the
 # parameterless / message-only / message+inner constructors CA1032 & RCS1194 want would only ever build

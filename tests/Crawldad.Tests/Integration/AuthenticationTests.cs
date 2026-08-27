@@ -26,6 +26,7 @@ public class AuthenticationTests(AppFixture fixture)
         "/schema/crawldad-1.schema.json",
         "/llms.txt",
         "/openapi.json",
+        "/billing/webhook", // the PUBLIC inbound Stripe webhook — authenticated by event signature, not a tenant key
     };
 
     [Fact]

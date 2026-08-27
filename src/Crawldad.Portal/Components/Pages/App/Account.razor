@@ -3,6 +3,7 @@
 @attribute [Authorize]
 @using System.Security.Cryptography
 @using Crawldad.Client
+@using Crawldad.Contracts.Billing
 @using Crawldad.Contracts.Tenancy
 @using Crawldad.Portal.Tenancy
 @inject IPortalTenantContext Tenants
@@ -232,12 +233,75 @@
 <div class="card mt-3" id="billing">
     <div class="card-header"><h3 class="card-title">Billing</h3></div>
     <div class="card-body">
-        <div class="empty">
-            <p class="empty-title">Billing managed via Stripe — coming soon</p>
-            <p class="empty-subtitle text-secondary">
-                Invoices, payment method, and plan changes will open in Stripe. Nothing to do here yet.
-            </p>
-        </div>
+        @if (!_linked || _relinkNeeded)
+        {
+            <div class="empty" data-testid="billing-unlinked">
+                <p class="empty-title">Link your workspace to manage billing</p>
+                <p class="empty-subtitle text-secondary">
+                    Once your workspace is linked, upgrade your plan or open the billing portal from here.
+                </p>
+            </div>
+        }
+        else if (_billingConfig is not { Configured: true } billing)
+        {
+            <div class="empty" data-testid="billing-unavailable">
+                <p class="empty-title">Billing not yet available</p>
+                <p class="empty-subtitle text-secondary">
+                    Plan changes, invoices, and payment method will open in Stripe. Nothing to do here yet.
+                </p>
+            </div>
+        }
+        else
+        {
+            <div data-testid="billing-panel">
+                <p class="text-secondary">
+                    Your plan is <span class="fw-semibold" data-testid="billing-current">@CurrentPlanLabel(billing)</span>.
+                    Upgrading opens Stripe Checkout; "Manage billing" opens the Stripe billing portal. Your plan changes
+                    only after checkout completes.
+                </p>
+                <div class="row g-3">
+                    @foreach (var tier in billing.Tiers)
+                    {
+                        <div class="col-sm-6 col-lg-3">
+                            <div class="datacard h-100 @(tier.IsCurrent ? "border-primary" : "")">
+                                <div class="fw-semibold">@tier.DisplayName</div>
+                                <div class="kpi-inline">@tier.PriceLabel</div>
+                                @if (tier.Slots is int slots)
+                                {
+                                    <div class="text-secondary small">@slots concurrent slots</div>
+                                }
+                                <div class="mt-2">
+                                    @if (tier.IsCurrent)
+                                    {
+                                        <span class="badge bg-primary" data-testid="billing-tier-current">Current plan</span>
+                                    }
+                                    else if (tier.SelfServe)
+                                    {
+                                        <form method="post" action="/app/billing/checkout">
+                                            <AntiforgeryToken />
+                                            <input type="hidden" name="tier" value="@tier.Tier" />
+                                            <button type="submit" class="btn btn-outline-primary btn-sm" data-testid="billing-upgrade-@tier.Tier">
+                                                Choose @tier.DisplayName
+                                            </button>
+                                        </form>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-secondary small">Contact sales</span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="mt-3">
+                    <form method="post" action="/app/billing/portal">
+                        <AntiforgeryToken />
+                        <button type="submit" class="btn btn-primary" data-testid="billing-manage">Manage billing</button>
+                    </form>
+                </div>
+            </div>
+        }
     </div>
 </div>
 
@@ -274,6 +338,7 @@
     private TenantProfileResponse? _profile;
     private UsageResponse? _usage;
     private bool _usageError;
+    private BillingConfigResponse? _billingConfig;
     private string? _error;
 
     private string? Email => HttpContext.User.FindFirstValue(ClaimTypes.Email);
@@ -281,6 +346,10 @@
     // The tier label, or a friendly default when the tenant has no configured tier. Called only where the profile is
     // known non-null (the header guard + the loaded-usage panel), so it takes the profile rather than reading a nullable.
     private static string PlanLabel(TenantProfileResponse profile) => profile.Tier ?? "Default";
+
+    // The display name of the tenant's current tier from the billing catalog, or "Free" when none is marked current.
+    private static string CurrentPlanLabel(BillingConfigResponse billing) =>
+        billing.Tiers.FirstOrDefault(tier => tier.IsCurrent)?.DisplayName ?? "Free";
 
     protected override async Task OnInitializedAsync()
     {
@@ -346,6 +415,24 @@
         catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
         {
             _usageError = true;
+        }
+
+        // Billing config is loaded independently of usage: a failure here degrades the billing card to a friendly
+        // "not yet available" state without touching the usage panel (and a usage failure never hides the billing card).
+        _billingConfig = await LoadBillingConfigAsync(tenant);
+    }
+
+    // The tenant's billing config, or null when the provider call fails — which the billing card renders as the friendly
+    // "not yet available" state rather than a crash.
+    private async Task<BillingConfigResponse?> LoadBillingConfigAsync(PortalTenant tenant)
+    {
+        try
+        {
+            return await tenant.Client.GetBillingConfigAsync(HttpContext.RequestAborted);
+        }
+        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        {
+            return null;
         }
     }
 

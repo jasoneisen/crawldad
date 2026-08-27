@@ -1271,3 +1271,67 @@ These document the **existing** truth — no response shapes changed:
 - **A running run's poll body is `{ runId, status }`.** Partial `stats` are **not** streamed mid-run — `stats` (and
   `result`/`failure`) appear only at a terminal status. The runs list mirrors this: a running/queued `RunListItem` omits
   `stats`. The live SSE trace ([§6](#6-streaming-trace-sse--get-runsidevents)) is the mid-run signal.
+
+## 22. Billing — `/billing` (Stripe, scaffolding)
+
+Billing is sold on the slot-priced tiers in [`BUSINESS_MODEL.md`](BUSINESS_MODEL.md) — **Free** (2 slots), **Team**
+($99/mo · 10 slots), **Scale** ($499/mo · 50 slots), **Enterprise** (custom). Purchase runs through **Stripe Checkout**
+and plan management through the **Stripe hosted Billing Portal**; the portal/UI never holds a Stripe secret — it only
+follows a URL the API mints, and a tenant can never change its own plan through the API (see below).
+
+> **Scaffolding status.** The Stripe SDK is **not wired yet**. In Development/tests an in-process **fake gateway** drives
+> these endpoints end to end; in Production a **fail-closed stub** answers — session calls return `503 billing_not_configured`
+> (a friendly "not yet available", never a 500) and webhooks are rejected — until `Billing:Stripe:SecretKey` and
+> `Billing:Stripe:WebhookSecret` are set and the SDK integration lands.
+
+### `GET /billing/config` — billing state & tier catalog
+
+Tenant-authed. Whether billing is configured, the tenant's current tier, and the tier catalog to render a plan card —
+so the portal never duplicates the pricing numbers. `200 BillingConfigResponse`:
+
+```jsonc
+{
+  "configured": true,                 // is the provider wired (false → portal shows "not yet available")
+  "currentTier": "team",              // the tenant's current tier moniker (omitted when none)
+  "tiers": [
+    { "tier": "free",  "displayName": "Free",  "priceLabel": "$0",     "slots": 2,  "selfServe": false, "isCurrent": false },
+    { "tier": "team",  "displayName": "Team",  "priceLabel": "$99/mo", "slots": 10, "selfServe": true,  "isCurrent": true  },
+    { "tier": "scale", "displayName": "Scale", "priceLabel": "$499/mo","slots": 50, "selfServe": true,  "isCurrent": false },
+    { "tier": "enterprise", "displayName": "Enterprise", "priceLabel": "Custom",    "selfServe": false, "isCurrent": false }
+  ]
+}
+```
+
+`slots` is omitted for a custom/committed tier; `selfServe: false` (Free, Enterprise) renders "contact sales" rather than
+a checkout button. The catalog defaults come from `BUSINESS_MODEL.md`; a deployment overrides `Billing:Tiers` to set live
+Stripe price ids.
+
+### `POST /billing/checkout-session` — open Checkout for a tier
+
+Tenant-authed. Body `{ "tier": "team" }` (a self-serve tier from the catalog). Returns `200 { "url": "…" }` — the hosted
+Checkout URL to redirect the browser to. It **only returns a URL**: it does **not** change the tenant's plan, so a tenant
+cannot raise its own slot allowance by calling this. An unknown or non-self-serve tier is `400 unknown_tier`; an
+unconfigured provider is `503 billing_not_configured`.
+
+### `POST /billing/portal-session` — open the Billing Portal
+
+Tenant-authed, no body. Returns `200 { "url": "…" }` — the hosted Billing-Portal URL (manage payment method, invoices,
+plan). `503 billing_not_configured` when unconfigured.
+
+### `POST /billing/webhook` — inbound subscription events (public, signature-verified)
+
+The **only** path that changes a tenant's plan. **Anonymous** (Stripe is not a tenant), authenticated instead by the
+event **signature** in the `Stripe-Signature` header — verified **before** the body is parsed. On a
+`customer.subscription.created` / `.updated` / `.deleted`, the subscription's tenant id (from provider metadata — this
+tenant is **authoritative**, never a caller claim) and price id map to a tier, and the tenant's `Tier` + `SlotAllowance`
+are updated via the registry (§20). Outcomes:
+
+- **bad/absent signature or unparseable body →** `400 invalid_webhook`, nothing changed.
+- **replayed event id →** `200`, no-op (processed event ids are de-duplicated; anti-replay).
+- **unknown tenant, or a tenant only in the env config (not the registry) →** `200`, logged and dropped (env-fallback
+  tenants are read-only for billing).
+- **price mapping to no known tier →** `200`, logged and dropped.
+- **applied →** `200`; the new slot allowance takes effect immediately (the admission gate's per-tenant override is
+  invalidated in-process).
+
+No secret is ever logged, and neither the raw body nor the signature is logged.

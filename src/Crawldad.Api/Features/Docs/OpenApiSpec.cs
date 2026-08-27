@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Contracts;
+using Crawldad.Contracts.Billing;
 using Crawldad.Contracts.Browsers;
 using Crawldad.Contracts.Drift;
 using Crawldad.Contracts.Fixtures;
@@ -35,6 +36,7 @@ public static class OpenApiSpec
     private const string _fixtures = "Fixtures";
     private const string _webhooks = "Webhooks";
     private const string _tenancy = "Tenancy";
+    private const string _billing = "Billing";
     private const string _docs = "Docs";
 
     private const string _infoDescription =
@@ -101,6 +103,9 @@ public static class OpenApiSpec
         new(nameof(WebhookEventEnvelope), typeof(WebhookEventEnvelope)),
         new(nameof(TenantProfileResponse), typeof(TenantProfileResponse)),
         new(nameof(UsageResponse), typeof(UsageResponse)),
+        new(nameof(BillingConfigResponse), typeof(BillingConfigResponse)),
+        new(nameof(CheckoutSessionRequest), typeof(CheckoutSessionRequest)),
+        new(nameof(BillingSessionResponse), typeof(BillingSessionResponse)),
     ];
 
     // The single source of truth for the envelope. The drift test asserts this set of (method, path) equals the live route
@@ -267,6 +272,32 @@ public static class OpenApiSpec
         new("get", "/usage", "getUsage", "The tenant's usage against its guardrails.", _tenancy, Anonymous: false, [], null,
             [new("200", "Slot occupancy now, queue depth + p95 wait, runs started this month, and events-per-run over a recent window vs the guardrail.", Component: nameof(UsageResponse))],
             Description: "The tenant's live capacity and consumption against its guardrails, computed on read from existing state: slot occupancy now (from the admission gate) against the slot allowance; admission-queue depth + p95 queue wait (the same reading as GET /runs/queue-stats); runs started this calendar month (UTC); and the avg/max events-per-run over a bounded recent window against the configured max-events-per-run guardrail. Pragmatic and approximate by design — a point-in-time occupancy count and a recent-window sample, not a billing ledger."),
+
+        // Billing (Stripe scaffolding, issue #119): tenant-authed config + checkout/portal session URLs, and the PUBLIC
+        // signature-verified subscription webhook — the only path that changes a tenant's plan.
+        new("get", "/billing/config", "getBillingConfig", "Billing state and the tier catalog.", _billing, Anonymous: false, [], null,
+            [new("200", "Whether billing is configured, the tenant's current tier, and the tier catalog (moniker, display name, price label, included slots, self-serve flag, and whether it is the current tier).", Component: nameof(BillingConfigResponse))],
+            Description: "Read-only billing state for the authenticated tenant: whether the payment provider is configured (false → the portal shows a friendly \"not yet available\" state and does not call the session endpoints), the tenant's current tier moniker, and the tier catalog so the portal renders the plan card without duplicating the pricing numbers. It never changes the tenant's plan. Catalog defaults come from BUSINESS_MODEL.md (Free 2 · Team $99/10 · Scale $499/50 · Enterprise custom)."),
+        new("post", "/billing/checkout-session", "createBillingCheckoutSession", "Open Stripe Checkout for a tier upgrade.", _billing, Anonymous: false, [],
+            new(nameof(CheckoutSessionRequest), "The target self-serve tier moniker (from the catalog)."),
+            [
+                new("200", "A hosted-Checkout redirect URL. The tenant's plan is NOT changed here — only a URL is minted; the plan changes only via a later verified subscription webhook.", Component: nameof(BillingSessionResponse)),
+                new("400", "The tier is unknown or not a purchasable (self-serve) plan (unknown_tier)."),
+                new("503", "Billing is not yet available for this deployment (billing_not_configured) — a friendly, never-500 state."),
+            ],
+            Description: "Mints a Stripe Checkout redirect URL for the tenant to subscribe to a self-serve tier. Returns ONLY a URL — it never changes the tenant's plan, so a tenant cannot raise its own slot allowance by calling this; the tier change lands only when Stripe later posts a verified subscription webhook to POST /billing/webhook. Free/Enterprise (non-self-serve) and unknown tiers are a 400; an unconfigured provider is a friendly 503."),
+        new("post", "/billing/portal-session", "createBillingPortalSession", "Open the Stripe billing portal.", _billing, Anonymous: false, [], null,
+            [
+                new("200", "A hosted Billing-Portal redirect URL (manage payment method, invoices, plan).", Component: nameof(BillingSessionResponse)),
+                new("503", "Billing is not yet available for this deployment (billing_not_configured)."),
+            ],
+            Description: "Mints a Stripe hosted Billing-Portal redirect URL for the tenant to manage its payment method, invoices, and plan. Returns only a URL; the portal never holds a provider secret. An unconfigured provider is a friendly 503."),
+        new("post", "/billing/webhook", "billingWebhook", "Inbound Stripe subscription webhook (signature-verified).", _billing, Anonymous: true, [], null,
+            [
+                new("200", "The event was accepted — applied, or benignly dropped (a replayed event id, an unknown/env-only tenant, or a price mapping to no tier). No provider retry is wanted for a drop."),
+                new("400", "The signature was invalid or the event body could not be parsed (invalid_webhook); nothing changed."),
+            ],
+            Description: "The PUBLIC inbound Stripe endpoint (Stripe is not a tenant, so this opts out of the tenant gate) — authenticated instead by the event signature in the Stripe-Signature header, verified BEFORE the body is parsed. On a customer.subscription.created/updated/deleted, the subscription's tenant id (from provider metadata — authoritative, never a caller claim) and price id map to a tier, and the registry tenant's Tier + SlotAllowance are updated (the new allowance takes effect immediately). This is the ONLY path that changes a tenant's plan. Anti-replay: processed event ids are de-duplicated. Registry tenants only: an env-fallback/unknown tenant, a replay, or an unmapped price are logged and dropped (200). No secret, raw body, or signature is ever logged."),
     ];
 
     /// <summary>The generated OpenAPI 3.1 document, as indented JSON. Built once — deterministic, like the embedded schema.</summary>
@@ -343,6 +374,7 @@ public static class OpenApiSpec
         new JsonObject { ["name"] = _fixtures, ["description"] = "Record, list, inspect, and erase tenant fixture sets for offline payload-regression testing." },
         new JsonObject { ["name"] = _webhooks, ["description"] = "Register, list, and unregister tenant webhook endpoints for signed run-lifecycle delivery, and read their delivery history." },
         new JsonObject { ["name"] = _tenancy, ["description"] = "The authenticated tenant's own profile and usage against its guardrails (read-only)." },
+        new JsonObject { ["name"] = _billing, ["description"] = "Billing state, the tier catalog, Stripe Checkout / Billing-Portal session URLs, and the public signature-verified subscription webhook." },
         new JsonObject { ["name"] = _docs, ["description"] = "Anonymous, tenant-independent product artifacts (health, schema, discovery, this document)." },
     ];
 

@@ -23,7 +23,7 @@ public class AccountPageTests(PortalFixture fixture)
         var html = await resp.Content.ReadAsStringAsync();
         html.ShouldContain("Not linked");         // profile status
         html.ShouldContain("No usage yet");        // usage empty state
-        html.ShouldContain("Billing managed via Stripe"); // billing placeholder
+        html.ShouldContain("Link your workspace to manage billing"); // billing card, unlinked state
         html.ShouldContain("API keys");            // operator-managed info card
         html.ShouldContain("id=\"link-form\"");    // the workspace-link form is present
         html.ShouldContain("__RequestVerificationToken"); // ...antiforgery-protected
