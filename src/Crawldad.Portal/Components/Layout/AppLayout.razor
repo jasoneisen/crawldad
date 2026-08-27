@@ -1,10 +1,11 @@
 @inherits LayoutComponentBase
 
 @*
-    The authenticated app shell: a Tabler vertical navbar (Runs / Live / Payloads / Webhooks / Usage / Account),
-    a top bar showing the signed-in email and a sign-out control. Only ever rendered for [Authorize] pages, so
-    HttpContext.User is an authenticated principal — its email claim is read directly from the cascaded
-    HttpContext (static SSR).
+    The authenticated app shell: a Tabler vertical navbar (Runs / Live / Payloads / Webhooks / Account) with a
+    queue/slot usage-indicator placeholder pinned to its foot, and a top bar showing the signed-in email plus a
+    sign-out control. Only ever rendered for [Authorize] pages, so the cascaded HttpContext.User is an authenticated
+    principal — its email claim is read directly (static SSR, no circuit). Data wiring for the usage meter and the
+    per-section pages lands in later tasks.
 *@
 <div class="page">
     <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
@@ -12,26 +13,60 @@
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar-menu" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
-            <h1 class="navbar-brand navbar-brand-autodark m-0">
-                <a href="/app">Crawldad</a>
-            </h1>
+            <div class="navbar-brand navbar-brand-autodark d-flex align-items-center gap-2 mb-2 mt-1">
+                <a href="/app" class="d-flex align-items-center gap-2 text-reset text-decoration-none">
+                    <svg width="30" height="30" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <rect width="32" height="32" rx="8" fill="url(#cd-brand)" />
+                        <path d="M8.5 10.5c4.4 0 7.6 2.4 7.6 5.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round" />
+                        <path d="M8.5 21.5c4.4 0 7.6-2.4 7.6-5.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round" />
+                        <path d="M16.1 16h5.2M20 12.7l3.4 3.3-3.4 3.3" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+                        <defs>
+                            <linearGradient id="cd-brand" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                                <stop stop-color="#5b7cff" />
+                                <stop offset="1" stop-color="#3550c9" />
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                    <span class="d-flex flex-column">
+                        <span class="brand-text">Crawl<span class="brand-accent">dad</span></span>
+                        <span class="brand-sub">portal</span>
+                    </span>
+                </a>
+            </div>
             <div class="collapse navbar-collapse" id="sidebar-menu">
                 <AppNav />
+                <div class="usage-indicator mt-auto p-3" data-testid="usage-indicator">
+                    <div class="usage-label text-uppercase fw-bold mb-2">Usage</div>
+                    <div class="usage-row d-flex justify-content-between mb-1">
+                        <span>Slots</span>
+                        <span data-testid="usage-slots">— / —</span>
+                    </div>
+                    <div class="progress usage-meter mb-2">
+                        <div class="progress-bar" style="width: 0%" role="progressbar" aria-label="Slot usage" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    <div class="usage-row d-flex justify-content-between">
+                        <span>Queue</span>
+                        <span data-testid="usage-queue">idle</span>
+                    </div>
+                </div>
             </div>
         </div>
     </aside>
-    <header class="navbar navbar-expand-md d-print-none">
-        <div class="container-xl">
-            <div class="navbar-nav flex-row order-md-last align-items-center">
-                <span class="nav-item me-3 text-secondary" data-testid="user-email">@UserEmail</span>
-                <form method="post" action="/auth/signout" class="nav-item">
-                    <AntiforgeryToken />
-                    <button type="submit" class="btn btn-outline-secondary btn-sm" data-testid="sign-out">Sign out</button>
-                </form>
-            </div>
-        </div>
-    </header>
     <div class="page-wrapper">
+        <header class="navbar navbar-expand-md d-print-none sticky-top border-bottom">
+            <div class="container-xl">
+                <div class="navbar-nav flex-row order-md-last ms-auto align-items-center">
+                    <span class="avatar avatar-sm me-2" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="20" height="20" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /></svg>
+                    </span>
+                    <span class="nav-item me-3 text-secondary" data-testid="user-email">@UserEmail</span>
+                    <form method="post" action="/auth/signout" class="nav-item">
+                        <AntiforgeryToken />
+                        <button type="submit" class="btn btn-outline-secondary btn-sm" data-testid="sign-out">Sign out</button>
+                    </form>
+                </div>
+            </div>
+        </header>
         <div class="page-body">
             <div class="container-xl">
                 @Body

@@ -7,15 +7,22 @@ namespace Crawldad.Tests.Portal;
 public class AppNavTests : BunitContext
 {
     [Fact]
-    public void Renders_the_six_sections_in_order()
+    public void Renders_the_five_sections_in_order()
     {
         var cut = Render<AppNav>();
 
         var hrefs = cut.FindAll("a.nav-link").Select(a => a.GetAttribute("href")).ToArray();
 
-        hrefs.ShouldBe(["/app/runs", "/app/live", "/app/payloads", "/app/webhooks", "/app/usage", "/app/account"]);
-        cut.Markup.ShouldContain("Runs");
-        cut.Markup.ShouldContain("Webhooks");
-        cut.Markup.ShouldContain("Account");
+        hrefs.ShouldBe(["/app/runs", "/app/live", "/app/payloads", "/app/webhooks", "/app/account"]);
+    }
+
+    [Fact]
+    public void Labels_each_section()
+    {
+        var cut = Render<AppNav>();
+
+        var titles = cut.FindAll(".nav-link-title").Select(e => e.TextContent.Trim()).ToArray();
+
+        titles.ShouldBe(["Runs", "Live", "Payloads", "Webhooks", "Account"]);
     }
 }

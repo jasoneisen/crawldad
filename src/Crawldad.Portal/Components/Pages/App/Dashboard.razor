@@ -4,7 +4,83 @@
 
 <PageTitle>Dashboard · Crawldad</PageTitle>
 
+@*
+    The authenticated landing page. A lightweight overview that orients a new tenant and links out to each
+    section; the sections themselves fill in with live data in later tasks.
+*@
 <div class="page-header">
     <h1 class="page-title">Dashboard</h1>
 </div>
-<p class="text-secondary mt-3">Welcome to Crawldad. Pick a section from the left to get started.</p>
+
+<p class="text-secondary mt-2 mb-4">
+    Welcome to Crawldad. Pick a section from the left to get started — runs, payloads, and usage fill in here as
+    your workspace comes to life.
+</p>
+
+<div class="row row-cards">
+    <div class="col-sm-6 col-lg-4">
+        <a href="/app/runs" class="card card-link card-sm">
+            <div class="card-body d-flex align-items-center">
+                <span class="avatar bg-primary-lt text-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M9 6l11 0" /><path d="M9 12l11 0" /><path d="M9 18l11 0" /><path d="M5 6l0 .01" /><path d="M5 12l0 .01" /><path d="M5 18l0 .01" /></svg>
+                </span>
+                <div class="ms-3">
+                    <div class="fw-bold">Runs</div>
+                    <div class="text-secondary small">Track every scrape and search run.</div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-4">
+        <a href="/app/live" class="card card-link card-sm">
+            <div class="card-body d-flex align-items-center">
+                <span class="avatar bg-primary-lt text-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" /><path d="M14.828 9.172a4 4 0 0 1 0 5.656" /><path d="M17.657 6.343a8 8 0 0 1 0 11.314" /><path d="M9.168 14.828a4 4 0 0 1 0 -5.656" /><path d="M6.337 17.657a8 8 0 0 1 0 -11.314" /></svg>
+                </span>
+                <div class="ms-3">
+                    <div class="fw-bold">Live trace</div>
+                    <div class="text-secondary small">Watch in-flight runs step by step.</div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-4">
+        <a href="/app/payloads" class="card card-link card-sm">
+            <div class="card-body d-flex align-items-center">
+                <span class="avatar bg-primary-lt text-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /><path d="M10 13l-1 2l1 2" /><path d="M14 13l1 2l-1 2" /></svg>
+                </span>
+                <div class="ms-3">
+                    <div class="fw-bold">Payloads</div>
+                    <div class="text-secondary small">Manage reusable extraction payloads.</div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-4">
+        <a href="/app/webhooks" class="card card-link card-sm">
+            <div class="card-body d-flex align-items-center">
+                <span class="avatar bg-primary-lt text-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M4.876 13.61a4 4 0 1 0 6.124 3.39h6" /><path d="M15.066 20.502a4 4 0 1 0 1.934 -7.502c-.706 0 -1.424 .18 -2 .5l-3 -5.5" /><path d="M9 8a4 4 0 1 0 -3.938 -4.7" /></svg>
+                </span>
+                <div class="ms-3">
+                    <div class="fw-bold">Webhooks</div>
+                    <div class="text-secondary small">Deliver run events to your systems.</div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-4">
+        <a href="/app/account" class="card card-link card-sm">
+            <div class="card-body d-flex align-items-center">
+                <span class="avatar bg-primary-lt text-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /></svg>
+                </span>
+                <div class="ms-3">
+                    <div class="fw-bold">Account &amp; usage</div>
+                    <div class="text-secondary small">Profile, API keys, plan, and usage.</div>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
