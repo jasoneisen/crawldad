@@ -1,14 +1,16 @@
 // Storage account (LRS) + the single blob container the app partitions per tenant ({tenant}/downloads|screenshots/…),
-// plus a dedicated container holding the persisted Data Protection key ring (issue #65).
+// plus two dedicated containers holding the persisted Data Protection key rings: the API host's (issue #65) and the
+// portal host's (issue #119), kept separate so neither app's ring is ever the other's blob.
 // Holds downloaded attachments + failure/explicit screenshots; the retention janitor sweeps them host-side by TTL.
 //
 // The app's AzureBlobStore authenticates with the account-key connection string (a KV secret), so shared-key access
 // stays enabled; blobs are never publicly readable (allowBlobPublicAccess=false, container publicAccess=None). LRS +
 // public endpoint is the staging floor; ZRS/GRS and a private endpoint are prod-only deltas, deferred.
 //
-// The Data Protection key ring is read/written passwordless via the app's managed identity (DefaultAzureCredential),
-// so the app identity is granted Storage Blob Data Contributor scoped to JUST the key-ring container (least privilege;
-// the tenant-data container is untouched by this grant — the app already reaches it via the account-key secret).
+// Each Data Protection key ring is read/written passwordless via the app's managed identity (DefaultAzureCredential),
+// so the app identity is granted Storage Blob Data Contributor scoped to JUST each key-ring container (least privilege;
+// the tenant-data container is untouched by these grants — the app already reaches it via the account-key secret). The
+// portal shares the API's identity, so both grants bind the same principal to different container scopes.
 
 @description('Storage account name (CAF: stcrawldad<env><uniq>; globally unique, lowercase alphanumeric, <=24).')
 param name string
@@ -22,10 +24,13 @@ param tags object
 @description('Blob container all tenants share (partitioned by a {tenant}/ blob-name prefix).')
 param containerName string
 
-@description('Container holding the persisted Data Protection key ring (issue #65).')
+@description('Container holding the API Data Protection key ring (issue #65).')
 param dataProtectionContainer string
 
-@description('Principal id of the app identity (granted Storage Blob Data Contributor on the key-ring container).')
+@description('Container holding the PORTAL Data Protection key ring (issue #119) — its OWN container, never the API ring.')
+param portalDataProtectionContainer string
+
+@description('Principal id of the app identity (granted Storage Blob Data Contributor on each key-ring container).')
 param appIdentityPrincipalId string
 
 // Built-in role: Storage Blob Data Contributor (read/write/create blobs — the key-ring repo only uploads/downloads one blob).
@@ -67,10 +72,30 @@ resource dpContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@
   properties: { publicAccess: 'None' }
 }
 
-// Least-privilege data-plane grant: the app identity can read/write blobs in ONLY the key-ring container.
+// Least-privilege data-plane grant: the app identity can read/write blobs in ONLY the API key-ring container.
 resource dpBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(dpContainer.id, appIdentityPrincipalId, blobDataContributorRoleId)
   scope: dpContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobDataContributorRoleId)
+    principalId: appIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The PORTAL's Data Protection key-ring container (issue #119) — its own container so the portal ring is never the API's
+// blob. Reached only by the app's managed identity (the portal shares the API's identity — no new identity is created).
+resource portalDpContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: portalDataProtectionContainer
+  properties: { publicAccess: 'None' }
+}
+
+// The SAME least-privilege pattern for the portal container: the shared app identity can read/write blobs in ONLY the
+// portal key-ring container. Distinct scope ⇒ a distinct role assignment on the existing identity (not a new identity).
+resource portalDpBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(portalDpContainer.id, appIdentityPrincipalId, blobDataContributorRoleId)
+  scope: portalDpContainer
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobDataContributorRoleId)
     principalId: appIdentityPrincipalId

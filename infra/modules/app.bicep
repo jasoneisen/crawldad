@@ -73,11 +73,17 @@ param aspNetCoreEnvironment string
 @description('Blob container name (plain app config).')
 param storageContainer string
 
-@description('Absolute URI of the blob the Data Protection key ring is persisted to (issue #65).')
+@description('Absolute URI of the blob the API Data Protection key ring is persisted to (issue #65).')
 param keyRingBlobUri string
 
-@description('Key Vault key id that wraps the Data Protection key ring (versionless).')
+@description('Key Vault key id that wraps the API Data Protection key ring (versionless).')
 param dataProtectionKeyId string
+
+@description('Absolute URI of the blob the PORTAL Data Protection key ring is persisted to (issue #119) — its own container, never the API ring.')
+param portalKeyRingBlobUri string
+
+@description('Key Vault key id that wraps the PORTAL Data Protection key ring (versionless).')
+param portalDataProtectionKeyId string
 
 @description('Placeholder-tenant id (partition/billing subject; must not contain ":").')
 param tenantId string
@@ -246,7 +252,11 @@ resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
 // The customer-facing Blazor SSR portal, sharing this environment, identity, and registry with the API. It is a thin
 // auth+shell host with its OWN Marten document store on the SAME Postgres, isolated in the code-configured "portal"
 // schema — so it needs only the Marten connection to boot (the identical KV secret the API uses; same server, the
-// portal picks its schema in code). It carries NO storage/tenant/DataProtection config: those are API concerns.
+// portal picks its schema in code). It carries NO storage/tenant config (those are API concerns), but it DOES persist
+// its OWN Data Protection key ring (issue #119): its own blob container + its own Key Vault key, reached passwordless
+// via the SHARED app identity (AZURE_CLIENT_ID → DefaultAzureCredential). Without it, every restart/replace would
+// rotate the ring — signing users out AND orphaning the Data-Protected tenant API keys it stores (the "relink needed"
+// path). The ring is isolated from the API's by a distinct application discriminator, purpose, blob, and wrapping key.
 //
 // Schema: the portal has no out-of-band db-apply command, and a normal start applies schema only in Development, so in
 // Staging/Production it relies on Marten's default runtime auto-create (AutoCreate.CreateOrUpdate) on first document
@@ -286,7 +296,14 @@ resource portal 'Microsoft.App/containerApps@2024-03-01' = {
           resources: { cpu: json(cpu), memory: memory }
           env: [
             { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
+            // Point DefaultAzureCredential at the SHARED user-assigned identity (same one the API uses) for the portal's
+            // Data Protection blob + Key Vault access.
+            { name: 'AZURE_CLIENT_ID', value: appIdentityClientId }
             { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
+            // The portal's OWN Data Protection key ring (issue #119): persisted to its own blob, wrapped by its own KV
+            // key. BOTH set ⇒ durable + wrapped; the portal host fails fast if only one is set (its boot-time validator).
+            { name: 'Crawldad__Portal__DataProtection__KeyRingBlobUri', value: portalKeyRingBlobUri }
+            { name: 'Crawldad__Portal__DataProtection__KeyVaultKeyId', value: portalDataProtectionKeyId }
           ]
           // The portal has no /health endpoint; probe the anonymous marketing "/" (a 200 proves Kestrel + the Blazor
           // SSR pipeline composed and started — it renders without any database access).

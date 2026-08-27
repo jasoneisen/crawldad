@@ -1,11 +1,11 @@
 using Crawldad.Portal.Auth;
 using Crawldad.Portal.Billing;
 using Crawldad.Portal.Components;
+using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Runs;
 using Crawldad.Portal.Tenancy;
 using Marten;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.DataProtection;
 
 namespace Crawldad.Portal;
 
@@ -48,6 +48,12 @@ public static class PortalHost
         builder.Services.AddSingleton<IOtpCodeGenerator, OtpCodeGenerator>();
         builder.Services.AddScoped<IPortalAuthService, PortalAuthService>();
         AddEmailSender(builder);
+
+        // The durable Data-Protection key ring underlies BOTH the auth cookie and the tenant API key protector below,
+        // so register it once, up front. Configured (Azure) => persisted + Key-Vault-wrapped so it survives redeploys;
+        // unconfigured (dev/tests) => the framework's default local ring. Mirrors the API's DataProtectionModule.
+        DataProtectionModule.AddKeyRingProtection(builder.Services, builder.Configuration);
+
         AddTenantLinking(builder);
 
         AddCookieAuthentication(builder);
@@ -127,10 +133,10 @@ public static class PortalHost
     // NotLinkedException when the request is unauthenticated or the account has no link.
     private static void AddTenantLinking(WebApplicationBuilder builder)
     {
-        // Data Protection is registered explicitly (also implied by antiforgery/cookies) so the at-rest key cipher is
-        // unambiguous; the durable key ring for production (mirroring the API's DataProtectionModule) is a later
-        // deployment concern, tracked separately.
-        builder.Services.AddDataProtection();
+        // The at-rest key cipher for the tenant API key rides on the shared Data-Protection key ring registered up
+        // front in AddCrawldadPortal (DataProtectionModule.AddKeyRingProtection) — durable + Key-Vault-wrapped when
+        // configured, so a redeploy never orphans the stored keys. The purpose-bound protector is created from that
+        // ring by PortalTenancy.ApiKeyProtector on both the write and read sides.
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IPortalTenantLinkStore, MartenPortalTenantLinkStore>();
         builder.Services.AddScoped<IPortalTenantContext, PortalTenantContext>();
