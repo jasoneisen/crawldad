@@ -258,6 +258,27 @@ public class LiveTracePageTests : BunitContext
     }
 
     [Fact]
+    public void The_header_counters_keep_counting_past_the_display_cap()
+    {
+        var content = new PushSseContent();
+        var cut = RenderLive(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = content }, maxEvents: 2);
+
+        // Five frames arrive (four StepStarted, one SelectorMiss) with a display cap of 2. The feed keeps only the two
+        // newest rows, but the header counters are monotonic — incremented as frames arrive, independent of the capped
+        // window — so they reflect everything seen instead of plateauing at the cap.
+        content.Push(Frame(1, "StepStarted"));
+        content.Push(Frame(2, "SelectorMiss"));
+        content.Push(Frame(3, "StepStarted"));
+        content.Push(Frame(4, "StepStarted"));
+        content.Push(Frame(5, "StepStarted"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid=count-events]").TextContent.Trim().ShouldBe("5"), _wait);
+        cut.Find("[data-testid=count-steps]").TextContent.Trim().ShouldBe("4");   // past the 2-row cap
+        cut.Find("[data-testid=count-misses]").TextContent.Trim().ShouldBe("1");
+        cut.FindAll("[data-testid=event-row]").Count.ShouldBe(2);                  // the display window is still capped
+    }
+
+    [Fact]
     public async Task Disposal_during_the_timeline_fallback_tears_it_down_cleanly()
     {
         // Events are gone (404 → timeline fallback), and the timeline read blocks; disposing mid-fallback must cancel it

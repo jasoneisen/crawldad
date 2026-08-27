@@ -211,10 +211,10 @@ else
         var to = RunView.ParseInstant(To);
         _filtered = RunView.HasFilter(_status, _payloadId, from, to);
 
-        var tenant = await Tenant.TryResolveAsync();
+        var tenant = await Tenant.TryResolveForPageAsync();
         if (tenant is null)
         {
-            return; // _result stays null => not-linked empty state
+            return; // unlinked, or an undecryptable key (rotated ring) => not-linked empty state (re-link from Account)
         }
 
         var page = RunView.ParsePage(Page);

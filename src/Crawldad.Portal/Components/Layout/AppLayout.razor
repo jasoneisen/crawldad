@@ -1,11 +1,17 @@
 @inherits LayoutComponentBase
+@using Crawldad.Contracts.Tenancy
+@using Crawldad.Portal.Tenancy
+@inject IPortalTenantContext Tenants
 
 @*
-    The authenticated app shell: a Tabler vertical navbar (Runs / Live / Payloads / Webhooks / Account) with a
-    queue/slot usage-indicator placeholder pinned to its foot, and a top bar showing the signed-in email plus a
-    sign-out control. Only ever rendered for [Authorize] pages, so the cascaded HttpContext.User is an authenticated
-    principal — its email claim is read directly (static SSR, no circuit). Data wiring for the usage meter and the
-    per-section pages lands in later tasks.
+    The authenticated app shell: a Tabler vertical navbar (Runs / Live / Payloads / Webhooks / Account) with a live
+    slot/queue usage indicator pinned to its foot, and a top bar showing the signed-in email plus a sign-out control.
+    Only ever rendered for [Authorize] pages, so the cascaded HttpContext.User is an authenticated principal — its email
+    claim is read directly (static SSR, no circuit). The layout renders STATICALLY even for the one interactive page
+    (the live trace), so the usage widget resolves the tenant + reads usage on that page's initial static render like any
+    other /app page; on a circuit (no ambient HttpContext) the tenant context resolves null and the widget quietly shows
+    its placeholder. Every failure mode (unauthenticated, unlinked, a rotated key ring, an API hiccup) degrades to that
+    placeholder — a data problem in the chrome must never break the shell.
 *@
 <div class="page">
     <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
@@ -37,17 +43,39 @@
                 <AppNav />
                 <div class="usage-indicator mt-auto p-3" data-testid="usage-indicator">
                     <div class="usage-label text-uppercase fw-bold mb-2">Usage</div>
-                    <div class="usage-row d-flex justify-content-between mb-1">
-                        <span>Slots</span>
-                        <span data-testid="usage-slots">— / —</span>
-                    </div>
-                    <div class="progress usage-meter mb-2">
-                        <div class="progress-bar" style="width: 0%" role="progressbar" aria-label="Slot usage" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
-                    </div>
-                    <div class="usage-row d-flex justify-content-between">
-                        <span>Queue</span>
-                        <span data-testid="usage-queue">idle</span>
-                    </div>
+                    @if (_snapshot is { } snapshot)
+                    {
+                        var usage = snapshot.Usage;
+                        var profile = snapshot.Profile;
+                        var slotPct = Pct(usage.Slots.InUse, usage.Slots.Allowance);
+                        <div class="usage-row d-flex justify-content-between mb-1">
+                            <span>Slots</span>
+                            <span data-testid="usage-slots">@usage.Slots.InUse / @usage.Slots.Allowance</span>
+                        </div>
+                        <div class="progress usage-meter mb-2">
+                            <div class="progress-bar" style="width:@(slotPct)%" role="progressbar" aria-label="Slot usage" aria-valuenow="@slotPct" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <div class="usage-row d-flex justify-content-between">
+                            <span>Queue</span>
+                            <span data-testid="usage-queue">@usage.Queue.Depth / @profile.QueueDepthAllowance</span>
+                        </div>
+                    }
+                    else
+                    {
+                        @* Quiet placeholder: unauthenticated / not linked / a data hiccup (rotated ring or API error).
+                           The Account page carries the actionable link / usage / re-link states — the chrome stays calm. *@
+                        <div class="usage-row d-flex justify-content-between mb-1">
+                            <span>Slots</span>
+                            <span data-testid="usage-slots">— / —</span>
+                        </div>
+                        <div class="progress usage-meter mb-2">
+                            <div class="progress-bar" style="width: 0%" role="progressbar" aria-label="Slot usage" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <div class="usage-row d-flex justify-content-between">
+                            <span>Queue</span>
+                            <span data-testid="usage-queue">idle</span>
+                        </div>
+                    }
                 </div>
             </div>
         </div>
@@ -79,5 +107,39 @@
     [CascadingParameter]
     public HttpContext HttpContext { get; set; } = default!;
 
+    // The loaded usage snapshot, set only when BOTH reads succeed for a linked user — a single nullable so the widget
+    // branches on one flag (present → live numbers, absent → the quiet placeholder), never on a half-loaded pair.
+    private (UsageResponse Usage, TenantProfileResponse Profile)? _snapshot;
+
     private string? UserEmail => HttpContext.User.FindFirstValue(ClaimTypes.Email);
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Resolve the tenant and read its live usage for the mini-widget, resolved once per request (the tenant context
+        // caches within the request; no cross-request caching — the numbers must stay fresh). The whole load is
+        // best-effort: an unauthenticated request or a circuit (the tenant context returns null when there is no ambient
+        // HttpContext), an unlinked account, a rotated key ring (CryptographicException), or any API failure
+        // (CrawldadException / transport / timeout) all leave _snapshot null → the placeholder. A data hiccup in the
+        // chrome must never break the shell, so every exception is swallowed here (the Account page owns the actionable,
+        // per-state messaging).
+        try
+        {
+            var tenant = await Tenants.TryResolveAsync();
+            if (tenant is null)
+            {
+                return; // unauthenticated / not linked / no ambient HttpContext → the quiet placeholder
+            }
+
+            var profile = await tenant.Client.GetTenantAsync();
+            var usage = await tenant.Client.GetUsageAsync();
+            _snapshot = (usage, profile); // both reads landed → the widget shows live numbers
+        }
+        catch (Exception)
+        {
+            _snapshot = null; // any hiccup keeps the quiet placeholder — never a broken shell
+        }
+    }
+
+    // Percentage (0..100) of a value against a cap, guarding a zero/absent allowance (mirrors the Account page's meter).
+    private static int Pct(long value, long max) => max <= 0 ? 0 : (int)Math.Min(100, Math.Round(100.0 * value / max));
 }

@@ -155,6 +155,28 @@ public class PayloadDetailPageTests : BunitContext
         cut.Find("[data-testid=script]").ShouldNotBeNull(); // the rest of the page still renders
     }
 
+    [Fact]
+    public void A_transient_5xx_drift_read_also_drops_the_card_but_keeps_the_page()
+    {
+        // A 500 is a CrawldadApiException, not a NotFound. Before the widen it failed the whole page; now the drift read
+        // degrades exactly like the payloads LIST does — dropping only the drift card while the page still renders.
+        var handler = new StubHttpMessageHandler(req =>
+        {
+            if (req.Path.EndsWith("/drift-status", StringComparison.Ordinal))
+            {
+                return ClientTestHarness.Empty(HttpStatusCode.InternalServerError);
+            }
+
+            return RespondPayload(req, head: 2);
+        });
+        Use(PayloadsWebhooksTenantContext.LinkedTo(handler));
+
+        var cut = RenderDetail();
+
+        cut.FindAll("[data-testid=drift-card]").ShouldBeEmpty();
+        cut.Find("[data-testid=script]").ShouldNotBeNull();
+    }
+
     // A handler that answers the three detail reads (payload, revision, drift-status).
     private static StubHttpMessageHandler FullHandler(
         int head,
