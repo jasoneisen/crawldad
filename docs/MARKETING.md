@@ -43,7 +43,7 @@ Growth comes from capacity and collaboration walls arriving together, surfaced h
 
 ## The moat
 
-Because all execution is data and runs through one hosted plane, cross-customer signal — which selector broke, on which host, when — accretes in the trace events and the asset cache. That is the long-term product: turning the aggregate drift signal into proactive monitoring is the durable differentiator, and productizing it is tracked in **issue #47** (fed by the nightly canary, **issue #7**). Hosted-only is what keeps this signal intact; it is the strategic reason the product is not source-available.
+Because all execution is data and runs through one hosted plane, cross-customer signal — which selector broke, on which host, when — accretes in the trace events and the asset cache. That is the long-term product: per-tenant drift detection has shipped (issue #47 — the on-read drift-status signal), and turning the *aggregate*, cross-customer drift signal into proactive, scheduled monitoring is the durable differentiator still ahead, fed by the nightly canary (**issue #7**). Hosted-only is what keeps this signal intact; it is the strategic reason the product is not source-available.
 
 ## Named risks & mitigations
 
