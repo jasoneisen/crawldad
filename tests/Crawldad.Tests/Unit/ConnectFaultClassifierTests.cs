@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http;
-using Crawldad.Web.Infrastructure.Browser.Real;
-using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Api.Infrastructure.Browser.Real;
+using Crawldad.Api.Infrastructure.Security;
 using Microsoft.Playwright;
 
 namespace Crawldad.Tests.Unit;

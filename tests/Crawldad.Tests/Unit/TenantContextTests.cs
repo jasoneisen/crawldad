@@ -1,5 +1,5 @@
 using System.Security.Claims;
-using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Api.Infrastructure.Security;
 using Microsoft.AspNetCore.Http;
 
 namespace Crawldad.Tests.Unit;

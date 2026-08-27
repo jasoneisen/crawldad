@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
-using Crawldad.Web.Infrastructure.Browser.Fake;
+using Crawldad.Api.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Support;
 

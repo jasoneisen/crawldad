@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using Crawldad.Web.Infrastructure.Security;
+using Crawldad.Api.Infrastructure.Security;
 using Microsoft.Extensions.Logging;
 
 namespace Crawldad.Tests.Support;

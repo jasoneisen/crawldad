@@ -1,5 +1,5 @@
+using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Security;
 using Microsoft.Extensions.Logging;
 
 namespace Crawldad.Tests.Unit;

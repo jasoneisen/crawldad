@@ -1,7 +1,7 @@
 using AngleSharp.Dom;
+using Crawldad.Api.Infrastructure.Browser;
+using Crawldad.Api.Infrastructure.Browser.Fake;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Browser;
-using Crawldad.Web.Infrastructure.Browser.Fake;
 
 namespace Crawldad.Tests.Unit;
 

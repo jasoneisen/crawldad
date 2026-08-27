@@ -11,7 +11,7 @@ laptop physically caps at 1–2 concurrent browsers ([`BUSINESS_MODEL.md`](BUSIN
 tier's front door and the natural upsell to a managed backend (Browserbase/Browserless) once a payload works.
 
 Every claim below is verified against the code in
-[`src/Crawldad.Web/Infrastructure/Browser/`](../src/Crawldad.Web/Infrastructure/Browser). Where the behavior is
+[`src/Crawldad.Api/Infrastructure/Browser/`](../src/Crawldad.Api/Infrastructure/Browser). Where the behavior is
 Chrome's or the tunnel tool's rather than Crawldad's, that is called out — those flags evolve, so check the
 tool's current docs.
 
@@ -223,7 +223,7 @@ The verified behavior, because a tunnel is the flakiest backend Crawldad support
 ## 8. Security: the URL is a secret
 
 In `connectUrl` mode the whole tunnel URL is registered as a run secret at connect time and funnels through the
-single [`CredentialScrubber`](../src/Crawldad.Web/Infrastructure/Security/CredentialScrubber.cs), so it never
+single [`CredentialScrubber`](../src/Crawldad.Api/Infrastructure/Security/CredentialScrubber.cs), so it never
 reaches an event, a log line, the timeline, an SSE frame, the HTTP response, or an exception message
 ([`THREAT_MODEL.md`](THREAT_MODEL.md)). Two rules cover the tunnel shapes:
 

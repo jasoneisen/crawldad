@@ -1,8 +1,8 @@
 using System.Collections.Generic;
+using Crawldad.Api.Infrastructure.Browser;
+using Crawldad.Api.Infrastructure.Browser.Real;
+using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Browser;
-using Crawldad.Web.Infrastructure.Browser.Real;
-using Crawldad.Web.Infrastructure.Security;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;

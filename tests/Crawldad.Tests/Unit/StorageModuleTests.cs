@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using Crawldad.Web.Infrastructure.Storage;
-using Crawldad.Web.Infrastructure.Storage.Azure;
-using Crawldad.Web.Infrastructure.Storage.FileSystem;
+using Crawldad.Api.Infrastructure.Storage;
+using Crawldad.Api.Infrastructure.Storage.Azure;
+using Crawldad.Api.Infrastructure.Storage.FileSystem;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 

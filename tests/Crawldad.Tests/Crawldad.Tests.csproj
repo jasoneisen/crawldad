@@ -16,13 +16,13 @@
     <ThresholdType>line,branch</ThresholdType>
     <ThresholdStat>total</ThresholdStat>
     <!-- Measure ONLY product assemblies (excludes the test assembly + framework). -->
-    <Include>[Crawldad.Web]*,[Crawldad.Contracts]*</Include>
+    <Include>[Crawldad.Api]*,[Crawldad.Contracts]*</Include>
     <!-- Don't count trivial auto-property accessors on DTOs/aggregates. -->
     <SkipAutoProps>true</SkipAutoProps>
     <!-- Exclude framework source-generated dispatchers (Marten/JasperFx/Wolverine evolvers) and the entry-point
          shell. Program.cs is listed explicitly so a future file that happens to be named Program.cs is still
          counted rather than silently dropped from the gate. -->
-    <ExcludeByFile>**/obj/**/*.cs,**/src/Crawldad.Web/Program.cs</ExcludeByFile>
+    <ExcludeByFile>**/obj/**/*.cs,**/src/Crawldad.Api/Program.cs</ExcludeByFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -43,14 +43,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Crawldad.Web\Crawldad.Web.csproj" />
+    <ProjectReference Include="..\..\src\Crawldad.Api\Crawldad.Api.csproj" />
     <ProjectReference Include="..\..\src\Crawldad.Contracts\Crawldad.Contracts.csproj" />
   </ItemGroup>
 
   <!-- The suite hosts the ASP.NET app (Alba) and tests its Data-Protection wiring, so reference the shared framework
        explicitly. This also lets restore PRUNE the framework-provided packages the Data-Protection blob/key extensions
        drag in transitively via the netstandard2.0 Microsoft.AspNetCore.DataProtection 3.1.32 dep — otherwise their
-       legacy System.Drawing.Common 4.7.0 closure trips the repo's NuGetAudit (as it is already pruned in Crawldad.Web). -->
+       legacy System.Drawing.Common 4.7.0 closure trips the repo's NuGetAudit (as it is already pruned in Crawldad.Api). -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
@@ -61,7 +61,7 @@
   </ItemGroup>
 
   <!-- Test data assets (the acceptance fragment payload). Resolved at runtime via AppContext.BaseDirectory.
-       The caphome-search fixture (manifest/html/golden) copies transitively from Crawldad.Web. -->
+       The caphome-search fixture (manifest/html/golden) copies transitively from Crawldad.Api. -->
   <ItemGroup>
     <Content Remove="Fixtures\**\*" />
     <None Remove="Fixtures\**\*" />

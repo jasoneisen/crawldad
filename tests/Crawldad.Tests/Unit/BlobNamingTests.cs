@@ -1,4 +1,4 @@
-using Crawldad.Web.Infrastructure.Storage;
+using Crawldad.Api.Infrastructure.Storage;
 
 namespace Crawldad.Tests.Unit;
 

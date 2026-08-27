@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Alba;
+using Crawldad.Api;
+using Crawldad.Api.Infrastructure.Browser;
+using Crawldad.Api.Infrastructure.Browser.Fake;
 using Crawldad.Tests.Support;
-using Crawldad.Web;
-using Crawldad.Web.Infrastructure.Browser;
-using Crawldad.Web.Infrastructure.Browser.Fake;
 using JasperFx.Events.Daemon;
 using Marten;
 using Marten.Events;

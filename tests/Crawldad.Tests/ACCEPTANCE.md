@@ -13,7 +13,7 @@ with **no Chromium and no live traffic**, and re-confirmed against real Chromium
   shaped `result` is **byte-identical** to a golden (`JsonAssert.DeepEquals` + canonical byte compare),
   plus event-stream / warning / terminal assertions.
 - **Backend**: the record/replay `FakeBrowserBackend`, driven by fixture directories under
-  `src/Crawldad.Web/Fixtures/` (each has `manifest.json`, HTML, `golden.json`, `FIXTURE_NOTES.md`).
+  `src/Crawldad.Api/Fixtures/` (each has `manifest.json`, HTML, `golden.json`, `FIXTURE_NOTES.md`).
 
 ## How goldens were derived (no live traffic, no engine-copy)
 Every `golden.json` is **hand-derived by executing the C# reference algorithm** over the fixture DOM —

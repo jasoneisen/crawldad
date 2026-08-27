@@ -1,5 +1,5 @@
-using Crawldad.Web.Infrastructure.Storage;
-using Crawldad.Web.Infrastructure.Storage.Azure;
+using Crawldad.Api.Infrastructure.Storage;
+using Crawldad.Api.Infrastructure.Storage.Azure;
 using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Unit;

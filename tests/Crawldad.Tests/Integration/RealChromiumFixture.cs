@@ -3,8 +3,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using Crawldad.Api.Infrastructure.Browser.Real;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Browser.Real;
 using Microsoft.Playwright;
 
 namespace Crawldad.Tests.Integration;

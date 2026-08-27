@@ -6,7 +6,7 @@
 // container under the `azure` provider), and one placeholder tenant so the API is callable beyond the anonymous
 // /health. All three secrets resolve passwordless via the app identity's Key Vault Secrets User grant.
 //
-// The db-apply job runs the SAME image as `dotnet Crawldad.Web.dll db-apply` to apply the Marten + Wolverine schema
+// The db-apply job runs the SAME image as `dotnet Crawldad.Api.dll db-apply` to apply the Marten + Wolverine schema
 // out-of-band (a normal server start never applies schema in non-Development). It needs only the Marten connection;
 // Marten's conjoined multi-tenancy is one shared schema, so a single db-apply covers every tenant.
 
@@ -196,7 +196,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// Schema-apply job: the same image + identity + registry, running `dotnet Crawldad.Web.dll db-apply` once on demand.
+// Schema-apply job: the same image + identity + registry, running `dotnet Crawldad.Api.dll db-apply` once on demand.
 // It reaches Postgres over the "allow Azure services" firewall rule (it runs inside Azure). The deploy workflow starts
 // it and waits for Succeeded BEFORE the health gate, so the schema exists before the app's first (scale-from-zero) boot.
 resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
@@ -222,7 +222,7 @@ resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
           name: 'dbapply'
           image: image
           resources: { cpu: json(cpu), memory: memory }
-          // args append to the image ENTRYPOINT ["dotnet","Crawldad.Web.dll"] ⇒ `dotnet Crawldad.Web.dll db-apply`.
+          // args append to the image ENTRYPOINT ["dotnet","Crawldad.Api.dll"] ⇒ `dotnet Crawldad.Api.dll db-apply`.
           args: [ 'db-apply' ]
           // No storage config ⇒ the host defaults to the filesystem provider (valid with its default Root), so the
           // job boots on just the Marten connection; db-apply only applies schema and needs no tenants/blob.

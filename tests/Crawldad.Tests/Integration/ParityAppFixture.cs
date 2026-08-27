@@ -1,7 +1,7 @@
 using Alba;
+using Crawldad.Api.Infrastructure.Browser;
+using Crawldad.Api.Infrastructure.Browser.Real;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Browser;
-using Crawldad.Web.Infrastructure.Browser.Real;
 using Marten;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;

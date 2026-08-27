@@ -1,7 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using Crawldad.Web.Infrastructure.Browser;
-using Crawldad.Web.Infrastructure.Browser.Real;
+using Crawldad.Api.Infrastructure.Browser;
+using Crawldad.Api.Infrastructure.Browser.Real;
 using Microsoft.Playwright;
 
 namespace Crawldad.Tests.Support;

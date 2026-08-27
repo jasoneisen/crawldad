@@ -1,6 +1,6 @@
 using System.IO;
+using Crawldad.Api.Infrastructure.Browser;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Browser;
 
 namespace Crawldad.Tests.Integration;
 

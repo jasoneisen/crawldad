@@ -3,8 +3,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Alba;
+using Crawldad.Api.Infrastructure.Browser.Fake;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Browser.Fake;
 using Microsoft.AspNetCore.TestHost;
 
 namespace Crawldad.Tests.Integration;

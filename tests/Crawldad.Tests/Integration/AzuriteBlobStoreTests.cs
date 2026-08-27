@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Azure.Storage.Blobs;
+using Crawldad.Api.Infrastructure.Storage;
+using Crawldad.Api.Infrastructure.Storage.Azure;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Infrastructure.Storage;
-using Crawldad.Web.Infrastructure.Storage.Azure;
 using Microsoft.Extensions.Options;
 using Xunit.Abstractions;
 

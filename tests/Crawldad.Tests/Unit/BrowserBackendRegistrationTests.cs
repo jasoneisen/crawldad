@@ -1,9 +1,9 @@
 using System.Collections.Generic;
+using Crawldad.Api.Features.Runs;
+using Crawldad.Api.Infrastructure.Browser;
+using Crawldad.Api.Infrastructure.Browser.Real;
+using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Tests.Support;
-using Crawldad.Web.Features.Runs;
-using Crawldad.Web.Infrastructure.Browser;
-using Crawldad.Web.Infrastructure.Browser.Real;
-using Crawldad.Web.Infrastructure.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -35,7 +35,7 @@ public class BrowserBackendRegistrationTests
         sp.GetRequiredKeyedService<IBrowserBackend>("local").ShouldBeOfType<LocalChromiumBackend>();
         sp.GetRequiredKeyedService<IBrowserBackend>("browserless").ShouldBeOfType<BrowserlessBackend>();
         sp.GetRequiredKeyedService<IBrowserBackend>("browserbase").ShouldBeOfType<BrowserbaseBackend>();
-        sp.GetRequiredKeyedService<IBrowserBackend>("fake").ShouldBeOfType<Crawldad.Web.Infrastructure.Browser.Fake.FakeBrowserBackend>();
+        sp.GetRequiredKeyedService<IBrowserBackend>("fake").ShouldBeOfType<Crawldad.Api.Infrastructure.Browser.Fake.FakeBrowserBackend>();
 
         sp.GetRequiredService<ISecretStore>().ShouldBeOfType<ConfigurationSecretStore>();
         sp.GetRequiredService<IAssetCache>().ShouldBeOfType<InMemoryAssetCache>();

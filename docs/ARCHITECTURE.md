@@ -31,7 +31,7 @@ C4Container
     title Container view — Crawldad
     Person(client, "API client")
     System_Boundary(cd, "Crawldad") {
-        Container(web, "Crawldad.Web", ".NET 10 · Wolverine.HTTP · Marten", "Vertical-slice JSON API (payloads, runs); the payload interpreter; browser/storage/secret seams; SSE tail")
+        Container(web, "Crawldad.Api", ".NET 10 · Wolverine.HTTP · Marten", "Vertical-slice JSON API (payloads, runs); the payload interpreter; browser/storage/secret seams; SSE tail")
         ContainerDb(pg, "Postgres", "Marten + Wolverine", "Event store (run trace + payload history), projections, saga storage, durable queues, admission queue")
         Container(blob, "Blob storage", "filesystem (default) / Azure Blob", "Downloaded attachments + failure/explicit screenshots; tenant-partitioned, TTL-governed")
     }
@@ -178,7 +178,7 @@ The POC floor of B.3 is realized as code in [`infra/`](../infra) (subscription-s
 | Resource group | `rg-crawldad-stg-cus` | holds everything below |
 | Container Apps env | `cae-crawldad-stg` | Consumption-only; no VNet, no workload profile |
 | Container app | `ca-crawldad-stg` | HTTP ingress 8080, **scale-to-zero** (min 0 / max 1), 0.5 vCPU / 1 GiB |
-| db-apply job | `caj-crawldad-stg-dbapply` | runs `dotnet Crawldad.Web.dll db-apply` on demand |
+| db-apply job | `caj-crawldad-stg-dbapply` | runs `dotnet Crawldad.Api.dll db-apply` on demand |
 | Postgres Flexible | `psql-crawldad-stg-<uniq>` | Burstable **B1ms**, 32 GiB, PG16, no HA, public + firewalled to Azure services |
 | Storage account | `stcrawldadstg<uniq>` | LRS; blob container `crawldad-blobs` (tenant-partitioned) + `dataprotection` (the persisted key ring) |
 | Key Vault | `kv-crawldad-stg-<uniq>` | RBAC; marten + blob connection strings + placeholder tenant key + `dataprotection` key-ring wrapping key (RSA 2048) |
