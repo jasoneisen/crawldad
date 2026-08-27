@@ -1,0 +1,139 @@
+@page "/login"
+@inject IPortalAuthService Auth
+@inject NavigationManager Nav
+
+<PageTitle>Sign in · Crawldad</PageTitle>
+
+@*
+    Passwordless email-OTP sign-in, static SSR so the form handler runs on the real HTTP POST and can issue the
+    cookie (HttpContext.SignInAsync) before the response is sent. One form, two steps (a hidden Step field): enter
+    email → enter the emailed code. Behaviour is identical for known and unknown addresses (no enumeration).
+*@
+<div class="container container-tight py-6">
+    <div class="text-center mb-4">
+        <a href="/" class="navbar-brand navbar-brand-autodark h1">Crawldad</a>
+    </div>
+    <div class="card card-md">
+        <div class="card-body">
+            <h2 class="h3 text-center mb-1">Sign in</h2>
+            <p class="text-secondary text-center mb-4">We'll email you a one-time code — no password needed.</p>
+
+            @if (_status is not null)
+            {
+                <div class="alert alert-info" role="status">@_status</div>
+            }
+            @if (_error is not null)
+            {
+                <div class="alert alert-danger" role="alert">@_error</div>
+            }
+
+            <EditForm Model="Input" FormName="login" OnValidSubmit="HandleSubmitAsync">
+                <DataAnnotationsValidator />
+                <input type="hidden" name="Input.Step" value="@Input.Step" />
+                <input type="hidden" name="Input.ReturnUrl" value="@Input.ReturnUrl" />
+
+                <div class="mb-3">
+                    <label class="form-label" for="email">Email address</label>
+                    <InputText id="email" type="email" class="form-control" autocomplete="email"
+                               readonly="@IsVerifyStep" @bind-Value="Input.Email" />
+                    <ValidationMessage For="() => Input.Email" />
+                </div>
+
+                @if (IsVerifyStep)
+                {
+                    <div class="mb-3">
+                        <label class="form-label" for="code">Sign-in code</label>
+                        <InputText id="code" class="form-control" autocomplete="one-time-code"
+                                   placeholder="6-character code" @bind-Value="Input.Code" />
+                    </div>
+                }
+
+                <div class="form-footer">
+                    <button type="submit" class="btn btn-primary w-100">
+                        @(IsVerifyStep ? "Verify & sign in" : "Email me a code")
+                    </button>
+                </div>
+            </EditForm>
+
+            @if (IsVerifyStep)
+            {
+                <p class="text-center text-secondary mt-3">
+                    <a href="/login">Use a different email</a>
+                </p>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    public HttpContext HttpContext { get; set; } = default!;
+
+    // No initializer here (BL0008): a form post would clobber it. The framework binds it on POST; on GET it is
+    // null, so OnInitialized seeds a fresh instance.
+    [SupplyParameterFromForm]
+    public LoginInput Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    private string? _status;
+    private string? _error;
+
+    private bool IsVerifyStep => string.Equals(Input.Step, LoginInput.StepVerify, StringComparison.Ordinal);
+
+    protected override void OnInitialized() => Input ??= new();
+
+    protected override void OnParametersSet()
+    {
+        // Seed the hidden ReturnUrl from the query the auth middleware adds, but only on the initial GET — once the
+        // form carries it, the posted value wins.
+        if (string.IsNullOrEmpty(Input.ReturnUrl) && !string.IsNullOrEmpty(ReturnUrl))
+        {
+            Input.ReturnUrl = ReturnUrl;
+        }
+    }
+
+    private async Task HandleSubmitAsync()
+    {
+        if (IsVerifyStep)
+        {
+            await VerifyAsync();
+        }
+        else
+        {
+            await RequestAsync();
+        }
+    }
+
+    private async Task RequestAsync()
+    {
+        var email = PortalAuthService.NormalizeEmail(Input.Email);
+        var outcome = await Auth.RequestCodeAsync(email, HttpContext.RequestAborted);
+
+        Input.Email = email;
+        Input.Code = "";
+        Input.Step = LoginInput.StepVerify;
+        _status = OtpMessages.DescribeRequest(outcome, email);
+        _error = null;
+    }
+
+    private async Task VerifyAsync()
+    {
+        var result = await Auth.VerifyCodeAsync(Input.Email, Input.Code, HttpContext.RequestAborted);
+        if (result.Outcome != VerifyOutcome.Success)
+        {
+            Input.Step = LoginInput.StepVerify;
+            _status = null;
+            _error = OtpMessages.DescribeFailure(result.Outcome);
+            return;
+        }
+
+        await HttpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            PortalPrincipal.Create(result.Email, result.DisplayName),
+            new AuthenticationProperties { IsPersistent = true });
+        // Static SSR issues the redirect by throwing NavigationException; control does not return past this call.
+        Nav.NavigateTo(SafeRedirect.ToLocalOrApp(Input.ReturnUrl), forceLoad: true);
+    }
+}

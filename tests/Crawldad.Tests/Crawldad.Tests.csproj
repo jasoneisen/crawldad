@@ -16,13 +16,13 @@
     <ThresholdType>line,branch</ThresholdType>
     <ThresholdStat>total</ThresholdStat>
     <!-- Measure ONLY product assemblies (excludes the test assembly + framework). -->
-    <Include>[Crawldad.Api]*,[Crawldad.Contracts]*,[Crawldad.Client]*</Include>
+    <Include>[Crawldad.Api]*,[Crawldad.Contracts]*,[Crawldad.Client]*,[Crawldad.Portal]*</Include>
     <!-- Don't count trivial auto-property accessors on DTOs/aggregates. -->
     <SkipAutoProps>true</SkipAutoProps>
     <!-- Exclude framework source-generated dispatchers (Marten/JasperFx/Wolverine evolvers) and the entry-point
          shell. Program.cs is listed explicitly so a future file that happens to be named Program.cs is still
          counted rather than silently dropped from the gate. -->
-    <ExcludeByFile>**/obj/**/*.cs,**/src/Crawldad.Api/Program.cs</ExcludeByFile>
+    <ExcludeByFile>**/obj/**/*.cs,**/src/Crawldad.Api/Program.cs,**/src/Crawldad.Portal/Program.cs</ExcludeByFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,6 +35,9 @@
     </PackageReference>
     <PackageReference Include="Alba" />
     <PackageReference Include="Shouldly" />
+    <!-- Portal (Blazor SSR) tests. -->
+    <PackageReference Include="bunit" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <!-- Real-Chromium integration tests: drive the local adapter, start a local Playwright run-server for the
          native-connect path, and launch a CDP endpoint for the connectOverCDP path. -->
     <PackageReference Include="Microsoft.Playwright" />
@@ -46,6 +49,7 @@
     <ProjectReference Include="..\..\src\Crawldad.Api\Crawldad.Api.csproj" />
     <ProjectReference Include="..\..\src\Crawldad.Contracts\Crawldad.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Crawldad.Client\Crawldad.Client.csproj" />
+    <ProjectReference Include="..\..\src\Crawldad.Portal\Crawldad.Portal.csproj" />
   </ItemGroup>
 
   <!-- The suite hosts the ASP.NET app (Alba) and tests its Data-Protection wiring, so reference the shared framework

@@ -1,0 +1,10 @@
+/* Portal-specific tweaks on top of vendored Tabler. Kept intentionally small — Tabler carries the design. */
+html,
+body {
+    height: 100%;
+}
+
+.container-tight {
+    max-width: 30rem;
+    margin-inline: auto;
+}

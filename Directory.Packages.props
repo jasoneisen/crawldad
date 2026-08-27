@@ -75,6 +75,10 @@
     <PackageVersion Include="coverlet.msbuild" Version="6.0.4" />
     <PackageVersion Include="Alba" Version="8.5.2" />
     <PackageVersion Include="Shouldly" Version="4.2.1" />
+    <!-- Portal (Blazor SSR) tests: bUnit for component/layout/nav rendering; WebApplicationFactory (Mvc.Testing)
+         drives the real OTP HTTP flow with cookies + antiforgery + redirects. -->
+    <PackageVersion Include="bunit" Version="2.7.2" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
   </ItemGroup>
 
   <!-- Extra linters, applied to every project (PrivateAssets=all is implied by GlobalPackageReference). -->

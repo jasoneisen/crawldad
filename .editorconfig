@@ -108,6 +108,17 @@ dotnet_diagnostic.CA1056.severity = none
 dotnet_diagnostic.CA1032.severity = none
 dotnet_diagnostic.RCS1194.severity = none
 
+[src/Crawldad.Portal/Auth/**.cs]
+# Email addresses are stored case-folded to their canonical lower-invariant form (the account identity/key).
+# CA1308 prefers ToUpperInvariant for normalization, which is the wrong casing for an email key. Off here only.
+dotnet_diagnostic.CA1308.severity = none
+# The post-sign-in ReturnUrl is a same-site relative PATH carried through the form and validated as local by
+# SafeRedirect — a plain string, not a System.Uri to construct. CA1054/CA1056 are folder-scoped elsewhere (the
+# API's browser/webhook slices), never global, so this scope needs its own.
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+
 [tests/**.cs]
 # Tests legitimately have public fixtures, magic values, short-lived disposables, and unused-looking params.
 dotnet_diagnostic.CA1707.severity = none   # underscores in test method names
@@ -116,3 +127,4 @@ dotnet_diagnostic.CA2007.severity = none   # ConfigureAwait not needed in tests
 dotnet_diagnostic.CA2000.severity = none   # short-lived HttpClient/handler in test helpers
 dotnet_diagnostic.CA1869.severity = none   # one-off JsonSerializerOptions in tests
 dotnet_diagnostic.CA1711.severity = none   # xUnit collection classes conventionally end in 'Collection'
+dotnet_diagnostic.CA1308.severity = none   # tests deliberately lower-case inputs to exercise case-insensitive handling
