@@ -50,30 +50,23 @@ public static class PortalHost
         AddEmailSender(builder);
         AddTenantLinking(builder);
 
-        // Cookie authentication — the ASP.NET cookie handler directly, no ASP.NET Identity framework.
-        builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-            .AddCookie(options =>
-            {
-                options.Cookie.Name = "crawldad.portal.auth";
-                options.Cookie.HttpOnly = true;
-                options.Cookie.SameSite = SameSiteMode.Lax;
-                // Dev runs over http; production terminates TLS in front, so only send the cookie over https there.
-                options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
-                    ? CookieSecurePolicy.SameAsRequest
-                    : CookieSecurePolicy.Always;
-                options.LoginPath = "/login";
-                options.LogoutPath = "/auth/signout";
-                options.ExpireTimeSpan = TimeSpan.FromDays(7);
-                options.SlidingExpiration = true;
-            });
-        builder.Services.AddAuthorization();
+        AddCookieAuthentication(builder);
 
-        // Blazor Web App — Interactive Server render mode ONLY (no WebAssembly). Note: every page in this skeleton
-        // is static SSR (no @rendermode), which is what lets the login form handler call HttpContext.SignInAsync
-        // to issue the cookie. The first page to opt into @rendermode InteractiveServer runs over a circuit with a
-        // null cascaded HttpContext, so cookie issuance must stay on this static-SSR POST, never move into it.
+        // Blazor Web App — Interactive Server render mode ONLY (no WebAssembly). Almost every page is static SSR (no
+        // @rendermode), which is what lets the login form handler call HttpContext.SignInAsync to issue the cookie.
+        // The ONE exception is the live-trace page (/app/live/{runId}, @rendermode InteractiveServer), which runs over
+        // a circuit with a null cascaded HttpContext — so cookie ISSUANCE must stay on this static-SSR POST and never
+        // move into an interactive page. The live page only READS auth state (via AuthenticationStateProvider, below),
+        // it never issues a cookie.
         builder.Services.AddRazorComponents()
             .AddInteractiveServerComponents();
+
+        // Auth state for the interactive circuit. The static-SSR pages read HttpContext.User directly (cascaded), but a
+        // circuit has no HttpContext — so the live page reads the signed-in user through AuthenticationStateProvider,
+        // which the framework seeds from the authenticated connection on a circuit (and from HttpContext.User during
+        // prerender). This flows only the identity claims (already in the auth cookie, browser-visible); the tenant API
+        // key is never part of it. AddCascadingAuthenticationState also makes <AuthorizeView>/cascading auth available.
+        builder.Services.AddCascadingAuthenticationState();
 
         return builder;
     }
@@ -107,6 +100,27 @@ public static class PortalHost
         return app;
     }
 
+    // Cookie authentication — the ASP.NET cookie handler directly, no ASP.NET Identity framework.
+    private static void AddCookieAuthentication(WebApplicationBuilder builder)
+    {
+        builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+            .AddCookie(options =>
+            {
+                options.Cookie.Name = "crawldad.portal.auth";
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SameSite = SameSiteMode.Lax;
+                // Dev runs over http; production terminates TLS in front, so only send the cookie over https there.
+                options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+                    ? CookieSecurePolicy.SameAsRequest
+                    : CookieSecurePolicy.Always;
+                options.LoginPath = "/login";
+                options.LogoutPath = "/auth/signout";
+                options.ExpireTimeSpan = TimeSpan.FromDays(7);
+                options.SlidingExpiration = true;
+            });
+        builder.Services.AddAuthorization();
+    }
+
     // Portal → Crawldad tenant link + the per-request typed API client (Crawldad.Client). The signed-in user's link
     // (normalized email → tenant id + Data-Protection-encrypted API key) is resolved per request by
     // IPortalTenantContext, which hands the data pages a CrawldadClient authenticated as that tenant — or a clean
@@ -120,6 +134,10 @@ public static class PortalHost
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IPortalTenantLinkStore, MartenPortalTenantLinkStore>();
         builder.Services.AddScoped<IPortalTenantContext, PortalTenantContext>();
+
+        // The circuit-safe resolver the interactive live-trace page uses: same link → same tenant client as the
+        // per-request context, but sourced from AuthenticationStateProvider instead of the (circuit-null) HttpContext.
+        builder.Services.AddScoped<ICircuitTenantResolver, CircuitTenantResolver>();
 
         // The account area's real link-creation path: validates a submitted key against the live API before persisting,
         // so a wrong key is never stored. Stateless over the store + the same pooled API HttpClient.

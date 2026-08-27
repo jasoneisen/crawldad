@@ -1,24 +1,133 @@
 @page "/app/live"
 @layout AppLayout
 @attribute [Authorize]
+@using Crawldad.Contracts.Runs
+@using Crawldad.Portal.Runs
+@using Crawldad.Portal.Tenancy
+@inject IPortalTenantContext Tenant
 
-<PageTitle>Live trace · Crawldad</PageTitle>
+<PageTitle>Live · Crawldad</PageTitle>
 
 @*
-    Empty-state placeholder. The live event feed (SSE over Crawldad.Client) is wired in a later task (#68).
+    The live PICKER (static SSR): the currently running + queued runs, each linking to its interactive trace at
+    /app/live/{runId}. Mirrors the runs-list page's tenant-resolution + not-linked/empty branches. The trace itself is
+    the one interactive page (Live.razor's sibling LiveTrace.razor, @rendermode InteractiveServer).
 *@
-<div class="page-header">
-    <h1 class="page-title">Live trace</h1>
-</div>
-
-<div class="card mt-3">
-    <div class="empty">
-        <div class="empty-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" /><path d="M14.828 9.172a4 4 0 0 1 0 5.656" /><path d="M17.657 6.343a8 8 0 0 1 0 11.314" /><path d="M9.168 14.828a4 4 0 0 1 0 -5.656" /><path d="M6.337 17.657a8 8 0 0 1 0 -11.314" /></svg>
+<div class="page-header d-print-none">
+    <div class="row g-2 align-items-center">
+        <div class="col">
+            <h1 class="page-title">Live trace</h1>
+            <div class="page-pretitle text-secondary">Runs streaming their step-by-step trace right now.</div>
         </div>
-        <p class="empty-title">Nothing running right now</p>
-        <p class="empty-subtitle text-secondary">
-            While a run is in flight, its step-by-step trace of navigations, extractions, and misses streams here live.
-        </p>
     </div>
 </div>
+
+@if (_active is null)
+{
+    <div class="card mt-3" data-testid="not-linked">
+        <div class="empty">
+            <p class="empty-title">No workspace linked</p>
+            <p class="empty-subtitle text-secondary">
+                This account isn't linked to a Crawldad workspace yet, so there's nothing running to watch. Link a
+                workspace from your account to follow live runs here.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account" class="btn btn-primary">Go to Account</a>
+            </div>
+        </div>
+    </div>
+}
+else if (_active.Count == 0)
+{
+    <div class="card mt-3" data-testid="none-active">
+        <div class="empty">
+            <div class="empty-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" /><path d="M14.828 9.172a4 4 0 0 1 0 5.656" /><path d="M17.657 6.343a8 8 0 0 1 0 11.314" /><path d="M9.168 14.828a4 4 0 0 1 0 -5.656" /><path d="M6.337 17.657a8 8 0 0 1 0 -11.314" /></svg>
+            </div>
+            <p class="empty-title">Nothing running right now</p>
+            <p class="empty-subtitle text-secondary">
+                While a run is in flight, its step-by-step trace of navigations, extractions, and misses streams here
+                live. Start a run to watch it move.
+            </p>
+            <div class="empty-action">
+                <a href="/app/runs" class="btn btn-primary">Back to runs</a>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card mt-3" data-testid="active-list">
+        <div class="card-header">
+            <h3 class="card-title"><i class="ti ti-broadcast me-2 text-azure"></i>Active runs</h3>
+            <div class="card-actions text-secondary">@_active.Count streaming</div>
+        </div>
+        <div class="card-table table-responsive">
+            <table class="table table-vcenter">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Run</th>
+                        <th>Payload</th>
+                        <th>Started</th>
+                        <th>Region</th>
+                        <th class="w-1"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var run in _active)
+                    {
+                        <tr data-testid="active-row">
+                            <td><span class="status @RunView.StatusCss(run.Status)"><span class="status-dot status-dot-animated"></span>@run.Status</span></td>
+                            <td><a href="/app/live/@run.RunId" class="run-id fw-bold">@RunView.ShortId(run.RunId)</a></td>
+                            <td class="payload-cell">
+                                <span>@run.PayloadName</span>
+                                @if (run.Inline)
+                                {
+                                    <span class="rev-pill">inline</span>
+                                }
+                                else if (run.PayloadRevision is not null)
+                                {
+                                    <span class="rev-pill">r@(run.PayloadRevision)</span>
+                                }
+                            </td>
+                            <td class="text-secondary mono">@RunView.Timestamp(run.StartedAt)</td>
+                            <td>
+                                @if (run.Region is not null)
+                                {
+                                    <span class="region">@run.Region</span>
+                                }
+                                else
+                                {
+                                    <span class="text-secondary">—</span>
+                                }
+                            </td>
+                            <td><a href="/app/live/@run.RunId" class="btn btn-sm btn-outline-primary" data-testid="watch-link"><i class="ti ti-player-play me-1"></i>Watch</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    // Null once resolved => the account is not linked to a tenant (the not-linked empty state); otherwise the running +
+    // queued runs (possibly empty => the "nothing running" state).
+    private IReadOnlyList<RunListItem>? _active;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var tenant = await Tenant.TryResolveAsync();
+        if (tenant is null)
+        {
+            return; // _active stays null => not-linked empty state
+        }
+
+        // Running first, then queued — the two live dispositions, each a separate status filter (GET /runs?status=…).
+        // size:100 takes the whole active set in one page (the concurrent-run + queue-depth caps keep it small).
+        var running = await tenant.Client.ListRunsAsync(status: RunStatus.Running, size: 100);
+        var queued = await tenant.Client.ListRunsAsync(status: RunStatus.Queued, size: 100);
+        _active = [.. running.Runs, .. queued.Runs];
+    }
+}

@@ -152,3 +152,116 @@ body {
 .page-pretitle {
     font-size: 0.8125rem;
 }
+
+/* ===== Live trace (issue #119) ===== */
+.datacard {
+    background: var(--tblr-bg-surface-secondary);
+    border-radius: 10px;
+    padding: 0.7rem 0.85rem;
+}
+
+.kpi-sub {
+    color: var(--tblr-secondary);
+    font-size: 0.8125rem;
+}
+
+/* The SSE event feed — a monospace, log-style list. */
+.evt-feed {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem;
+}
+
+.evt {
+    display: grid;
+    grid-template-columns: 3rem 9rem 1fr;
+    gap: 0.75rem;
+    padding: 0.42rem 0.6rem;
+    border-radius: 6px;
+    align-items: baseline;
+}
+
+.evt + .evt {
+    margin-top: 1px;
+}
+
+.evt:hover {
+    background: var(--tblr-bg-surface-secondary);
+}
+
+.evt .id {
+    color: #98a2b3;
+    text-align: right;
+}
+
+.evt .type {
+    font-weight: 600;
+}
+
+.evt .data {
+    color: var(--tblr-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Per-event-family accents (mirrors the mockup's palette). */
+.evt.e-nav .type {
+    color: #4263eb;
+}
+
+.evt.e-step .type {
+    color: #41506b;
+}
+
+.evt.e-extract .type {
+    color: #2f9e44;
+}
+
+.evt.e-fill .type {
+    color: #0ca678;
+}
+
+.evt.e-click .type {
+    color: #1d6fb8;
+}
+
+.evt.e-wait .type {
+    color: #7a8699;
+}
+
+.evt.e-log .type {
+    color: #5b6675;
+}
+
+.evt.e-shot .type,
+.evt.e-cap .type {
+    color: #ae3ec9;
+}
+
+.evt.e-miss .type {
+    color: #c15515;
+}
+
+.evt.e-miss {
+    background: rgba(193, 85, 21, 0.06);
+}
+
+.evt.e-fail .type {
+    color: #d63939;
+}
+
+/* The blinking tail cursor shown while the run is still live. */
+.cursor-blink {
+    display: inline-block;
+    width: 0.55rem;
+    height: 1rem;
+    background: #4263eb;
+    vertical-align: text-bottom;
+    animation: cd-cblink 1.1s steps(1) infinite;
+}
+
+@keyframes cd-cblink {
+    50% {
+        opacity: 0;
+    }
+}

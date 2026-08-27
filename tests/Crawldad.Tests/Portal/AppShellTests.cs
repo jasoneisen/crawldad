@@ -16,7 +16,7 @@ public class AppShellTests(PortalFixture fixture)
     [
         ("/app", "Welcome to Crawldad"),
         ("/app/runs", "No workspace linked"),
-        ("/app/live", "Nothing running right now"),
+        ("/app/live", "No workspace linked"), // the live picker now resolves the tenant; unlinked → not-linked state
         ("/app/payloads", "No workspace linked"),
         ("/app/webhooks", "No workspace linked"),
         ("/app/account", "API keys"),
