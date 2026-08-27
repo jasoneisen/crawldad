@@ -1,5 +1,6 @@
-// Key Vault (RBAC) holding the app's three secrets + the Data Protection key-ring wrapping key (issue #65), plus the
-// app identity's read (Secrets User) and wrap/unwrap (Crypto User) grants.
+// Key Vault (RBAC) holding the app's three secrets + the two Data Protection key-ring wrapping keys (the API host's,
+// issue #65, and the portal host's, issue #119), plus the app identity's read (Secrets User) and wrap/unwrap
+// (Crypto User) grants. The Crypto User grant is vault-scoped, so it covers both wrapping keys with no second grant.
 //
 // The two connection strings are COMPOSED here (not passed in) so the Postgres password and the storage account key
 // never become deployment outputs: the marten string is built from the secure password + the Postgres FQDN, and the
@@ -121,8 +122,8 @@ resource kvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// The key wrapping the persisted Data Protection key ring (issue #65). RSA 2048; only wrap/unwrap are needed. The app
-// references it by its VERSIONLESS id so key rotation keeps decrypting existing keys (encrypt uses the latest version).
+// The key wrapping the API host's persisted Data Protection key ring (issue #65). RSA 2048; only wrap/unwrap are needed.
+// The app references it by its VERSIONLESS id so key rotation keeps decrypting existing keys (encrypt uses the latest version).
 resource dataProtectionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
   parent: kv
   name: 'dataprotection'
@@ -133,7 +134,21 @@ resource dataProtectionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
   }
 }
 
-// Crypto User (wrap/unwrap), vault-scoped like the Secrets User grant above — the vault's only key is the one above.
+// The key wrapping the PORTAL host's persisted Data Protection key ring (issue #119) — its own wrapping key, symmetric
+// with the API's above. Referenced versionless for the same rotation reason. The app identity already holds vault-wide
+// Crypto User (the grant below is vault-scoped), so wrapping with THIS key needs no additional role assignment.
+resource dataProtectionPortalKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
+  parent: kv
+  name: 'dataprotection-portal'
+  properties: {
+    kty: 'RSA'
+    keySize: 2048
+    keyOps: [ 'wrapKey', 'unwrapKey' ]
+  }
+}
+
+// Crypto User (wrap/unwrap), vault-scoped like the Secrets User grant above — it covers every key in the vault (the
+// API's dataprotection key AND the portal's dataprotection-portal key), so a second key needs no second grant.
 resource kvCryptoUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(kv.id, appIdentityPrincipalId, kvCryptoUserRoleId)
   scope: kv
@@ -150,3 +165,4 @@ output martenSecretName string = martenSecret.name
 output blobSecretName string = blobSecret.name
 output tenantKeySecretName string = tenantKeySecret.name
 output dataProtectionKeyId string = dataProtectionKey.properties.keyUri
+output dataProtectionPortalKeyId string = dataProtectionPortalKey.properties.keyUri

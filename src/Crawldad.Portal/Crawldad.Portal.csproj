@@ -8,6 +8,13 @@
     <!-- Document storage for the portal's own users, OTP challenges, and tenant links. Marten is used standalone
          here (no Wolverine/event-store): the portal is a thin auth+shell host, not part of the API's pipeline. -->
     <PackageReference Include="Marten" />
+    <!-- Persist the portal's Data Protection key ring to a blob wrapped by a Key Vault key (issue #119),
+         authenticated with the app's managed identity — so auth cookies AND the Data-Protected tenant API keys stored
+         on PortalTenantLink survive a container restart/replace. Wired only when Crawldad:Portal:DataProtection is
+         configured; absent config keeps the framework's default local ring (dev/tests untouched). Mirrors the API. -->
+    <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" />
+    <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Keys" />
+    <PackageReference Include="Azure.Identity" />
   </ItemGroup>
 
   <ItemGroup>

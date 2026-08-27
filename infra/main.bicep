@@ -86,6 +86,12 @@ param storageContainer string = 'crawldad-blobs'
 var dataProtectionContainer = 'dataprotection'
 var dataProtectionBlob = 'keyring.xml'
 
+// The PORTAL host's persisted Data Protection key ring (issue #119): its OWN container + blob, wrapped by its OWN Key
+// Vault key — kept separate from the API's ring above so a redeploy never orphans the portal's auth cookies or the
+// Data-Protected tenant API keys it stores. Also deterministic names, so the param files are untouched.
+var portalDataProtectionContainer = 'dataprotection-portal'
+var portalDataProtectionBlob = 'keyring.xml'
+
 // ── Scale / sizing ────────────────────────────────────────────────────────────────────
 @description('Min replicas. Staging defaults to 0 (scale-to-zero) for cost; see the scale-to-zero trade-off in ARCHITECTURE.md B.3.')
 @minValue(0)
@@ -187,6 +193,7 @@ module storage 'modules/storage.bicep' = {
     tags: tags
     containerName: storageContainer
     dataProtectionContainer: dataProtectionContainer
+    portalDataProtectionContainer: portalDataProtectionContainer
     appIdentityPrincipalId: identity.outputs.principalId
   }
 }
@@ -234,6 +241,8 @@ module app 'modules/app.bicep' = {
     storageContainer: storageContainer
     keyRingBlobUri: '${storage.outputs.blobEndpoint}${dataProtectionContainer}/${dataProtectionBlob}'
     dataProtectionKeyId: keyvault.outputs.dataProtectionKeyId
+    portalKeyRingBlobUri: '${storage.outputs.blobEndpoint}${portalDataProtectionContainer}/${portalDataProtectionBlob}'
+    portalDataProtectionKeyId: keyvault.outputs.dataProtectionPortalKeyId
     tenantId: tenantId
     tenantActor: tenantActor
     betaTenantId: betaTenantId
