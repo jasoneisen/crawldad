@@ -26,6 +26,25 @@ public class PortalRunsIntegrationTests(PortalFixture fixture)
     }
 
     [Fact]
+    public async Task Replay_form_post_without_an_antiforgery_token_is_rejected()
+    {
+        using var client = fixture.NewClient();
+        await PortalHttp.SignInAsync(client, fixture.App.Email, NewEmail());
+
+        // The static-SSR replay form posts to the run-detail route; a post that omits the framework antiforgery token is
+        // turned away by UseAntiforgery() before the component ever runs — the form is antiforgery-protected.
+        var form = new FormUrlEncodedContent(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["_handler"] = "replay-run",
+            ["ReplayForm.Inputs"] = "{}",
+            // deliberately no __RequestVerificationToken
+        });
+        var resp = await client.PostAsync(PortalHttp.Rel($"/app/runs/{Guid.NewGuid()}"), form);
+
+        resp.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task Screenshot_proxy_redirects_an_unauthenticated_request_to_login()
     {
         using var client = fixture.NewClient();

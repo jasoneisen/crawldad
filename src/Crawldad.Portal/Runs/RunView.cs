@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Crawldad.Contracts.Runs;
 
 namespace Crawldad.Portal.Runs;
@@ -144,4 +145,53 @@ internal static class RunView
     /// status, payload, or either time bound counts.</summary>
     public static bool HasFilter(RunStatus? status, Guid? payloadId, DateTimeOffset? from, DateTimeOffset? to) =>
         status is not null || payloadId is not null || from is not null || to is not null;
+
+    /// <summary>Parses the replay form's free-text JSON <paramref name="raw"/> inputs into a <see cref="JsonElement"/> to
+    /// resupply to a replay. A blank/whitespace box means "no inputs": it succeeds with a default (<c>Undefined</c>)
+    /// element the SDK normalizes to an empty object. A non-blank box must parse to a JSON <b>object</b> (run inputs are
+    /// an object of backend binding + parameters); invalid JSON or a non-object (array/scalar) fails so the page shows a
+    /// friendly error instead of posting a malformed body.</summary>
+    /// <param name="raw">The textarea contents (may be null/blank).</param>
+    /// <param name="inputs">The parsed inputs on success (a clone, valid after the parsed document is disposed), else default.</param>
+    /// <returns>True when the inputs are blank or a valid JSON object; false for invalid or non-object JSON.</returns>
+    public static bool TryParseReplayInputs(string? raw, out JsonElement inputs)
+    {
+        inputs = default;
+        var trimmed = raw?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return true; // blank => no inputs (the SDK normalizes the default element to {})
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false; // inputs are an object — reject an array / scalar / null
+            }
+
+            inputs = document.RootElement.Clone(); // detach from the about-to-be-disposed document
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Maps a replay <see cref="RunRejection"/> slug to a friendly, secret-free sentence for the run-detail
+    /// page. The known control-surface slugs get purpose-written copy; any other rejection falls back to the API's own
+    /// message (a rejection body is already a plain control message — it never carries request inputs or key material).</summary>
+    /// <param name="code">The rejection slug (e.g. <c>queue_depth_exceeded</c>).</param>
+    /// <param name="apiMessage">The rejection's own message, used as the fallback.</param>
+    /// <returns>A user-facing explanation.</returns>
+    public static string ReplayRejectionMessage(string code, string apiMessage) => code switch
+    {
+        "queue_depth_exceeded" => "Your workspace's run queue is full right now. Wait for some runs to finish, then replay again.",
+        "inline_not_replayable" => "This run executed an inline payload, so it can't be replayed — only runs pinned to a managed payload are replayable.",
+        "payload_archived" => "The pinned payload has been archived, so it can't be replayed.",
+        "unknown_payload" or "unknown_revision" => "The pinned payload revision no longer exists, so it can't be replayed.",
+        _ => apiMessage,
+    };
 }

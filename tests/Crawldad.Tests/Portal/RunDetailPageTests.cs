@@ -4,6 +4,7 @@ using Crawldad.Contracts.Runs;
 using Crawldad.Portal.Components.Pages.App;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Client;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Portal;
@@ -17,6 +18,10 @@ public class RunDetailPageTests : BunitContext
     private static readonly Guid _runId = new("7b3ad9f2-1c4e-4a08-9f21-2c9e5d1a4f60");
     private static readonly Guid _payloadId = new("9a3c0000-0000-0000-0000-000000000001");
     private static readonly DateTimeOffset _started = new(2026, 8, 27, 8, 22, 14, TimeSpan.Zero);
+
+    // A pinned run now renders the antiforgery-protected replay form, whose token lookup needs a state provider.
+    public RunDetailPageTests() =>
+        Services.AddSingleton<AntiforgeryStateProvider>(new StubAntiforgeryStateProvider());
 
     private void Linked(RunTimelineResponse timeline, RunDriftResponse? drift = null)
     {
