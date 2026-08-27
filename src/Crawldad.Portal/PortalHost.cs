@@ -116,6 +116,10 @@ public static class PortalHost
         builder.Services.AddSingleton<IPortalTenantLinkStore, MartenPortalTenantLinkStore>();
         builder.Services.AddScoped<IPortalTenantContext, PortalTenantContext>();
 
+        // The account area's real link-creation path: validates a submitted key against the live API before persisting,
+        // so a wrong key is never stored. Stateless over the store + the same pooled API HttpClient.
+        builder.Services.AddScoped<IWorkspaceLinker, WorkspaceLinker>();
+
         // One pooled HttpClient the SDK rides on, base address from config (validated at boot so a missing/malformed
         // URL fails loudly here, not on the first API call). The per-request API key is applied by the context — the
         // client is never registered with a baked-in or empty key.

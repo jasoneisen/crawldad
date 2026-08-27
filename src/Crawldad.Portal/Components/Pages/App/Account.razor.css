@@ -1,0 +1,75 @@
+/* Scoped visuals for the account/usage page. Custom KPI + meter + key-value styling on top of Tabler; colours come
+   from Tabler CSS variables so the page follows the active theme. */
+
+/* Key/value pairs (profile + plan ladder). */
+.account-kv {
+    display: grid;
+    grid-template-columns: 10rem 1fr;
+    gap: 0.5rem 1rem;
+    align-items: baseline;
+    margin: 0;
+}
+
+.account-kv dt {
+    color: var(--tblr-secondary);
+    font-weight: 500;
+}
+
+.account-kv dd {
+    margin: 0;
+}
+
+/* Inset surface behind a KPI / stat. */
+.datacard {
+    background: var(--tblr-bg-surface-secondary);
+    border-radius: 8px;
+    padding: 0.75rem 0.9rem;
+}
+
+/* KPI number + its supporting labels. */
+.kpi {
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+}
+
+.kpi-inline {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.kpi-of {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--tblr-secondary);
+}
+
+.kpi-sub {
+    color: var(--tblr-secondary);
+    font-size: 0.8125rem;
+}
+
+.kpi-note {
+    font-size: 0.75rem;
+    margin-top: 0.35rem;
+}
+
+/* Slim progress meter. */
+.meter {
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--tblr-border-color);
+    overflow: hidden;
+}
+
+.meter > span {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--tblr-primary);
+}
+
+.mono {
+    font-family: var(--tblr-font-monospace, ui-monospace, monospace);
+}
