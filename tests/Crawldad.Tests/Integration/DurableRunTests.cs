@@ -251,6 +251,18 @@ public class DurableRunTests(DurableFixture fixture)
         var runId = Guid.NewGuid();
         await SeedRunningRunAsync(store, clock, runId);
 
+        // Materialise the saga's table before arming the injector (issue #114). The competitor runs the REAL finaliser,
+        // whose terminal transaction Deletes the run's RunExecutorSaga — but that table is NOT part of the host's dev-time
+        // startup schema apply (Wolverine registers the saga's Marten storage lazily, off the configured-schema set, so
+        // neither ApplyAllDatabaseChangesOnStartup nor ApplyAllConfiguredChangesToDatabaseAsync builds it). It is otherwise
+        // first bootstrapped only when a session touches the saga type — and here that first touch is the injector's
+        // out-of-band competitor session, firing from inside the endpoint's commit, which can race Marten's on-demand
+        // schema bootstrap and surface Postgres 42P01 (relation does not exist) as a spurious 500 where the test expects
+        // 202. Forcing the table up-front makes the competitor always find it present. It is orthogonal to the stream-
+        // version conflict this test relies on: it creates only the saga's empty table — no saga row, no stream event, no
+        // version bump — so the #108 optimistic-append race still genuinely fires (asserted by injector.Fired below).
+        await store.Storage.Database.EnsureStorageExistsAsync(typeof(RunExecutorSaga));
+
         // The real finaliser's collaborators; Release/Delete on this un-occupied, saga-less seed are safe no-ops.
         var scrubber = host.Services.GetRequiredService<CredentialScrubber>();
         var gate = host.Services.GetRequiredService<IRunAdmissionGate>();
