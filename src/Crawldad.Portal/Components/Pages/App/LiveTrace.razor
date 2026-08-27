@@ -1,0 +1,388 @@
+@page "/app/live/{RunId:guid}"
+@rendermode InteractiveServer
+@layout AppLayout
+@attribute [Authorize]
+@implements IDisposable
+@using Crawldad.Client
+@using Crawldad.Contracts.Runs
+@using Crawldad.Portal.Live
+@using Crawldad.Portal.Runs
+@using Crawldad.Portal.Tenancy
+@using Microsoft.JSInterop
+@inject ICircuitTenantResolver Resolver
+@inject IJSRuntime JS
+
+<PageTitle>Live @RunView.ShortId(RunId) · Crawldad</PageTitle>
+
+@*
+    THE ONE interactive page (@rendermode InteractiveServer). On the circuit it resolves the signed-in tenant through
+    the circuit-safe ICircuitTenantResolver (IHttpContextAccessor is null here), then streams the run's SSE trace via
+    the tenant's Crawldad.Client, rendering frames as they arrive. Disposal cancels the stream (see Dispose) so a closed
+    tab never leaks the SSE connection. The tenant API key lives only on the server-side client — never serialized to
+    this circuit's browser.
+*@
+<div class="page-header d-print-none">
+    <div class="row g-2 align-items-center">
+        <div class="col">
+            <div class="page-pretitle text-secondary"><a href="/app/live" class="text-secondary">Live</a> / Live trace</div>
+            <h1 class="page-title">Live trace <span class="run-id ms-2">@RunView.ShortId(RunId)</span></h1>
+        </div>
+        <div class="col-auto ms-auto d-print-none">
+            <a href="/app/runs/@RunId" class="btn btn-outline-secondary" data-testid="run-detail-link"><i class="ti ti-file-text me-1"></i>Run detail</a>
+        </div>
+    </div>
+</div>
+
+@if (_tenant is null)
+{
+    <div class="card mt-3" data-testid="not-linked">
+        <div class="empty">
+            <p class="empty-title">No workspace linked</p>
+            <p class="empty-subtitle text-secondary">
+                This account isn't linked to a Crawldad workspace yet, so there's no live trace to stream. Link a
+                workspace from your account to watch runs here.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account" class="btn btn-primary">Go to Account</a>
+            </div>
+        </div>
+    </div>
+}
+else if (_phase == Phase.NotFound)
+{
+    <div class="card mt-3" data-testid="not-found">
+        <div class="empty">
+            <p class="empty-title">Run not found</p>
+            <p class="empty-subtitle text-secondary">
+                No run with id <span class="mono">@RunView.ShortId(RunId)</span> exists in this workspace — it may have
+                been erased, or the link is stale.
+            </p>
+            <div class="empty-action">
+                <a href="/app/live" class="btn btn-primary">Back to live</a>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card mb-3" data-testid="status-header">
+        <div class="card-body">
+            <div class="row g-3 align-items-center">
+                <div class="col-auto">
+                    <span class="status @RunView.StatusCss(_runStatus)" style="font-size:.95rem;padding:.4rem .7rem">
+                        <span class="status-dot @(IsLive ? "status-dot-animated" : "")"></span>@_runStatus
+                    </span>
+                </div>
+                <div class="col">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <span class="run-id fw-bold" style="font-size:1rem">@RunView.ShortId(RunId)</span>
+                        <span class="text-secondary">·</span>
+                        <span class="text-secondary" data-testid="phase-note">@PhaseNote</span>
+                    </div>
+                    @if (_lastId is not null)
+                    {
+                        <div class="text-secondary mt-1" style="font-size:.85rem">
+                            <i class="ti ti-broadcast text-azure me-1"></i>Streaming SSE · <span class="mono">Last-Event-ID @_lastId</span>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="row g-2 mt-2">
+                <div class="col-4"><div class="datacard"><div class="kpi-sub">Steps</div><div class="fw-bold mono" data-testid="count-steps">@StepCount</div></div></div>
+                <div class="col-4"><div class="datacard"><div class="kpi-sub">Selector misses</div><div class="fw-bold mono" data-testid="count-misses">@MissCount</div></div></div>
+                <div class="col-4"><div class="datacard"><div class="kpi-sub">Events</div><div class="fw-bold mono" data-testid="count-events">@_events.Count</div></div></div>
+            </div>
+        </div>
+    </div>
+
+    @if (_phase == Phase.Completed)
+    {
+        <div class="card mb-3 @CompletionBannerCss" data-testid="completion">
+            <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                <span class="status @RunView.StatusCss(_runStatus)"><span class="status-dot"></span>@_runStatus</span>
+                <span class="fw-bold">@LiveView.CompletionLabel(_runStatus)</span>
+                <span class="text-secondary">The trace stream has closed.</span>
+                <a href="/app/runs/@RunId" class="btn btn-primary btn-sm ms-auto" data-testid="completion-link"><i class="ti ti-file-text me-1"></i>Open run detail</a>
+            </div>
+        </div>
+    }
+    else if (_phase == Phase.Error)
+    {
+        <div class="card mb-3" data-testid="stream-error">
+            <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                <span class="badge bg-red-lt">stream error</span>
+                <span data-testid="error-message">@_errorMessage</span>
+                <a href="/app/runs/@RunId" class="btn btn-outline-secondary btn-sm ms-auto">Run detail</a>
+            </div>
+        </div>
+    }
+    else if (_phase == Phase.Disconnected)
+    {
+        <div class="card mb-3" data-testid="disconnected">
+            <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                <span class="badge bg-orange-lt">disconnected</span>
+                <span class="text-secondary">The live stream dropped and couldn't resume on its own.</span>
+                <button class="btn btn-primary btn-sm ms-auto" @onclick="Reconnect" data-testid="reconnect"><i class="ti ti-reload me-1"></i>Reconnect</button>
+            </div>
+        </div>
+    }
+
+    <div class="card mb-4">
+        <div class="card-header">
+            <h3 class="card-title"><i class="ti ti-activity me-2 text-secondary"></i>Trace</h3>
+            <div class="card-actions d-flex align-items-center gap-3">
+                <label class="form-check form-switch m-0">
+                    <input class="form-check-input" type="checkbox" checked="@_autoScroll" @onchange="ToggleAutoScroll" data-testid="autoscroll-toggle">
+                    <span class="form-check-label">Auto-scroll</span>
+                </label>
+            </div>
+        </div>
+        <div class="card-body" style="max-height:none">
+            <div class="evt-feed" data-testid="feed">
+                @if (_events.Count == 0)
+                {
+                    <div class="text-secondary" data-testid="feed-waiting">
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>@PhaseNote
+                    </div>
+                }
+                @foreach (var e in _events)
+                {
+                    <div class="@LiveView.EventCss(e.EventType)" data-testid="event-row">
+                        <span class="id">@(e.Id?.ToString() ?? "—")</span>
+                        <span class="type">@e.EventType</span>
+                        <span class="data">@LiveView.Preview(e.Data)</span>
+                    </div>
+                }
+                @if (IsLive && _events.Count > 0)
+                {
+                    <div class="evt e-step" data-testid="live-cursor"><span class="id"></span><span class="type"></span><span class="data"><span class="cursor-blink"></span></span></div>
+                }
+            </div>
+            <div data-testid="feed-end"></div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>The run whose live trace to stream (from the route).</summary>
+    [Parameter] public Guid RunId { get; set; }
+
+    /// <summary>Consecutive stream drops (a close/transient fault with no new frame since the last attempt) tolerated
+    /// before the page surfaces the manual-reconnect state. A drop that made progress resets the budget. Bounded so a
+    /// persistently-unavailable stream can never hot-loop. Overridable in tests.</summary>
+    [Parameter] public int MaxReconnectAttempts { get; set; } = 5;
+
+    /// <summary>The rolling cap on rendered feed rows — the live tail keeps the most recent ones (the full ordered
+    /// trace lives on the run-detail timeline). Overridable in tests.</summary>
+    [Parameter] public int MaxEvents { get; set; } = 1000;
+
+    // window.scrollTo target Y — a value larger than any page, so the browser clamps it to the true bottom (the feed
+    // grows the page; the mockup deliberately lets the window scroll rather than an inner max-height container).
+    private const int ScrollBottom = 1_000_000_000;
+
+    private enum Phase { Connecting, Streaming, Reconnecting, Completed, Disconnected, NotFound, Error }
+
+    private readonly List<RunEventFrame> _events = [];
+    private PortalTenant? _tenant;
+    private Phase _phase = Phase.Connecting;
+    private RunStatus _runStatus = RunStatus.Running;
+    private string? _errorMessage;
+    private long? _lastId;
+    private bool _autoScroll = true;
+
+    private CancellationTokenSource? _cts;
+    private Task? _streamTask;
+
+    private bool IsLive => _phase is Phase.Connecting or Phase.Streaming or Phase.Reconnecting;
+    private int StepCount => _events.Count(static e => e.EventType == "StepStarted");
+    private int MissCount => _events.Count(static e => e.EventType == "SelectorMiss");
+    private string CompletionBannerCss => _runStatus == RunStatus.Failed ? "run-failure-banner" : "";
+
+    private string PhaseNote => _phase switch
+    {
+        Phase.Connecting => "Connecting to the live trace…",
+        Phase.Reconnecting => "Connection dropped — resuming from the last event…",
+        Phase.Completed => "Run finished — the stream has closed.",
+        Phase.Disconnected => "Disconnected.",
+        Phase.Error => "The live trace is unavailable.",
+        _ => "Following the live tail.",
+    };
+
+    protected override async Task OnInitializedAsync() =>
+        // Resolve the tenant on both the prerender pass (HttpContext-seeded auth state) and the circuit (connection-seeded).
+        // A null result renders the not-linked state; streaming itself starts only on the circuit (OnAfterRenderAsync).
+        _tenant = await Resolver.TryResolveAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Streaming starts on the circuit's first render only (never during prerender, which has no live DOM) — and
+            // only when a tenant resolved. The not-linked state has nothing to stream.
+            if (_tenant is not null)
+            {
+                _cts = new CancellationTokenSource();
+                _streamTask = StreamLoopAsync();
+            }
+
+            return;
+        }
+
+        // Follow the tail to the bottom as rows append (window scroll — the feed grows the page) while auto-scroll is on.
+        if (_autoScroll)
+        {
+            await JS.InvokeVoidAsync("scrollTo", 0, ScrollBottom);
+        }
+    }
+
+    // A checkbox change always carries a bool value — cast directly (no defensive branch to leave half-covered).
+    private void ToggleAutoScroll(ChangeEventArgs e) => _autoScroll = (bool)e.Value!;
+
+    private void Reconnect()
+    {
+        // Reachable only from the Disconnected state, which the stream loop only reaches after _cts was created — so it
+        // is never null here (dispose the finished loop's source, start a fresh one).
+        _cts!.Dispose();
+        _cts = new CancellationTokenSource();
+        _phase = Phase.Reconnecting;
+        _streamTask = StreamLoopAsync();
+    }
+
+    // Streams the trace, resuming from _lastId across transient drops (bounded), until a terminal frame, a fatal API
+    // error, a not-found (→ timeline fallback), or disposal. Runs on the circuit's dispatcher context, so InvokeAsync is
+    // a cheap hop; never awaited by Dispose (which would risk a teardown deadlock) — a cancel is enough to end it.
+    private async Task StreamLoopAsync()
+    {
+        var token = _cts!.Token;
+        var drops = 0;
+        while (true)
+        {
+            var before = _lastId;
+            var pass = await RunOnePassAsync(token);
+            switch (pass)
+            {
+                case Pass.Terminal:
+                    _phase = Phase.Completed;
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                case Pass.Cancelled:
+                    return; // disposed / reconnecting away — leave the UI untouched
+                case Pass.NotFound:
+                    await FallBackToTimelineAsync(token);
+                    return;
+                case Pass.ApiError:
+                    _phase = Phase.Error;
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                default: // Pass.Dropped — the tail closed without a terminal frame; resume from _lastId, bounded.
+                    drops = _lastId != before ? 0 : drops + 1;
+                    if (drops > MaxReconnectAttempts)
+                    {
+                        _phase = Phase.Disconnected;
+                        await InvokeAsync(StateHasChanged);
+                        return;
+                    }
+
+                    _phase = Phase.Reconnecting;
+                    await InvokeAsync(StateHasChanged);
+                    break;
+            }
+        }
+    }
+
+    private enum Pass { Terminal, Cancelled, NotFound, ApiError, Dropped }
+
+    // One streaming attempt: appends frames and re-renders as they arrive, returning how the attempt ended. Never throws
+    // — the outcome is classified so the driver decides resume vs. stop.
+    private async Task<Pass> RunOnePassAsync(CancellationToken token)
+    {
+        try
+        {
+            await foreach (var frame in _tenant!.Client.StreamRunEventsAsync(RunId, _lastId, token))
+            {
+                _lastId = frame.Id ?? _lastId;
+                Append(frame);
+                _runStatus = LiveView.StatusFor(_runStatus, frame.EventType);
+                if (frame.IsTerminal)
+                {
+                    return Pass.Terminal; // the driver flips to Completed and renders the terminal frame + banner together
+                }
+
+                if (_phase is Phase.Connecting or Phase.Reconnecting)
+                {
+                    _phase = Phase.Streaming;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            return Pass.Dropped; // the stream ended without a terminal frame
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return Pass.Cancelled;
+        }
+        catch (CrawldadNotFoundException)
+        {
+            return Pass.NotFound;
+        }
+        catch (CrawldadException ex)
+        {
+            _errorMessage = FriendlyError(ex);
+            return Pass.ApiError;
+        }
+        catch (Exception)
+        {
+            return Pass.Dropped; // a mid-stream I/O drop (connection reset) — resume from _lastId
+        }
+    }
+
+    // The run's events were not found (e.g. erased after it finished) — fall back to the run timeline to render the final
+    // state, or the not-found state when the run itself is gone.
+    private async Task FallBackToTimelineAsync(CancellationToken token)
+    {
+        try
+        {
+            var timeline = await _tenant!.Client.GetRunTimelineAsync(RunId, token);
+            _runStatus = timeline.Status;
+            _phase = Phase.Completed;
+        }
+        catch (CrawldadNotFoundException)
+        {
+            _phase = Phase.NotFound;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return; // disposed during the fallback — leave the UI untouched
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Append(RunEventFrame frame)
+    {
+        _events.Add(frame);
+        if (_events.Count > MaxEvents)
+        {
+            _events.RemoveAt(0); // drop the oldest — the live tail keeps the most recent rows
+        }
+    }
+
+    // A user-facing reason with no key material — an unauthorized key gets a re-link hint, anything else a generic retry.
+    private static string FriendlyError(CrawldadException ex) => ex switch
+    {
+        CrawldadUnauthorizedException => "This workspace's API key was rejected. Re-link your workspace from your account.",
+        _ => "The live trace is temporarily unavailable. Try reconnecting in a moment.",
+    };
+
+    public void Dispose()
+    {
+        // Cancel tears down the in-flight SSE connection (the stream loop observes it and stops) — a closed tab never
+        // leaks it. The loop is never awaited here: it resumes on this same dispatcher, so blocking on it during teardown
+        // could deadlock; a cancel is sufficient, and the loop touches nothing after it. Null-out so a second dispose
+        // (framework teardown after an explicit dispose) is a no-op rather than cancelling a disposed source.
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+    }
+}
