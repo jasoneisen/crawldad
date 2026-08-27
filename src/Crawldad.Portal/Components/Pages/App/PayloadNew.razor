@@ -1,0 +1,140 @@
+@page "/app/payloads/new"
+@layout AppLayout
+@attribute [Authorize]
+@using Crawldad.Client
+@using Crawldad.Contracts.Payloads
+@using Crawldad.Portal.Tenancy
+@inject IPortalTenantContext Tenant
+@inject NavigationManager Nav
+
+<PageTitle>New payload · Crawldad</PageTitle>
+
+@*
+    Draft a new managed payload (POST /payloads) from an inline crawldad document — its logical name lives inside the
+    JSON. Static-SSR, antiforgery-protected. The crawldad-DSL gate is server-side only: the portal parses the text for
+    JSON well-formedness ("Validate"), and on Create delegates schema + semantic validation to the API, rendering its
+    problem details verbatim. On success it PRG-redirects to the new payload's detail page.
+*@
+<div class="page-header d-print-none">
+    <div class="row g-2 align-items-center">
+        <div class="col">
+            <div class="page-pretitle text-secondary">
+                <a href="/app/payloads">Payloads</a>
+            </div>
+            <h2 class="page-title">New payload</h2>
+        </div>
+    </div>
+</div>
+
+@if (_notLinked)
+{
+    <div class="card mt-3">
+        <div class="empty" data-testid="not-linked">
+            <p class="empty-title">No workspace linked</p>
+            <p class="empty-subtitle text-secondary">
+                This account isn't linked to a Crawldad workspace yet. Link one from your Account to create payloads here.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account" class="btn btn-primary">Go to Account</a>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card mt-3">
+        <div class="card-header">
+            <h3 class="card-title">Payload document</h3>
+            <div class="card-actions text-secondary small">the logical <span class="cd-mono">name</span> is a field inside the JSON</div>
+        </div>
+        <div class="card-body">
+            <PayloadProblemList Errors="_problems" />
+            @if (_validated)
+            {
+                <div class="alert alert-info" role="status" data-testid="validated">
+                    JSON is well-formed. The full crawldad validation runs when you Create.
+                </div>
+            }
+            <EditForm FormName="create-payload" Model="Editor" OnValidSubmit="SubmitAsync" data-testid="create-form">
+                <div class="mb-3">
+                    <label class="form-label" for="new-script">Script (JSON)</label>
+                    <InputTextArea id="new-script" rows="20" class="form-control cd-editor" @bind-Value="Editor.Script" data-testid="editor-script" />
+                    <small class="form-hint">A <span class="cd-mono">crawldad: "1"</span> document. It is scrubbed, validated, hashed, and stored as revision 1.</small>
+                </div>
+                <div class="d-flex gap-2">
+                    <button type="submit" name="Editor.Intent" value="validate" class="btn btn-outline-secondary" data-testid="validate-btn">Validate</button>
+                    <button type="submit" name="Editor.Intent" value="save" class="btn btn-primary ms-auto" data-testid="create-btn">Create payload</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromForm(FormName = "create-payload")]
+    public PayloadEditorInput Editor { get; set; } = default!;
+
+    private bool _notLinked;
+    private IReadOnlyList<PayloadValidationError>? _problems;
+    private bool _validated;
+
+    // A minimal starting document (the user edits it). Only a convenience seed — the API is the validation authority.
+    private const string Template = """
+        {
+          "crawldad": "1",
+          "name": "example.title",
+          "steps": [
+            { "goto": { "url": "https://example.com" } }
+          ],
+          "result": "{ title: text('h1') }"
+        }
+        """;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Bound on POST, null on GET — seed a fresh instance, then seed the template only on GET (a POST arrives with the
+        // user's own text, which must be preserved even when it failed to parse or validate).
+        Editor ??= new();
+
+        var tenant = await Tenant.TryResolveAsync();
+        if (tenant is null)
+        {
+            _notLinked = true;
+            return;
+        }
+
+        Editor.Script ??= Template;
+    }
+
+    // Validate-then-create: parse the editor JSON portal-side, then let the API's scrub-then-validate gate be the
+    // authority. On success, PRG-redirect to the new payload; on a payload-invalid rejection, render the API's problems
+    // verbatim with the user's text preserved. "Validate" is a non-destructive well-formedness pre-flight only.
+    private async Task SubmitAsync()
+    {
+        _problems = null;
+        _validated = false;
+
+        if (!PayloadEditing.TryParse(Editor.Script, out var element, out var parseError))
+        {
+            _problems = [parseError!];
+            return;
+        }
+
+        if (!string.Equals(Editor.Intent, PayloadEditing.SaveIntent, StringComparison.Ordinal))
+        {
+            _validated = true;
+            return;
+        }
+
+        var tenant = await Tenant.RequireAsync();
+        try
+        {
+            var created = await tenant.Client.SavePayloadAsync(element);
+            Nav.NavigateTo($"/app/payloads/{created.PayloadId}?rev={created.Revision}&saved={created.Revision}", forceLoad: true);
+        }
+        catch (CrawldadPayloadInvalidException ex)
+        {
+            _problems = ex.Errors;
+        }
+    }
+}

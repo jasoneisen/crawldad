@@ -23,6 +23,14 @@
             }
             <h2 class="page-title">Payloads</h2>
         </div>
+        @if (_notLinked is false)
+        {
+            <div class="col-auto ms-auto d-print-none">
+                <a href="/app/payloads/new" class="btn btn-primary" data-testid="new-payload">
+                    New payload
+                </a>
+            </div>
+        }
     </div>
 </div>
 

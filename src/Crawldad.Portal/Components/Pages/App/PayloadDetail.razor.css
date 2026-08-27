@@ -20,3 +20,24 @@
     max-height: 40rem;
     overflow: auto;
 }
+
+/* The revise editor: a monospace JSON textarea. */
+.cd-editor {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .78rem;
+    line-height: 1.55;
+    white-space: pre;
+    overflow-wrap: normal;
+}
+
+/* One before/after value cell in the structural-diff table. */
+.cd-diff-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .75rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 0;
+    max-width: 22rem;
+    max-height: 12rem;
+    overflow: auto;
+}

@@ -8,13 +8,18 @@
 @using Crawldad.Contracts.Payloads
 @using Crawldad.Portal.Tenancy
 @inject IPortalTenantContext Tenant
+@inject NavigationManager Nav
 
 <PageTitle>Payload · Crawldad</PageTitle>
 
 @*
-    One managed payload, read-only: identity + pinned head, the on-read canary drift assessment (baseline/delta), the
-    stored (credential-scrubbed) script for the selected revision (pretty-printed, no editor), and the revision ladder.
-    A ?rev=N query selects which revision's script to view (clamped to 1..head); revising/validating is a later task.
+    One managed payload: identity + pinned head, the on-read canary drift assessment (baseline/delta), the stored
+    (credential-scrubbed) script for the selected revision (?rev=N, clamped 1..head), the revision ladder, a revision
+    DIFF (?against=M, the server-computed structural diff of two revisions), and — for an active payload — a static-SSR
+    editor that validates-then-saves a new revision through the API. The crawldad-DSL gate is server-side only: the
+    portal renders the API's problem details verbatim and never re-implements validation. "Validate" is a non-destructive
+    JSON well-formedness pre-flight (the API exposes no side-effect-free validate endpoint); the authoritative DSL
+    validation runs on Save.
 *@
 <div class="page-header d-print-none">
     <div class="row g-2 align-items-center">
@@ -82,6 +87,13 @@ else if (_loaded)
             </div>
         </div>
     </div>
+
+    @if (Saved is { } savedRevision)
+    {
+        <div class="alert alert-success mt-3" role="status" data-testid="saved">
+            Saved revision <span class="badge bg-blue-lt">r@(savedRevision)</span> — now the head.
+        </div>
+    }
 
     @if (_drift is { } drift)
     {
@@ -195,6 +207,77 @@ else if (_loaded)
         </div>
     }
 
+    @if (payload.Revision > 1)
+    {
+        <div class="card mt-3" data-testid="diff-card">
+            <div class="card-header">
+                <h3 class="card-title">Compare revisions</h3>
+                @if (_diff is not null)
+                {
+                    <div class="card-actions">
+                        <a href="@RevisionLink(_selectedRevision)" class="btn btn-sm" data-testid="diff-clear">Close diff</a>
+                    </div>
+                }
+            </div>
+            <div class="card-body">
+                <div class="d-flex flex-wrap gap-1 align-items-center" data-testid="compare">
+                    <span class="text-secondary small me-1">Diff against r@(_selectedRevision):</span>
+                    @for (var r = 1; r <= payload.Revision; r++)
+                    {
+                        if (r != _selectedRevision)
+                        {
+                            var against = r;
+                            <a class="badge bg-secondary-lt" data-testid="compare-link"
+                               href="@($"/app/payloads/{payload.PayloadId}?rev={_selectedRevision}&against={against}")">r@(against)</a>
+                        }
+                    }
+                </div>
+
+                @if (_diff is { } diff)
+                {
+                    <div class="hairline mt-3 pt-3" data-testid="diff-result">
+                        <div class="fw-semibold mb-2">
+                            <span class="badge bg-secondary-lt">r@(diff.FromRevision)</span>
+                            →
+                            <span class="badge bg-secondary-lt">r@(diff.ToRevision)</span>
+                        </div>
+                        @if (diff.Changes.Count == 0)
+                        {
+                            <p class="text-secondary m-0" data-testid="diff-none">No structural differences between these revisions.</p>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm table-vcenter">
+                                    <thead>
+                                        <tr>
+                                            <th>Path</th>
+                                            <th>Change</th>
+                                            <th>From</th>
+                                            <th>To</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var change in diff.Changes)
+                                        {
+                                            var kind = DiffKindBadge(change.Kind);
+                                            <tr data-testid="diff-change">
+                                                <td class="cd-mono">@change.Path</td>
+                                                <td><span class="badge @kind.Css" data-testid="diff-kind">@kind.Label</span></td>
+                                                <td><pre class="cd-diff-value" data-testid="diff-from">@RawOrDash(change.From)</pre></td>
+                                                <td><pre class="cd-diff-value" data-testid="diff-to">@RawOrDash(change.To)</pre></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
     <div class="row row-cards mt-1">
         <div class="col-xl-8">
             <div class="card">
@@ -215,6 +298,47 @@ else if (_loaded)
                     scriptHash <span class="cd-mono">@ShortHash(revision.ScriptHash)</span> · the stored, credential-scrubbed document.
                 </div>
             </div>
+
+            @if (payload.Status == PayloadStatus.Archived)
+            {
+                <div class="card mt-3" data-testid="archived-note">
+                    <div class="card-body text-secondary">
+                        This payload is archived. Its script is read-only and new revisions are disabled.
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="card mt-3" data-testid="editor-card">
+                    <div class="card-header">
+                        <h3 class="card-title">New revision</h3>
+                        <div class="card-actions text-secondary small">seeded from r@(_selectedRevision) · saves as the new head</div>
+                    </div>
+                    <div class="card-body">
+                        <PayloadProblemList Errors="_problems" />
+                        @if (_validated)
+                        {
+                            <div class="alert alert-info" role="status" data-testid="validated">
+                                JSON is well-formed. The full crawldad validation runs when you Save.
+                            </div>
+                        }
+                        <EditForm FormName="revise-payload" Model="Editor" OnValidSubmit="SubmitAsync" data-testid="revise-form">
+                            <div class="mb-2">
+                                <label class="form-label" for="editor-script">Script (JSON)</label>
+                                <InputTextArea id="editor-script" rows="16" class="form-control cd-editor" @bind-Value="Editor.Script" data-testid="editor-script" />
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="editor-note">Revision note (optional)</label>
+                                <InputText id="editor-note" class="form-control" autocomplete="off" @bind-Value="Editor.Note" />
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="submit" name="Editor.Intent" value="validate" class="btn btn-outline-secondary" data-testid="validate-btn">Validate</button>
+                                <button type="submit" name="Editor.Intent" value="save" class="btn btn-primary ms-auto" data-testid="save-btn">Save revision</button>
+                            </div>
+                        </EditForm>
+                    </div>
+                </div>
+            }
         </div>
         <div class="col-xl-4">
             <div class="card">
@@ -224,7 +348,7 @@ else if (_loaded)
                     {
                         var revisionNumber = r;
                         var active = revisionNumber == _selectedRevision ? " active" : "";
-                        <a href="@($"/app/payloads/{payload.PayloadId}?rev={revisionNumber}")"
+                        <a href="@RevisionLink(revisionNumber)"
                            class="list-group-item list-group-item-action d-flex align-items-center gap-2@(active)"
                            data-testid="revision-row">
                             <span class="badge bg-secondary-lt">r@(revisionNumber)</span>
@@ -248,12 +372,25 @@ else if (_loaded)
     [SupplyParameterFromQuery(Name = "rev")]
     public int? Rev { get; set; }
 
+    [SupplyParameterFromQuery(Name = "against")]
+    public int? Against { get; set; }
+
+    [SupplyParameterFromQuery(Name = "saved")]
+    public int? Saved { get; set; }
+
+    [SupplyParameterFromForm(FormName = "revise-payload")]
+    public PayloadEditorInput Editor { get; set; } = default!;
+
     private bool _notLinked;
     private bool _notFound;
     private bool _loaded;
+    private Guid _payloadGuid;
     private PayloadResponse? _payload;
     private PayloadRevisionResponse? _revision;
     private PayloadDriftStatus? _drift;
+    private PayloadDiffResponse? _diff;
+    private IReadOnlyList<PayloadValidationError>? _problems;
+    private bool _validated;
     private int _selectedRevision;
     private string _prettyScript = "";
 
@@ -261,6 +398,10 @@ else if (_loaded)
 
     protected override async Task OnInitializedAsync()
     {
+        // The editor model is bound by the framework on POST; on GET it is null, so seed a fresh instance (avoids BL0008
+        // and a null-ref when rendering the empty form).
+        Editor ??= new();
+
         var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
@@ -268,7 +409,7 @@ else if (_loaded)
             return;
         }
 
-        if (!Guid.TryParse(PayloadId, out var id))
+        if (!Guid.TryParse(PayloadId, out _payloadGuid))
         {
             _notFound = true;
             return;
@@ -276,7 +417,7 @@ else if (_loaded)
 
         try
         {
-            _payload = await tenant.Client.GetPayloadAsync(id);
+            _payload = await tenant.Client.GetPayloadAsync(_payloadGuid);
         }
         catch (CrawldadNotFoundException)
         {
@@ -285,10 +426,49 @@ else if (_loaded)
         }
 
         _selectedRevision = ClampRevision(Rev, _payload.Revision);
-        _revision = await tenant.Client.GetPayloadRevisionAsync(id, _selectedRevision);
+        _revision = await tenant.Client.GetPayloadRevisionAsync(_payloadGuid, _selectedRevision);
         _prettyScript = Pretty(_revision.Script);
-        _drift = await LoadDriftAsync(tenant.Client, id);
+
+        // Seed the editor from the viewed revision on GET; a POST arrives with the user's own text already bound, so
+        // preserve it (never overwrite a submitted body, including one that failed to parse or validate).
+        Editor.Script ??= _prettyScript;
+
+        _drift = await LoadDriftAsync(tenant.Client, _payloadGuid);
+        _diff = await LoadDiffAsync(tenant.Client, _payloadGuid, _payload.Revision);
         _loaded = true;
+    }
+
+    // Validate-then-save (or a non-destructive well-formedness pre-flight): parse the editor JSON portal-side, then let
+    // the API's scrub-then-validate gate be the authority. On save success, PRG-redirect to the new head; on a payload-
+    // invalid rejection, render the API's problems verbatim with the user's text preserved.
+    private async Task SubmitAsync()
+    {
+        _problems = null;
+        _validated = false;
+
+        if (!PayloadEditing.TryParse(Editor.Script, out var element, out var parseError))
+        {
+            _problems = [parseError!];
+            return;
+        }
+
+        if (!string.Equals(Editor.Intent, PayloadEditing.SaveIntent, StringComparison.Ordinal))
+        {
+            _validated = true; // "Validate": well-formed JSON, no server round-trip, nothing persisted.
+            return;
+        }
+
+        var tenant = await Tenant.RequireAsync();
+        try
+        {
+            var note = string.IsNullOrWhiteSpace(Editor.Note) ? null : Editor.Note;
+            var head = await tenant.Client.RevisePayloadAsync(_payloadGuid, element, note);
+            Nav.NavigateTo($"/app/payloads/{_payloadGuid}?rev={head.Revision}&saved={head.Revision}", forceLoad: true);
+        }
+        catch (CrawldadPayloadInvalidException ex)
+        {
+            _problems = ex.Errors; // schema/semantic failures, or payload_archived — surfaced verbatim.
+        }
     }
 
     // Best-effort drift read: an existing payload with no canary is a valid NoData (200); a genuine miss (e.g. a
@@ -305,11 +485,36 @@ else if (_loaded)
         }
     }
 
-    // The requested revision, defaulting to head and clamped into 1..head so a stray ?rev never over- or under-reads.
+    // The server-side structural diff for ?against=M, comparing the (clamped) base revision M → the viewed revision.
+    // Only requested when there is more than one revision and a base is asked for; an unknown revision degrades to no
+    // diff rather than failing the page.
+    private async Task<PayloadDiffResponse?> LoadDiffAsync(CrawldadClient client, Guid id, int head)
+    {
+        if (Against is not { } against || head <= 1)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await client.DiffPayloadAsync(id, ClampRevision(against, head), _selectedRevision);
+        }
+        catch (CrawldadNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private string RevisionLink(int revision) =>
+        $"/app/payloads/{_payloadGuid}?rev={revision.ToString(CultureInfo.InvariantCulture)}";
+
+    // The requested revision, defaulting to head and clamped into 1..head so a stray ?rev/?against never over- or under-reads.
     private static int ClampRevision(int? requested, int head) => Math.Clamp(requested ?? head, 1, head);
 
     private static string Pretty(JsonElement script) =>
         JsonSerializer.Serialize(script, new JsonSerializerOptions { WriteIndented = true });
+
+    private static string RawOrDash(JsonElement? value) => value is { } element ? element.GetRawText() : "—";
 
     private static string ShortHash(string hash) =>
         hash.Length <= 12 ? hash : $"{hash[..6]}…{hash[^4..]}";
@@ -329,5 +534,12 @@ else if (_loaded)
         DriftState.Steady => ("bg-green-lt", "steady"),
         DriftState.WarmingUp => ("bg-yellow-lt", "warming up"),
         _ => ("bg-secondary-lt", "no data"),
+    };
+
+    private static (string Css, string Label) DiffKindBadge(PayloadDiffKind kind) => kind switch
+    {
+        PayloadDiffKind.Added => ("bg-green-lt", "added"),
+        PayloadDiffKind.Removed => ("bg-red-lt", "removed"),
+        _ => ("bg-yellow-lt", "changed"),
     };
 }

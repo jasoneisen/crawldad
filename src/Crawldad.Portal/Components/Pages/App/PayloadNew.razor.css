@@ -1,0 +1,14 @@
+/* New-payload editor. Scoped to this component (Blazor CSS isolation), so these names never collide with the shared
+   app.css or sibling pages. */
+.cd-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .8125rem;
+}
+
+.cd-editor {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .78rem;
+    line-height: 1.55;
+    white-space: pre;
+    overflow-wrap: normal;
+}
