@@ -108,6 +108,13 @@ dotnet_diagnostic.CA1056.severity = none
 dotnet_diagnostic.CA1032.severity = none
 dotnet_diagnostic.RCS1194.severity = none
 
+[src/Crawldad.Portal/Tenancy/NotLinkedException.cs]
+# NotLinkedException is a simple marker the data pages catch; a single message-carrying constructor is its whole
+# purpose. The parameterless / message+inner constructors CA1032 & RCS1194 want would only add dead surface, so
+# turn those two "standard exception constructor" rules off for this file only (mirrors CrawldadExceptions.cs).
+dotnet_diagnostic.CA1032.severity = none
+dotnet_diagnostic.RCS1194.severity = none
+
 [src/Crawldad.Portal/Auth/**.cs]
 # Email addresses are stored case-folded to their canonical lower-invariant form (the account identity/key).
 # CA1308 prefers ToUpperInvariant for normalization, which is the wrong casing for an email key. Off here only.
