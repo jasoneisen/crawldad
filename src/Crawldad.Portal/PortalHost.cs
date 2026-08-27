@@ -1,7 +1,9 @@
 using Crawldad.Portal.Auth;
 using Crawldad.Portal.Components;
+using Crawldad.Portal.Tenancy;
 using Marten;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace Crawldad.Portal;
 
@@ -23,6 +25,8 @@ public static class PortalHost
             // Email is the account identity → unique by construction, and case-insensitive because we always
             // store it lower-invariant.
             options.Schema.For<PortalUser>().Identity(u => u.Email);
+            // The tenant link shares that identity (same normalized email), so a user and their link line up 1:1.
+            options.Schema.For<PortalTenantLink>().Identity(l => l.Email);
 
             // Optimistic concurrency on the challenge: parallel verify attempts serialize on the document version,
             // so the per-challenge attempt cap can't be beaten by racing guesses (see PortalAuthService.VerifyCodeAsync).
@@ -42,6 +46,7 @@ public static class PortalHost
         builder.Services.AddSingleton<IOtpCodeGenerator, OtpCodeGenerator>();
         builder.Services.AddScoped<IPortalAuthService, PortalAuthService>();
         AddEmailSender(builder);
+        AddTenantLinking(builder);
 
         // Cookie authentication — the ASP.NET cookie handler directly, no ASP.NET Identity framework.
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -95,6 +100,36 @@ public static class PortalHost
             .AddInteractiveServerRenderMode();
 
         return app;
+    }
+
+    // Portal → Crawldad tenant link + the per-request typed API client (Crawldad.Client). The signed-in user's link
+    // (normalized email → tenant id + Data-Protection-encrypted API key) is resolved per request by
+    // IPortalTenantContext, which hands the data pages a CrawldadClient authenticated as that tenant — or a clean
+    // NotLinkedException when the request is unauthenticated or the account has no link.
+    private static void AddTenantLinking(WebApplicationBuilder builder)
+    {
+        // Data Protection is registered explicitly (also implied by antiforgery/cookies) so the at-rest key cipher is
+        // unambiguous; the durable key ring for production (mirroring the API's DataProtectionModule) is a later
+        // deployment concern, tracked separately.
+        builder.Services.AddDataProtection();
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddSingleton<IPortalTenantLinkStore, MartenPortalTenantLinkStore>();
+        builder.Services.AddScoped<IPortalTenantContext, PortalTenantContext>();
+
+        // One pooled HttpClient the SDK rides on, base address from config (validated at boot so a missing/malformed
+        // URL fails loudly here, not on the first API call). The per-request API key is applied by the context — the
+        // client is never registered with a baked-in or empty key.
+        var apiBaseUrl = PortalTenancy.ResolveApiBaseUrl(builder.Configuration);
+        builder.Services.AddHttpClient(PortalTenancy.ApiHttpClientName, client => client.BaseAddress = apiBaseUrl);
+
+        // Development-only: seed/refresh one tenant link from Portal:DevTenantLink at startup. Registered AFTER
+        // Marten's schema-apply-on-startup, so the "portal" tables exist when it writes; a no-op when the section is
+        // absent or partial (production boots with no link, exactly as here).
+        if (builder.Environment.IsDevelopment())
+        {
+            builder.Services.Configure<DevTenantLinkOptions>(builder.Configuration.GetSection(PortalTenancy.DevTenantLinkSection));
+            builder.Services.AddHostedService<DevTenantLinkSeeder>();
+        }
     }
 
     // Development logs the code (LoggingEmailSender). Every other environment fails CLOSED with a sender that

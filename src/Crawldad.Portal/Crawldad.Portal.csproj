@@ -1,13 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <!-- The customer-facing portal: a Blazor Web App (Interactive Server render mode, NO WebAssembly) with its
-       own Marten document store on the shared Postgres, isolated in the "portal" schema. Self-contained: it does
-       NOT reference Crawldad.Api or Crawldad.Contracts — the skeleton stands alone. -->
+       own Marten document store on the shared Postgres, isolated in the "portal" schema. It does NOT reference
+       Crawldad.Api — it only ever reaches the API over HTTP through the typed Crawldad.Client SDK below. -->
 
   <ItemGroup>
-    <!-- Document storage for the portal's own users + OTP challenges. Marten is used standalone here (no
-         Wolverine/event-store): the portal is a thin auth+shell host, not part of the API's message pipeline. -->
+    <!-- Document storage for the portal's own users, OTP challenges, and tenant links. Marten is used standalone
+         here (no Wolverine/event-store): the portal is a thin auth+shell host, not part of the API's pipeline. -->
     <PackageReference Include="Marten" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The typed .NET SDK the data pages call the Crawldad API through (pulls in Crawldad.Contracts transitively).
+         The per-request client is built by IPortalTenantContext with the signed-in tenant's API key. -->
+    <ProjectReference Include="..\Crawldad.Client\Crawldad.Client.csproj" />
   </ItemGroup>
 
   <!-- White-box test access: the OTP code generator, hasher, and auth service are internal implementation detail
