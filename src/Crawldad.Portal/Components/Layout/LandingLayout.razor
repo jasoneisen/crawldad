@@ -1,0 +1,15 @@
+@inherits LayoutComponentBase
+
+@*
+    Full-bleed chrome for the public marketing landing page ("/"). Deliberately separate from both the dashboard
+    AppLayout and the MarketingLayout used by /login: the landing page brings its own sticky nav, dark hero, and
+    footer, so it must NOT sit inside Tabler's .page/.page-body wrapper (whose padding would gap the hero off the
+    nav). This layout is a bare pass-through that only injects the marketing stylesheet — scoped here, via
+    HeadOutlet, so its generic class names load on the landing page alone and never leak onto /login or /app.
+*@
+<HeadContent>
+    <meta name="description" content="Reliable, maintainable browser automation without owning a browser-orchestration codebase. Declarative JSON payloads, live trace, replay, and drift monitoring — on your browsers, into your storage, under your keys." />
+    <link rel="stylesheet" href="@Assets["marketing.css"]" />
+</HeadContent>
+
+@Body
