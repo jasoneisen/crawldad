@@ -1,3 +1,4 @@
+using Crawldad.Api.Features.Billing;
 using Crawldad.Api.Features.Browsers;
 using Crawldad.Api.Features.Fixtures;
 using Crawldad.Api.Features.Payloads;
@@ -58,6 +59,7 @@ public static class HostConfiguration
                 FixturesModule.ConfigureMarten(options); // the tenant-scoped recorded fixture-set document (no projection)
                 WebhooksModule.ConfigureMarten(options); // the tenant-scoped webhook-endpoint registration document (no projection)
                 ManagementModule.ConfigureMarten(options); // the SINGLE-tenanted registry documents (tenants + hashed api keys)
+                BillingModule.ConfigureMarten(options); // the SINGLE-tenanted processed-webhook-event dedup document
             })
             .IntegrateWithWolverine()           // transactional outbox/inbox + aggregate handlers
             .AddAsyncDaemon(DaemonMode.HotCold);
@@ -102,6 +104,7 @@ public static class HostConfiguration
         BrowsersModule.AddBrowsersServices(builder.Services); // browser-registration store + encrypting resolver
         FixturesModule.AddFixturesServices(builder.Services); // tenant fixture-set store + the `fixture` replay backend
         WebhooksModule.AddWebhooksServices(builder.Services); // webhook-endpoint store + HTTP sender + delivery options
+        BillingModule.AddBillingServices(builder); // tier catalog + provider gateway (fake in dev/tests, fail-closed stub in prod) + dedup store
         StorageModule.AddStorage(builder.Services, builder.Configuration); // durable download sink + screenshot store + retention janitor
         DataProtectionModule.AddKeyRingProtection(builder.Services, builder.Configuration); // the at-rest secret cipher + its persisted key ring
     }

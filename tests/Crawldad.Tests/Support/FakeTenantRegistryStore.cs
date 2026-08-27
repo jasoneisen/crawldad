@@ -25,16 +25,16 @@ internal sealed class FakeTenantRegistryStore : ITenantRegistryStore
     public bool ThrowOnTouch { get; set; }
 
     /// <summary>Registers an active tenant's key and returns the synthetic raw key to present.</summary>
-    public string AddActiveTenantKey(string tenantId, string? actor = null, int? slotAllowance = null) =>
-        AddTenantKey(tenantId, TenantStatus.Active, actor, slotAllowance);
+    public string AddActiveTenantKey(string tenantId, string? actor = null, int? slotAllowance = null, string? tier = null) =>
+        AddTenantKey(tenantId, TenantStatus.Active, actor, slotAllowance, tier);
 
     /// <summary>Registers a tenant's key at the given status (and a matching tenant record) and returns the synthetic raw key.</summary>
-    public string AddTenantKey(string tenantId, TenantStatus status, string? actor = null, int? slotAllowance = null)
+    public string AddTenantKey(string tenantId, TenantStatus status, string? actor = null, int? slotAllowance = null, string? tier = null)
     {
         var raw = $"ck_test_{tenantId}_{Guid.NewGuid():N}"; // synthetic, clearly fake
         var resolvedActor = actor ?? $"{tenantId}@actor";
         _byHash[ApiKeyMint.Hash(raw)] = new ResolvedTenantKey(Guid.NewGuid(), new RegistryTenantSnapshot(tenantId, resolvedActor, status, slotAllowance));
-        _byId[tenantId] = new RegistryTenant { Id = tenantId, Actor = resolvedActor, Status = status, SlotAllowance = slotAllowance };
+        _byId[tenantId] = new RegistryTenant { Id = tenantId, Actor = resolvedActor, Status = status, SlotAllowance = slotAllowance, Tier = tier ?? "" };
         return raw;
     }
 
@@ -62,6 +62,8 @@ internal sealed class FakeTenantRegistryStore : ITenantRegistryStore
     public Task<bool> CreateAsync(RegistryTenant tenant, CancellationToken ct) => throw new NotSupportedException();
 
     public Task<RegistryTenant?> SetStatusAsync(string tenantId, TenantStatus status, DateTimeOffset now, CancellationToken ct) => throw new NotSupportedException();
+
+    public Task<RegistryTenant?> SetPlanAsync(string tenantId, string tier, int? slotAllowance, DateTimeOffset now, CancellationToken ct) => throw new NotSupportedException();
 
     public Task AddKeyAsync(TenantApiKey key, CancellationToken ct) => throw new NotSupportedException();
 

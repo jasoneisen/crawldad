@@ -33,6 +33,11 @@ public interface ITenantRegistryStore
     /// the updated tenant, or null when the id is unknown. Idempotent — setting the current status is a no-op write.</summary>
     Task<RegistryTenant?> SetStatusAsync(string tenantId, TenantStatus status, DateTimeOffset now, CancellationToken ct);
 
+    /// <summary>Sets a tenant's plan — its <see cref="RegistryTenant.Tier"/> moniker and <see cref="RegistryTenant.SlotAllowance"/>
+    /// (null defers to the global default) — stamping <paramref name="now"/>. The write side of a verified billing webhook;
+    /// returns the updated tenant, or null when the id is unknown (an unknown/env-fallback tenant is not written).</summary>
+    Task<RegistryTenant?> SetPlanAsync(string tenantId, string tier, int? slotAllowance, DateTimeOffset now, CancellationToken ct);
+
     /// <summary>Persists a newly issued key (already hashed).</summary>
     Task AddKeyAsync(TenantApiKey key, CancellationToken ct);
 
@@ -86,6 +91,24 @@ internal sealed class MartenTenantRegistryStore(IDocumentStore store) : ITenantR
         }
 
         tenant.Status = status;
+        tenant.UpdatedAt = now;
+        session.Store(tenant);
+        await session.SaveChangesAsync(ct);
+        return tenant;
+    }
+
+    public async Task<RegistryTenant?> SetPlanAsync(string tenantId, string tier, int? slotAllowance, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(tier);
+        await using var session = store.LightweightSession();
+        var tenant = await session.LoadAsync<RegistryTenant>(tenantId, ct);
+        if (tenant is null)
+        {
+            return null;
+        }
+
+        tenant.Tier = tier;
+        tenant.SlotAllowance = slotAllowance;
         tenant.UpdatedAt = now;
         session.Store(tenant);
         await session.SaveChangesAsync(ct);
