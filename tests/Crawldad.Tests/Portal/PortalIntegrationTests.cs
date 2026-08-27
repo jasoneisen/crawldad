@@ -122,8 +122,10 @@ public class PortalIntegrationTests(PortalFixture fixture)
         var html = await client.GetStringAsync(PortalHttp.Rel("/"));
 
         html.ShouldContain("Crawldad");
-        html.ShouldContain("/docs");
-        html.ShouldContain("/login");
+        html.ShouldContain("Browser automations that"); // the real landing hero, not the old placeholder
+        html.ShouldContain("/login"); // conversion CTAs point at the OTP login
+        // LandingLayout injects the marketing description + stylesheet through HeadOutlet (full-pipeline only).
+        html.ShouldContain("Reliable, maintainable browser automation");
     }
 
     [Fact]

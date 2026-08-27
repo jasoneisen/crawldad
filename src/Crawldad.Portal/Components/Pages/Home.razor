@@ -1,20 +1,539 @@
 @page "/"
+@layout LandingLayout
 
-<PageTitle>Crawldad</PageTitle>
+<PageTitle>Crawldad — declarative browser automation that doesn't rot</PageTitle>
 
 @*
-    Marketing PLACEHOLDER. The real landing page ships as a separate item — this stays intentionally minimal
-    (a hero with the product name, one line, and links) but not broken.
+    Public marketing landing page. Static SSR only (no @rendermode): every interaction is a link or an in-page
+    anchor, and the FAQ accordions are native <details>/<summary> — no JavaScript beyond what the vendored Tabler
+    bundle already ships. Conversion CTAs ("Start free", "Sign in", "Choose <plan>") route to the existing OTP
+    /login; section links are in-page anchors. Styling lives in wwwroot/marketing.css (linked by LandingLayout).
+    Copy tracks docs/MARKETING.md (value-equation framing, personas, risk-reversal) and docs/BUSINESS_MODEL.md
+    (Free / $99 Team / $499 Scale / Enterprise); webhooks and drift monitoring are shipped features and are
+    presented as such.
 *@
-<div class="container-tight py-6">
-    <div class="text-center">
-        <h1 class="display-5 fw-bold mb-3">Crawldad</h1>
-        <p class="fs-3 text-secondary mb-4">
-            Turn any website into a structured, webhook-delivered data feed.
-        </p>
-        <div class="btn-list justify-content-center">
-            <a href="/login" class="btn btn-primary btn-lg">Sign in</a>
-            <a href="/docs" class="btn btn-lg">Docs</a>
+
+@* Crawdad logomark (silhouette, inherits currentColor) *@
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="crawdad" viewBox="0 0 64 64">
+        <g fill="currentColor" stroke="none">
+            <path d="M32 16 C24 16 22 23 23 30 C24 39 27 45 32 49 C37 45 40 39 41 30 C42 23 40 16 32 16 Z" />
+            <path d="M29 15.5 L32 9 L35 15.5 Z" />
+            <path d="M32 45 C28 49 24 55 23 60 C27 58 29.5 58 32 60 C34.5 58 37 58 41 60 C40 55 36 49 32 45 Z" />
+            <path d="M14 19.5 C7 18.5 4.5 12.5 6 8 C9 11 12.5 12.5 15 15.5 Z" />
+            <path d="M15.5 16.5 C11.5 10 10.5 6 12 3.5 C15 7 17.5 11 18 15 Z" />
+            <path d="M50 19.5 C57 18.5 59.5 12.5 58 8 C55 11 51.5 12.5 49 15.5 Z" />
+            <path d="M48.5 16.5 C52.5 10 53.5 6 52 3.5 C49 7 46.5 11 46 15 Z" />
+        </g>
+        <g stroke="currentColor" fill="none" stroke-width="2.4" stroke-linecap="round">
+            <path d="M26 24 C21 25 17 23 14.5 20" />
+            <path d="M38 24 C43 25 47 23 49.5 20" />
+            <path d="M31 14 C25 9 21 6 18 4.5" />
+            <path d="M33 14 C39 9 43 6 46 4.5" />
+        </g>
+        <g stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round">
+            <path d="M24.5 31 L16.5 34" /><path d="M25.5 36 L18 40" /><path d="M26.5 41 L20.5 45" />
+            <path d="M39.5 31 L47.5 34" /><path d="M38.5 36 L46 40" /><path d="M37.5 41 L43.5 45" />
+        </g>
+    </symbol>
+</svg>
+
+@* ================= NAV ================= *@
+<header class="topnav">
+    <div class="container container-tight">
+        <div class="d-flex align-items-center py-2" style="min-height:60px;">
+            <a class="navbrand" href="#top" aria-label="Crawldad home">
+                <span class="brand-mark"><svg width="30" height="30"><use href="#crawdad" /></svg></span>
+                <span class="word">Crawldad</span>
+            </a>
+            <nav class="d-none d-lg-flex align-items-center gap-4 ms-5">
+                <a class="navlink" href="#how">How it works</a>
+                <a class="navlink" href="#personas">On-ramps</a>
+                <a class="navlink" href="#features">Features</a>
+                <a class="navlink" href="#pricing">Pricing</a>
+                <a class="navlink" href="#faq">FAQ</a>
+            </nav>
+            <div class="ms-auto d-flex align-items-center gap-2">
+                <a class="navlink d-none d-sm-inline me-2" href="/login">Sign in</a>
+                <a class="btn btn-brand" href="/login">Start free</a>
+            </div>
         </div>
     </div>
-</div>
+</header>
+
+@* ================= HERO ================= *@
+<section class="hero" id="top">
+    <div class="container container-tight hero-inner section">
+        <div class="row g-5 align-items-center">
+            <div class="col-lg-6">
+                <span class="eyebrow eyebrow--onink mb-3">
+                    <span class="brand-mark" style="color:#f0a894"><svg width="16" height="16"><use href="#crawdad" /></svg></span>
+                    Declarative browser automation · bring your own browser
+                </span>
+                <h1 class="display-hero mt-2 mb-3">Browser automations that <span class="accent">don't silently rot.</span></h1>
+                <p class="lead-tight mb-4" style="max-width:36rem;">
+                    Every automation versioned, watched, and replayable — on your browsers, into your storage, under your
+                    keys. Ship a <strong style="color:#fff;font-weight:650">JSON payload</strong> instead of a Playwright
+                    codebase, and never operate scraping infrastructure again.
+                </p>
+                <div class="d-flex flex-wrap gap-2 mb-4">
+                    <a class="btn btn-brand btn-lg px-4" href="/login">Start free</a>
+                    <a class="btn btn-ghost-ink btn-lg px-4" href="#how">Read the docs</a>
+                </div>
+                <div class="trust-row d-flex flex-wrap align-items-center gap-2">
+                    <span>Free tier — 2 concurrent runs</span>
+                    <span class="dot">•</span>
+                    <span>No credit card</span>
+                    <span class="dot">•</span>
+                    <span>BYO browser at every tier</span>
+                </div>
+            </div>
+
+            @* proof: real payload + live trace *@
+            <div class="col-lg-6">
+                <div class="editor">
+                    <div class="editor__bar">
+                        <span class="editor__dot"></span><span class="editor__dot"></span><span class="editor__dot"></span>
+                        <span class="editor__name">example.title.json</span>
+                        <span class="editor__tag">POST /runs</span>
+                    </div>
+<pre class="code"><span class="p">{</span>
+  <span class="k">"crawldad"</span><span class="p">:</span> <span class="s">"1"</span><span class="p">,</span>
+  <span class="k">"name"</span><span class="p">:</span> <span class="s">"example.title"</span><span class="p">,</span>
+  <span class="k">"inputs"</span><span class="p">:</span> <span class="p">{</span> <span class="k">"backend"</span><span class="p">:</span> <span class="p">{</span> <span class="k">"type"</span><span class="p">:</span> <span class="s">"backend"</span><span class="p">,</span> <span class="k">"required"</span><span class="p">:</span> <span class="n">true</span> <span class="p">}</span> <span class="p">},</span>
+  <span class="k">"config"</span><span class="p">:</span> <span class="p">{</span> <span class="k">"backend"</span><span class="p">:</span> <span class="s">"input.backend"</span> <span class="p">},</span>
+  <span class="k">"steps"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span> <span class="k">"goto"</span><span class="p">:</span> <span class="p">{</span> <span class="k">"url"</span><span class="p">:</span> <span class="s">"https://example.com"</span> <span class="p">}</span> <span class="p">},</span>
+    <span class="p">{</span> <span class="k">"waitForLoadState"</span><span class="p">:</span> <span class="p">{</span> <span class="k">"state"</span><span class="p">:</span> <span class="s">"load"</span> <span class="p">}</span> <span class="p">},</span>
+    <span class="p">{</span> <span class="k">"set"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="k">"var"</span><span class="p">:</span> <span class="s">"title"</span><span class="p">,</span>
+        <span class="k">"value"</span><span class="p">:</span> <span class="s">"trim(coalesce(text('h1'), ''))"</span>
+    <span class="p">}</span> <span class="p">}</span>
+  <span class="p">],</span>
+  <span class="k">"result"</span><span class="p">:</span> <span class="s">"{ title: title }"</span>
+<span class="p">}</span></pre>
+                    <div style="border-top:1px solid var(--code-line)">
+                        <div class="trace">
+                            <div class="trace__row"><span class="tdot tdot--brand"></span><span class="trace__ev">StepStarted</span><span class="trace__data">{"index":0,"kind":"goto"}</span></div>
+                            <div class="trace__row"><span class="tdot tdot--water"></span><span class="trace__ev">Navigated</span><span class="trace__data">{"url":"https://example.com"}</span></div>
+                            <div class="trace__row"><span class="tdot tdot--ok"></span><span class="trace__ev">Extracted</span><span class="trace__data">{"var":"title"}</span></div>
+                            <div class="trace__row"><span class="tdot tdot--ok"></span><span class="trace__ev" style="color:#7fe0b6;font-weight:600">RunSucceeded</span><span class="trace__data">stats: 812ms · 37 steps</span></div>
+                        </div>
+                        <div class="result-chip"><span class="tdot tdot--ok"></span><span><span style="color:#8fb6ff">"result"</span>: { <span style="color:#8fb6ff">"title"</span>: <span style="color:#7fe0b6">"Example Domain"</span> }</span></div>
+                    </div>
+                </div>
+                <p class="text-center mt-2 mb-0" style="color:var(--ink-muted);font-size:.82rem;">
+                    The proof is in the product — you watch <em>your own</em> browser session driven live over SSE.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+@* ================= HOW IT WORKS ================= *@
+<section class="section" id="how">
+    <div class="container container-tight">
+        <div class="text-center mb-5">
+            <div class="section-kicker mb-2">How it works</div>
+            <h2 class="h2-section mb-2">Point at your browser. Declare the payload. Watch it run.</h2>
+            <p class="lead-tight mx-auto" style="max-width:40rem;">Crawldad always dials <em>out</em> to a CDP endpoint, so your only question is "can our egress reach your browser?" No new infra, no VPN — first run in minutes.</p>
+        </div>
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card-soft card-hover p-4 h-100">
+                    <div class="d-flex align-items-center gap-3 mb-3"><span class="step-num">1</span><span class="persona-tag" style="color:var(--water)">Connect</span></div>
+                    <h3 class="h4 mb-2">Point at your browser</h3>
+                    <p class="mb-0" style="color:var(--muted)">Register a <span class="kbd-mono">connectUrl</span> for Browserbase, Browserless, a self-hosted CDP edge, or a local-Chrome tunnel. The browser stays <em>your</em> account — Crawldad never resells compute.</p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card-soft card-hover p-4 h-100">
+                    <div class="d-flex align-items-center gap-3 mb-3"><span class="step-num">2</span><span class="persona-tag" style="color:var(--water)">Declare</span></div>
+                    <h3 class="h4 mb-2">Declare the payload</h3>
+                    <p class="mb-0" style="color:var(--muted)">A payload is one JSON program — <span class="kbd-mono">goto</span>, <span class="kbd-mono">click</span>, <span class="kbd-mono">fill</span>, extract — with real loops and content-aware conditions. No <span class="kbd-mono">eval</span>, an inspectable effect surface.</p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card-soft card-hover p-4 h-100">
+                    <div class="d-flex align-items-center gap-3 mb-3"><span class="step-num">3</span><span class="persona-tag" style="color:var(--water)">Observe</span></div>
+                    <h3 class="h4 mb-2">Watch it run live</h3>
+                    <p class="mb-0" style="color:var(--muted)">Stream the trace over SSE, replay the exact pinned revision, and open the failure screenshot. When a selector drifts, the run tells you — not your customer.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<hr class="hr-fade container container-tight">
+
+@* ================= PERSONAS / ON-RAMPS ================= *@
+<section class="section" id="personas">
+    <div class="container container-tight">
+        <div class="text-center mb-5">
+            <div class="section-kicker mb-2">Three on-ramps</div>
+            <h2 class="h2-section mb-2">One topology fact, three ways in</h2>
+            <p class="lead-tight mx-auto" style="max-width:42rem;">Because Crawldad reaches your browser (never the other way around), the same product fits a laptop, a team, or a data center — and the slot ladder maps onto them exactly.</p>
+        </div>
+        <div class="row g-4">
+            <div class="col-lg-4">
+                <div class="card-soft p-4 h-100 d-flex flex-column">
+                    <span class="pill mb-3" style="align-self:flex-start;background:var(--brand-tint);border-color:var(--brand-line);color:var(--brand-strong)">Solo dev → your machine</span>
+                    <h3 class="h4 mb-2">A tunnel you already know</h3>
+                    <p style="color:var(--muted)">Expose local Chrome's debugging port through <span class="kbd-mono">ngrok</span> or <span class="kbd-mono">cloudflared</span> and pass the <span class="kbd-mono">wss://</span> URL as a credential reference. Zero novelty — the same motion you use to receive webhooks locally.</p>
+                    <div class="mt-auto pt-2" style="color:var(--water);font-weight:600;font-size:.9rem">Free tier · 2 slots · the whole front door</div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="card-soft p-4 h-100 d-flex flex-column" style="border-color:var(--brand-line)">
+                    <span class="pill mb-3" style="align-self:flex-start;background:var(--brand-tint);border-color:var(--brand-line);color:var(--brand-strong)">Mid team → Browserbase / Browserless</span>
+                    <h3 class="h4 mb-2">The designed happy path</h3>
+                    <p style="color:var(--muted)">Trivial to connect, nothing to build. This is where collaboration and continuity begin to matter: a shared payload registry, revision review, longer retention, and webhooks into your stack.</p>
+                    <div class="mt-auto pt-2" style="color:var(--water);font-weight:600;font-size:.9rem">Team & Scale · 10–50+ slots</div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="card-soft p-4 h-100 d-flex flex-column">
+                    <span class="pill mb-3" style="align-self:flex-start;background:var(--brand-tint);border-color:var(--brand-line);color:var(--brand-strong)">Crawling farm → your data centers</span>
+                    <h3 class="h4 mb-2">Your perimeter, our plane</h3>
+                    <p style="color:var(--muted)">Expose a TLS-terminated CDP edge and allowlist Crawldad's stable egress IPs. Where volume lives: the slot curve bends down, with dedicated egress, SSO/SLA, and a single-tenant instance inside your perimeter.</p>
+                    <div class="mt-auto pt-2" style="color:var(--water);font-weight:600;font-size:.9rem">Scale & Enterprise · hundreds of slots</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+@* ================= FEATURES ================= *@
+<section class="section" id="features" style="background:var(--surface-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+    <div class="container container-tight">
+        <div class="text-center mb-5">
+            <div class="section-kicker mb-2">What you actually get</div>
+            <h2 class="h2-section mb-2">The reliability layer, not the electrons</h2>
+            <p class="lead-tight mx-auto" style="max-width:42rem;">We price the interpreter, the retry taxonomy, the checkpoint saga, and the drift tooling that would otherwise rot on your shelf. Every capability in the grid below is live in the product today.</p>
+        </div>
+        <div class="row g-4">
+            @* 1 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l3 3l-3 3" /><path d="M14 15h3" /><rect x="3" y="4" width="18" height="16" rx="2" /></svg></span>
+                    <h3 class="h5 mb-2">Declarative JSON payloads</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">Real loops with mandatory safety caps, content-aware conditions, and a composable document that's diffable, storable, and LLM-generatable — no <span class="kbd-mono">eval</span>, ever.</p>
+                </div>
+            </div>
+            @* 2 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></svg></span>
+                    <h3 class="h5 mb-2">Live SSE trace</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">Watch your own browser driven live, step by step. Reconnect with <span class="kbd-mono">Last-Event-ID</span> and resume exactly where you left off — the durable stream loses no frame.</p>
+                </div>
+            </div>
+            @* 3 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4v4H9V4" /><path d="M4 8h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M12 12v4" /><path d="M10 14h4" /></svg></span>
+                    <h3 class="h5 mb-2">Replay pinned revisions</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">Re-execute the exact revision plus script hash the original run recorded — the script is guaranteed identical. That guarantee is the whole basis of the drift story.</p>
+                </div>
+            </div>
+            @* 4 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="12" cy="12" r="3" /><path d="M7 8h.01" /></svg></span>
+                    <h3 class="h5 mb-2">Failure screenshots + capture</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">A step fails and you get the PNG of the failing page — and, with <span class="kbd-mono">captureOnFailure</span>, its full HTML banked to <em>your</em> storage. The clearest possible drift diagnostic.</p>
+                </div>
+            </div>
+            @* 5 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l4-6 4 3 4-7 4 5" /><path d="M3 21h18" /><path d="M3 4v13" /></svg></span>
+                    <h3 class="h5 mb-2">Drift monitoring</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">A baseline/delta signal — not a naive miss count — flags a selector that matched at baseline but is newly gone. Query a payload's drift status on demand — per-revision baseline, tunable threshold — and read each run's pinned-vs-head revision drift alongside it.</p>
+                </div>
+            </div>
+            @* 6 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3l-1 9h6l-7 9 1-9H6z" /></svg></span>
+                    <h3 class="h5 mb-2">Signed webhooks</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">Get pushed a run's terminal disposition — HMAC-signed, ref-only, at-least-once with backoff retry on an independent channel. A slow receiver never affects a run.</p>
+                </div>
+            </div>
+            @* 7 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /><rect x="9" y="3" width="6" height="4" rx="1" /><path d="M9 14l2 2 4-4" /></svg></span>
+                    <h3 class="h5 mb-2">Fixtures & CI regression</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">Record a live session once, then replay any revision against it — deterministically, zero live traffic — so CI golden-gates a payload before it ever touches the real site.</p>
+                </div>
+            </div>
+            @* 8 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z" /><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" /><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg></span>
+                    <h3 class="h5 mb-2">Retention & right-to-erasure</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">Per-tier timeline windows, with a one-call <span class="kbd-mono">DELETE</span> that hard-erases a run's result, timeline, and event stream in a single tenant-scoped transaction.</p>
+                </div>
+            </div>
+            @* 9 *@
+            <div class="col-md-6 col-lg-4">
+                <div class="card-soft p-4 h-100">
+                    <span class="feat-ico mb-3"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" /><path d="M9 12l2 2 4-4" /></svg></span>
+                    <h3 class="h5 mb-2">BYO browser, storage & keys</h3>
+                    <p class="mb-0" style="color:var(--muted);font-size:.93rem">Table stakes at every tier including free — never an upsell. Secrets are vault references typed straight into the field; they never enter an expression, a variable, or the trace.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+@* ================= PRICING ================= *@
+<section class="section" id="pricing">
+    <div class="container container-tight">
+        <div class="text-center mb-5">
+            <div class="section-kicker mb-2">Pricing</div>
+            <h2 class="h2-section mb-2">Priced on concurrent run slots — nothing else</h2>
+            <p class="lead-tight mx-auto" style="max-width:44rem;">One legible axis: a slot is a claim on provisioned capacity. No metering pipeline, no surprise bills, no end-of-month reconciliation. BYO browser, storage, and vault at every tier — no infra markup anywhere.</p>
+        </div>
+
+        <div class="row g-4 align-items-stretch">
+            @* FREE *@
+            <div class="col-md-6 col-lg-3">
+                <div class="price-card p-4">
+                    <div class="mb-3">
+                        <div class="fw-bold" style="font-size:1.1rem">Free</div>
+                        <div class="small" style="color:var(--muted)">The whole front door</div>
+                    </div>
+                    <div class="mb-1"><span class="price-amt">$0</span></div>
+                    <div class="mb-3"><span class="price-slots">2 slots</span> <span class="small" style="color:var(--muted)">concurrent</span></div>
+                    <a class="btn btn-quiet w-100 mb-3" href="/login">Start free</a>
+                    <ul class="plist">
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>1 seat · 5 managed payloads</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>7-day timeline retention</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>DSL, replay, versioning, SSE</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>BYO browser / storage / vault</li>
+                        <li class="muted"><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 12h12" /></svg>Shared egress · community support</li>
+                    </ul>
+                </div>
+            </div>
+
+            @* TEAM *@
+            <div class="col-md-6 col-lg-3">
+                <div class="price-card p-4">
+                    <div class="mb-3">
+                        <div class="fw-bold" style="font-size:1.1rem">Team</div>
+                        <div class="small" style="color:var(--muted)">Collaboration & continuity</div>
+                    </div>
+                    <div class="mb-1"><span class="price-amt">$99</span><span class="small" style="color:var(--muted)">/mo</span></div>
+                    <div class="mb-3"><span class="price-slots">10 slots</span> <span class="small" style="color:var(--muted)">incl. · +$12 each</span></div>
+                    <a class="btn btn-quiet w-100 mb-3" href="/login">Choose Team</a>
+                    <ul class="plist">
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>10 seats · 50 managed payloads</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>30-day retention</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Signed webhooks</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Stable egress IPs to allowlist</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Email support · queue depth 100</li>
+                    </ul>
+                </div>
+            </div>
+
+            @* SCALE (featured) *@
+            <div class="col-md-6 col-lg-3">
+                <div class="price-card is-featured p-4" style="position:relative">
+                    <span class="ribbon">Most popular</span>
+                    <div class="mb-3">
+                        <div class="fw-bold" style="font-size:1.1rem">Scale</div>
+                        <div class="small" style="color:var(--muted)">Watched & monitored</div>
+                    </div>
+                    <div class="mb-1"><span class="price-amt">$499</span><span class="small" style="color:var(--muted)">/mo</span></div>
+                    <div class="mb-3"><span class="price-slots">50 slots</span> <span class="small" style="color:var(--muted)">incl. · +$8 each</span></div>
+                    <a class="btn btn-brand w-100 mb-3" href="/login">Choose Scale</a>
+                    <ul class="plist">
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Unlimited seats & payloads</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>90-day retention</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg><strong>Drift detection (baseline/delta)</strong></li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Dedicated egress IP pair</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Priority support · queue depth 1,000</li>
+                    </ul>
+                </div>
+            </div>
+
+            @* ENTERPRISE *@
+            <div class="col-md-6 col-lg-3">
+                <div class="price-card p-4">
+                    <div class="mb-3">
+                        <div class="fw-bold" style="font-size:1.1rem">Enterprise</div>
+                        <div class="small" style="color:var(--muted)">In your perimeter</div>
+                    </div>
+                    <div class="mb-1"><span class="price-amt">Custom</span></div>
+                    <div class="mb-3"><span class="price-slots">Hundreds</span> <span class="small" style="color:var(--muted)">committed · ~$4–5 each</span></div>
+                    <a class="btn btn-quiet w-100 mb-3" href="#contact">Talk to us</a>
+                    <ul class="plist">
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Single-tenant, VNet-peered instance</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>SSO/SAML · audit export</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Dedicated DB isolation · 99.9% SLA</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Retention + archival to your storage</li>
+                        <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>Private peering · named + Slack support</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        @* footnotes *@
+        <div class="row g-3 mt-4">
+            <div class="col-lg-6">
+                <div class="p-3 rounded" style="background:var(--surface-2);border:1px solid var(--line);font-size:.86rem;color:var(--muted)">
+                    <strong style="color:var(--fg)">Slot ladder.</strong> Add-ons step down with volume: $12 → $8 → $6 → committed ~$4–5. A 300-slot farm pays <span class="kbd-mono">$499 + 50×$8 + 200×$6 = $2,099/mo</span>.
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="p-3 rounded" style="background:var(--surface-2);border:1px solid var(--line);font-size:.86rem;color:var(--muted)">
+                    <strong style="color:var(--fg)">Fair-use guardrails</strong> (runs/mo · steps/run · events/run): Free 5,000·500·2,500 · Team 50,000·2,000·10,000 · Scale 500,000·10,000·50,000. Invisible to ~95% of users — the upgrade conversation for short-run spam, never a bill.
+                </div>
+            </div>
+        </div>
+        <p class="text-center mt-3 mb-0" style="color:var(--muted);font-size:.86rem">
+            At your slot cap we <strong style="color:var(--fg)">queue, we don't reject</strong> — run N+1 waits for a free slot with its position surfaced. Sustained queue wait is the "add slots?" signal, never a hard failure.
+        </p>
+    </div>
+</section>
+
+@* ================= RISK REVERSAL ================= *@
+<section class="section-sm">
+    <div class="container container-tight">
+        <div class="risk p-4 p-md-5">
+            <div class="row g-4 align-items-center position-relative" style="z-index:1">
+                <div class="col-lg-4">
+                    <div class="section-kicker mb-2" style="color:#7fd6df">Risk reversal</div>
+                    <h2 class="h2-section mb-2" style="color:#fff;font-size:1.7rem">Transparency <em>is</em> the guarantee</h2>
+                    <p class="mb-0" style="color:var(--ink-muted)">Nothing is resold, so no bill can surprise you and your data never leaves your control. Switching cost is near zero — which is exactly why it's safe to commit.</p>
+                </div>
+                <div class="col-lg-8">
+                    <div class="row g-4">
+                        <div class="col-md-4">
+                            <div class="risk-ico mb-2"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12" /><path d="M8 11l4 4 4-4" /><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg></div>
+                            <h3 class="h6" style="color:#fff">Export everything, always</h3>
+                            <p class="mb-0" style="color:var(--ink-muted);font-size:.9rem">Payloads and timelines are your JSON in your storage. No data hostage, no lock-in tax.</p>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="risk-ico mb-2"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" /><path d="M9 12l2 2 4-4" /></svg></div>
+                            <h3 class="h6" style="color:#fff">Engine-fault credit</h3>
+                            <p class="mb-0" style="color:var(--ink-muted);font-size:.9rem">A run that fails on an engine or infra fault — not your <span class="kbd-mono">guard</span> or the target site — earns a goodwill credit.</p>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="risk-ico mb-2"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2" /><path d="M8 8V6a4 4 0 0 1 8 0v2" /><path d="M12 13v3" /></svg></div>
+                            <h3 class="h6" style="color:#fff">No lock-in</h3>
+                            <p class="mb-0" style="color:var(--ink-muted);font-size:.9rem">Month-to-month below Enterprise, plus a 30-day refund. Cancel and walk away with your data.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+@* ================= FAQ ================= *@
+<section class="section" id="faq">
+    <div class="container container-tight" style="max-width:820px;">
+        <div class="text-center mb-5">
+            <div class="section-kicker mb-2">FAQ</div>
+            <h2 class="h2-section mb-0">Straight answers</h2>
+        </div>
+
+        <details class="faq-item" open>
+            <summary>Is my scraped data resold or used to train anything?<span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span></summary>
+            <div class="faq-body">No. Under the bring-your-own model your browser, your storage, and your vault stay yours — nothing is resold. <code>capture</code> streams full documents straight to <em>your</em> storage, never touching our database, and your payloads are your JSON, exportable any day. The only signal we keep is anonymized selector-drift telemetry (which selector broke, on which host, when) — never your extracted content.</div>
+        </details>
+
+        <details class="faq-item">
+            <summary>What browsers can I connect?<span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span></summary>
+            <div class="faq-body">Anything that speaks CDP. Crawldad always dials <em>out</em> to your endpoint: Browserbase, Browserless, a self-hosted TLS-terminated CDP edge, or local Chromium exposed through an <code>ngrok</code>/<code>cloudflared</code> tunnel. The <code>IBrowserBackend</code> seam is multi-backend by design, so no single provider is load-bearing — and the browser is always billed to your account, not ours.</div>
+        </details>
+
+        <details class="faq-item">
+            <summary>How is this different from just writing Playwright?<span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span></summary>
+            <div class="faq-body">A Playwright codebase is a program you own, operate, and watch rot. A Crawldad payload is <em>data</em>: declarative JSON that's versioned, diffable, pinned, replayable, and drift-detected — with a safe expression language that can't <code>eval</code>, loop unboundedly, or reach the filesystem. You author the automation; we own the interpreter, the retry taxonomy, the checkpoint saga, and the drift tooling.</div>
+        </details>
+
+        <details class="faq-item">
+            <summary>What happens when I hit my concurrent-slot cap?<span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span></summary>
+            <div class="faq-body">We queue, we don't reject. Run N+1 is accepted, persisted <code>queued</code>, and returns its position — a <code>429</code> at your own capacity limit feels like a broken product, while a visible queue feels like a full one. When a slot frees, your oldest queued run is promoted automatically. A hard <code>429</code> only ever comes from exceeding the per-tier queue depth, and sustained wait is the honest "add slots?" signal.</div>
+        </details>
+
+        <details class="faq-item">
+            <summary>How are credentials handled?<span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span></summary>
+            <div class="faq-body">Always by reference, never by value. A <code>secretRef</code> is a vault reference consumable only by <code>fill.secret</code>, which resolves it at fill time and types it straight into the field — it never enters an expression, a variable, or the trace (which records only <code>secret:&lt;name&gt;</code>). Browser connect secrets are encrypted at rest and never echoed by any endpoint or log.</div>
+        </details>
+
+        <details class="faq-item">
+            <summary>Why is Crawldad closed-source and hosted-only?<span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span></summary>
+            <div class="faq-body">Because every automation runs through one hosted plane, cross-customer drift signal accretes — turning "this selector broke on this host" into proactive monitoring nobody running solo could build. Hosted-only keeps that signal intact. Transparency is delivered through the <em>product</em>, not the source: your payloads, your runs, and your data stay yours and exportable at all times.</div>
+        </details>
+    </div>
+</section>
+
+@* ================= FINAL CTA ================= *@
+<section class="section-sm">
+    <div class="container container-tight">
+        <div class="card-soft text-center p-5" style="background:var(--surface-2);border-color:var(--brand-line)">
+            <h2 class="h2-section mb-2">Point a payload at your browser. First run in minutes.</h2>
+            <p class="lead-tight mb-4 mx-auto" style="max-width:36rem;">The free tier is a genuine lead magnet — 2 concurrent slots, BYO browser, no credit card. Grow into slots and collaboration only when a wall actually arrives.</p>
+            <div class="d-flex flex-wrap gap-2 justify-content-center">
+                <a class="btn btn-brand btn-lg px-4" href="/login">Start free</a>
+                <a class="btn btn-quiet btn-lg px-4" href="#how">Read the docs</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+@* ================= FOOTER ================= *@
+<footer class="footer" id="contact">
+    <div class="container container-tight py-5">
+        <div class="row g-4">
+            <div class="col-lg-5">
+                <a class="navbrand mb-3" href="#top" aria-label="Crawldad home" style="color:#fff">
+                    <span style="color:var(--brand)"><svg width="28" height="28"><use href="#crawdad" /></svg></span>
+                    <span class="word">Crawldad</span>
+                </a>
+                <p class="mt-3 mb-3" style="max-width:30rem;font-size:.92rem;">Reliable, maintainable browser automation without owning a browser-orchestration codebase. Declarative payloads, on your browsers, into your storage, under your keys.</p>
+                <a class="btn btn-ghost-ink" href="mailto:hello@crawldad.dev">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>
+                    hello@crawldad.dev
+                </a>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="fw-bold mb-3" style="color:#fff;font-size:.9rem">Product</div>
+                <ul class="list-unstyled" style="line-height:2.1;font-size:.92rem">
+                    <li><a href="#how">How it works</a></li>
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#pricing">Pricing</a></li>
+                    <li><a href="#personas">On-ramps</a></li>
+                </ul>
+            </div>
+            <div class="col-6 col-lg-2">
+                <div class="fw-bold mb-3" style="color:#fff;font-size:.9rem">Developers</div>
+                <ul class="list-unstyled" style="line-height:2.1;font-size:.92rem">
+                    <li><a href="#features">API reference</a></li>
+                    <li><a href="#how">Payload spec</a></li>
+                    <li><a href="#personas">Tunnel guide</a></li>
+                    <li><a href="#top">Status</a></li>
+                </ul>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="fw-bold mb-3" style="color:#fff;font-size:.9rem">Company</div>
+                <ul class="list-unstyled" style="line-height:2.1;font-size:.92rem">
+                    <li><a href="mailto:sales@crawldad.dev">Contact sales</a></li>
+                    <li><a href="/login">Sign in</a></li>
+                    <li><a href="#pricing">Pricing</a></li>
+                    <li><a href="#faq">FAQ</a></li>
+                </ul>
+            </div>
+        </div>
+        <hr style="border-color:var(--ink-line);margin:2rem 0 1rem;">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2" style="font-size:.85rem;">
+            <span>© 2026 Crawldad. Closed-source, hosted, and transparent by design.</span>
+            <span class="d-flex align-items-center gap-2"><span class="tdot tdot--ok" style="width:8px;height:8px"></span> All systems operational</span>
+        </div>
+    </div>
+</footer>
