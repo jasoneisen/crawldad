@@ -10,8 +10,13 @@ namespace Crawldad.Tests.Portal;
 internal sealed class PayloadsWebhooksTenantContext : IPortalTenantContext
 {
     private readonly PortalTenant? _tenant;
+    private readonly Exception? _fault;
 
-    private PayloadsWebhooksTenantContext(PortalTenant? tenant) => _tenant = tenant;
+    private PayloadsWebhooksTenantContext(PortalTenant? tenant, Exception? fault = null)
+    {
+        _tenant = tenant;
+        _fault = fault;
+    }
 
     /// <summary>A context that resolves to a tenant whose client is backed by <paramref name="handler"/>.</summary>
     public static PayloadsWebhooksTenantContext LinkedTo(StubHttpMessageHandler handler, string tenantId = "meridian-title") =>
@@ -20,10 +25,15 @@ internal sealed class PayloadsWebhooksTenantContext : IPortalTenantContext
     /// <summary>A context that resolves to the not-linked state (unauthenticated or unlinked).</summary>
     public static PayloadsWebhooksTenantContext NotLinked() => new(tenant: null);
 
-    public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) => Task.FromResult(_tenant);
+    /// <summary>A context whose resolve throws — e.g. a rotated Data-Protection ring surfacing as
+    /// <see cref="System.Security.Cryptography.CryptographicException"/> from inside Unprotect.</summary>
+    public static PayloadsWebhooksTenantContext Throwing(Exception fault) => new(tenant: null, fault);
+
+    public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) =>
+        _fault is not null ? Task.FromException<PortalTenant?>(_fault) : Task.FromResult(_tenant);
 
     public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) =>
-        _tenant is not null
-            ? Task.FromResult(_tenant)
-            : throw new NotLinkedException("The current portal user is not linked to a Crawldad tenant.");
+        _fault is not null ? Task.FromException<PortalTenant>(_fault)
+        : _tenant is not null ? Task.FromResult(_tenant)
+        : throw new NotLinkedException("The current portal user is not linked to a Crawldad tenant.");
 }

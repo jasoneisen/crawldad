@@ -118,10 +118,10 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        var tenant = await Tenant.TryResolveAsync();
+        var tenant = await Tenant.TryResolveForPageAsync();
         if (tenant is null)
         {
-            return; // _active stays null => not-linked empty state
+            return; // unlinked, or an undecryptable key (rotated ring) => not-linked empty state (re-link from Account)
         }
 
         // Running first, then queued — the two live dispositions, each a separate status filter (GET /runs?status=…).

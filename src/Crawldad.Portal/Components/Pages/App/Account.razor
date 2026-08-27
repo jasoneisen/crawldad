@@ -16,7 +16,8 @@
     The account area (issue #119 P4). Static SSR — the workspace-link form handler runs on the real HTTP POST so it can
     validate the submitted key against the live API and persist through IPortalTenantLinkStore before the response is
     sent. Sections: profile, workspace link, plan & usage (from GET /tenant + GET /usage via the tenant client),
-    billing (placeholder), and API keys (operator-managed for now). Never a 500 when unlinked; the API key is treated
+    billing (Stripe Checkout + billing portal, from the billing-config read), and API keys (operator-managed for now).
+    Never a 500 when unlinked; the API key is treated
     like a password — posted, validated, stored encrypted, and never echoed back or logged.
 *@
 <div class="page-header">

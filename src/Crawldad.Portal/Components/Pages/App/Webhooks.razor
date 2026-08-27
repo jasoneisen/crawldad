@@ -270,10 +270,10 @@ else
         Register ??= new();
         Removal ??= new();
 
-        var tenant = await Tenant.TryResolveAsync();
+        var tenant = await Tenant.TryResolveForPageAsync();
         if (tenant is null)
         {
-            _notLinked = true;
+            _notLinked = true; // unlinked, or an undecryptable key (rotated ring) — re-link from Account
             return;
         }
 

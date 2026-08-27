@@ -300,10 +300,12 @@ else
     {
         ReplayForm ??= new();
 
-        var tenant = await Tenant.TryResolveAsync();
+        var tenant = await Tenant.TryResolveForPageAsync();
         if (tenant is null)
         {
-            return; // no linked tenant => _timeline stays null and the not-linked empty state renders
+            // unlinked, or an undecryptable key (rotated ring) => _timeline stays null and the not-linked empty state
+            // renders (the user re-links from Account).
+            return;
         }
 
         try

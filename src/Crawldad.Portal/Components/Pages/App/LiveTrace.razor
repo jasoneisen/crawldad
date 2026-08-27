@@ -88,9 +88,9 @@ else
                 </div>
             </div>
             <div class="row g-2 mt-2">
-                <div class="col-4"><div class="datacard"><div class="kpi-sub">Steps</div><div class="fw-bold mono" data-testid="count-steps">@StepCount</div></div></div>
-                <div class="col-4"><div class="datacard"><div class="kpi-sub">Selector misses</div><div class="fw-bold mono" data-testid="count-misses">@MissCount</div></div></div>
-                <div class="col-4"><div class="datacard"><div class="kpi-sub">Events</div><div class="fw-bold mono" data-testid="count-events">@_events.Count</div></div></div>
+                <div class="col-4"><div class="datacard"><div class="kpi-sub">Steps</div><div class="fw-bold mono" data-testid="count-steps">@_stepsSeen</div></div></div>
+                <div class="col-4"><div class="datacard"><div class="kpi-sub">Selector misses</div><div class="fw-bold mono" data-testid="count-misses">@_missesSeen</div></div></div>
+                <div class="col-4"><div class="datacard"><div class="kpi-sub">Events</div><div class="fw-bold mono" data-testid="count-events">@_eventsSeen</div></div></div>
             </div>
         </div>
     </div>
@@ -183,6 +183,14 @@ else
     private enum Phase { Connecting, Streaming, Reconnecting, Completed, Disconnected, NotFound, Error }
 
     private readonly List<RunEventFrame> _events = [];
+
+    // Monotonic tallies of everything the stream has delivered, incremented as frames arrive and independent of the
+    // capped _events display window — so the header counters keep climbing on a long run instead of plateauing once the
+    // rolling cap starts dropping the oldest rows.
+    private int _stepsSeen;
+    private int _missesSeen;
+    private int _eventsSeen;
+
     private PortalTenant? _tenant;
     private Phase _phase = Phase.Connecting;
     private RunStatus _runStatus = RunStatus.Running;
@@ -194,8 +202,6 @@ else
     private Task? _streamTask;
 
     private bool IsLive => _phase is Phase.Connecting or Phase.Streaming or Phase.Reconnecting;
-    private int StepCount => _events.Count(static e => e.EventType == "StepStarted");
-    private int MissCount => _events.Count(static e => e.EventType == "SelectorMiss");
     private string CompletionBannerCss => _runStatus == RunStatus.Failed ? "run-failure-banner" : "";
 
     private string PhaseNote => _phase switch
@@ -361,6 +367,18 @@ else
 
     private void Append(RunEventFrame frame)
     {
+        // Tally every frame as it arrives (before the rolling cap can evict it) so the header counters are monotonic and
+        // survive the display window trimming — StepStarted/SelectorMiss are the same event types the timeline counts.
+        _eventsSeen++;
+        if (frame.EventType == "StepStarted")
+        {
+            _stepsSeen++;
+        }
+        else if (frame.EventType == "SelectorMiss")
+        {
+            _missesSeen++;
+        }
+
         _events.Add(frame);
         if (_events.Count > MaxEvents)
         {

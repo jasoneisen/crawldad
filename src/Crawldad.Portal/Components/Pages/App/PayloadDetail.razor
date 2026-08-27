@@ -402,10 +402,10 @@ else if (_loaded)
         // and a null-ref when rendering the empty form).
         Editor ??= new();
 
-        var tenant = await Tenant.TryResolveAsync();
+        var tenant = await Tenant.TryResolveForPageAsync();
         if (tenant is null)
         {
-            _notLinked = true;
+            _notLinked = true; // unlinked, or an undecryptable key (rotated ring) — re-link from Account
             return;
         }
 
@@ -471,15 +471,16 @@ else if (_loaded)
         }
     }
 
-    // Best-effort drift read: an existing payload with no canary is a valid NoData (200); a genuine miss (e.g. a
-    // just-archived payload) degrades to "no drift panel" rather than failing the page.
+    // Best-effort drift read: an existing payload with no canary is a valid NoData (200); any API failure — a genuine
+    // miss (e.g. a just-archived payload → 404) OR a transient 5xx — degrades to "no drift panel" rather than failing
+    // the whole page. Matches the payloads LIST, which drops the per-row drift badge on any CrawldadException.
     private static async Task<PayloadDriftStatus?> LoadDriftAsync(CrawldadClient client, Guid id)
     {
         try
         {
             return await client.GetPayloadDriftStatusAsync(id);
         }
-        catch (CrawldadNotFoundException)
+        catch (CrawldadException)
         {
             return null;
         }

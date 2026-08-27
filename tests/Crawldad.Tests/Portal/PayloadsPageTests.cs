@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Bunit;
 using Crawldad.Contracts.Drift;
 using Crawldad.Contracts.Payloads;
@@ -25,6 +26,21 @@ public class PayloadsPageTests : BunitContext
         cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace linked");
         cut.Markup.ShouldContain("/app/account");
         cut.FindAll("[data-testid=tenant]").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void An_undecryptable_stored_key_degrades_to_the_not_linked_state_rather_than_crashing()
+    {
+        // A rotated/lost Data-Protection ring makes the resolve throw CryptographicException; the shared page-resolve
+        // helper folds it into the same not-linked empty state (pointing at Account) instead of a 500. Representative of
+        // every data page's OnInitializedAsync resolve — the seven pages share one helper, tested directly in
+        // PortalTenantContextExtensionsTests.
+        Use(PayloadsWebhooksTenantContext.Throwing(new CryptographicException("ring rotated")));
+
+        var cut = Render<Payloads>();
+
+        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace linked");
+        cut.Markup.ShouldContain("/app/account");
     }
 
     [Fact]
