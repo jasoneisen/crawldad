@@ -18,10 +18,9 @@ public interface IWebhookEndpointStore
     /// rest; a replace keeps the original <c>createdAt</c>. Returns the stored metadata — never the secret.</summary>
     Task<WebhookSummary> RegisterAsync(string tenant, string name, string url, string secret, IReadOnlyList<string> events, CancellationToken ct);
 
-    /// <summary>Lists the tenant's registered endpoints (secrets omitted), ordered by name for a deterministic response.</summary>
-    Task<IReadOnlyList<WebhookSummary>> ListAsync(string tenant, CancellationToken ct);
-
-    /// <summary>Lists the tenant's endpoints on an already-tenant-scoped <paramref name="session"/> (the fan-out handler's).</summary>
+    /// <summary>Lists the tenant's registered endpoints (secrets omitted) on an already-tenant-scoped
+    /// <paramref name="session"/> (the list endpoint's or the fan-out handler's), ordered by name for a
+    /// deterministic response.</summary>
     Task<IReadOnlyList<WebhookSummary>> ListAsync(IQuerySession session, CancellationToken ct);
 
     /// <summary>Deletes the tenant's <paramref name="name"/> registration; <see langword="false"/> when it did not exist.</summary>
@@ -71,12 +70,6 @@ internal sealed class MartenWebhookEndpointStore : IWebhookEndpointStore
         session.Store(doc);
         await session.SaveChangesAsync(ct);
         return Summary(doc);
-    }
-
-    public async Task<IReadOnlyList<WebhookSummary>> ListAsync(string tenant, CancellationToken ct)
-    {
-        await using var session = _store.QuerySession(tenant);
-        return await ListAsync(session, ct);
     }
 
     public async Task<IReadOnlyList<WebhookSummary>> ListAsync(IQuerySession session, CancellationToken ct)
