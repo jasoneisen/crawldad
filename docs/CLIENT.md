@@ -140,3 +140,23 @@ A run that *starts then faults* is not an exception — it is still `200`/`202` 
 - **Browsers:** `RegisterBrowserAsync`, `ListBrowsersAsync`, `UnregisterBrowserAsync`.
 
 Every method takes a `CancellationToken` and is async-only.
+
+## Tenant & usage
+
+Two read-only, tenant-scoped calls back the portal's account area (both derive the tenant from the API key — there is
+no id parameter):
+
+```csharp
+// GET /tenant — the authenticated tenant's profile.
+TenantProfileResponse tenant = await crawldad.GetTenantAsync();
+// tenant.TenantId, tenant.DisplayName, tenant.Tier (optional), tenant.SlotAllowance, tenant.QueueDepthAllowance
+
+// GET /usage — live usage against guardrails (approximate by design, not a billing ledger).
+UsageResponse usage = await crawldad.GetUsageAsync();
+// usage.Slots (InUse/Allowance), usage.Queue (Depth/Sampled/P95WaitMs),
+// usage.RunsStartedThisMonth, usage.Events (Guardrail/Sampled/Avg/Max)
+```
+
+`GetTenantAsync` is the cheapest authenticated round-trip, so it doubles as a **key-validity probe**: a wrong or revoked
+key surfaces as `CrawldadUnauthorizedException` (`401`) rather than a valid response — which is exactly how the portal
+verifies a pasted key before storing it.
