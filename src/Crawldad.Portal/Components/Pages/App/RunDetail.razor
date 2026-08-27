@@ -6,6 +6,7 @@
 @using Crawldad.Portal.Runs
 @using Crawldad.Portal.Tenancy
 @inject IPortalTenantContext Tenant
+@inject NavigationManager Nav
 
 <PageTitle>Run @RunView.ShortId(RunId) · Crawldad</PageTitle>
 
@@ -32,6 +33,18 @@
                     Run <span class="run-id ms-2">@RunView.ShortId(RunId)</span>
                     <span class="status @RunView.StatusCss(timeline.Status) ms-2 align-middle"><span class="status-dot"></span>@timeline.Status</span>
                 </h1>
+            </div>
+            <div class="col-auto ms-auto d-print-none">
+                <div class="btn-list">
+                    @if (timeline.PayloadId is not null)
+                    {
+                        <a href="#replay" class="btn btn-primary" data-testid="replay-action"><i class="ti ti-reload me-1"></i>Replay</a>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary" disabled title="This run executed an inline payload — only runs pinned to a managed payload can be replayed." data-testid="replay-action-disabled"><i class="ti ti-reload me-1"></i>Replay</button>
+                    }
+                </div>
             </div>
         </div>
     </div>
@@ -200,6 +213,44 @@
             </div>
         </div>
     </div>
+
+    <div class="row row-cards mt-1">
+        <div class="col-12">
+            <div class="card" id="replay" data-testid="replay-card">
+                <div class="card-header"><h3 class="card-title"><i class="ti ti-reload me-2 text-secondary"></i>Replay</h3></div>
+                <div class="card-body">
+                    @if (timeline.PayloadId is not null)
+                    {
+                        @if (_replayError is not null)
+                        {
+                            <div class="alert alert-danger" role="alert" data-testid="replay-error">@_replayError</div>
+                        }
+                        <p class="text-secondary">
+                            Starts a fresh run pinned to the same payload revision —
+                            <span class="fw-semibold">@timeline.PayloadName</span> <span class="rev-pill">r@(timeline.PayloadRevision)</span>
+                            — so its result stays drift-comparable with this one. It behaves exactly like an API-started run.
+                            Input <em>values</em> aren't stored with a run, so resupply them here.
+                        </p>
+                        <EditForm FormName="replay-run" Model="ReplayForm" OnValidSubmit="ReplayAsync" data-testid="replay-form">
+                            <div class="mb-3" style="max-width:40rem">
+                                <label class="form-label" for="replay-inputs">Inputs (JSON)</label>
+                                <InputTextArea id="replay-inputs" class="form-control mono" rows="6" spellcheck="false" autocomplete="off" placeholder="{ }" @bind-Value="ReplayForm.Inputs" />
+                                <small class="form-hint">A JSON object of run inputs (backend binding, parameters). Leave blank for none.</small>
+                            </div>
+                            <button type="submit" class="btn btn-primary" data-testid="replay-submit"><i class="ti ti-reload me-1"></i>Start replay</button>
+                        </EditForm>
+                    }
+                    else
+                    {
+                        <p class="text-secondary m-0" data-testid="replay-inline-note">
+                            This run executed an <span class="fw-semibold">inline</span> payload, so it can't be replayed — its
+                            script was never stored as a managed revision. Only runs pinned to a managed payload are replayable.
+                        </p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
 }
 else if (_notFound)
 {
@@ -235,12 +286,20 @@ else
 @code {
     [Parameter] public Guid RunId { get; set; }
 
+    // The resupplied-inputs form (static-SSR POST to this same route). Bound by the framework on submit; on GET it is
+    // null, so it is seeded fresh in OnInitializedAsync (avoids BL0008 and a null-ref rendering the empty form).
+    [SupplyParameterFromForm(FormName = "replay-run")]
+    public ReplayRunInput ReplayForm { get; set; } = default!;
+
     private bool _notFound;
     private RunTimelineResponse? _timeline;
     private RunDriftResponse? _drift;
+    private string? _replayError;
 
     protected override async Task OnInitializedAsync()
     {
+        ReplayForm ??= new();
+
         var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
@@ -261,6 +320,45 @@ else
         if (_timeline.PayloadId is not null)
         {
             _drift = await tenant.Client.GetRunDriftAsync(RunId);
+        }
+    }
+
+    // Starts a fresh run pinned to this run's payload revision, resupplying the submitted inputs. Reached only when the
+    // pinned-run form is rendered (a linked tenant, a managed payload), so RequireAsync resolves the cached tenant and the
+    // API's inline guard is a backstop, not the primary gate.
+    private async Task ReplayAsync()
+    {
+        // Inputs are write-only: capture, then immediately clear the bound field so submitted inputs (which may carry
+        // secrets, e.g. a backend credentialRef) are never echoed back into the re-rendered form.
+        var raw = ReplayForm.Inputs;
+        ReplayForm.Inputs = null;
+        _replayError = null;
+
+        if (!RunView.TryParseReplayInputs(raw, out var inputs))
+        {
+            _replayError = "Inputs must be a valid JSON object — for example { \"parcel\": \"123\" }. Leave the box empty for no inputs.";
+            return;
+        }
+
+        var tenant = await Tenant.RequireAsync();
+        try
+        {
+            // Async dispatch: the fresh run is accepted immediately (202) and watched on the live-trace page. The pinned
+            // payload + revision are re-derived server-side from this run id — replay resupplies only the inputs.
+            var result = await tenant.Client.ReplayRunAsync(RunId, new ReplayRunRequest(inputs, Async: true));
+            Nav.NavigateTo($"/app/live/{result.RunId}", forceLoad: true);
+        }
+        catch (CrawldadRunRejectedException ex)
+        {
+            _replayError = RunView.ReplayRejectionMessage(ex.Code, ex.Message);
+        }
+        catch (CrawldadNotFoundException)
+        {
+            _replayError = "This run no longer exists — it may have been erased.";
+        }
+        catch (CrawldadException)
+        {
+            _replayError = "Couldn't start the replay just now. Please try again in a moment.";
         }
     }
 }

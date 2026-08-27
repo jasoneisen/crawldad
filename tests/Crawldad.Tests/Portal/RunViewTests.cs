@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Crawldad.Contracts.Runs;
 using Crawldad.Portal.Runs;
 
@@ -197,5 +198,54 @@ public class RunViewTests
         {
             CultureInfo.CurrentCulture = original;
         }
+    }
+
+    // ----- replay helpers (the run-detail Replay slice, issue #119 P3) -----
+
+    [Fact]
+    public void TryParseReplayInputs_treats_blank_as_no_inputs()
+    {
+        RunView.TryParseReplayInputs(null, out var fromNull).ShouldBeTrue();
+        fromNull.ValueKind.ShouldBe(JsonValueKind.Undefined); // the SDK normalizes the default element to {}
+        RunView.TryParseReplayInputs("   ", out var fromBlank).ShouldBeTrue();
+        fromBlank.ValueKind.ShouldBe(JsonValueKind.Undefined);
+    }
+
+    [Fact]
+    public void TryParseReplayInputs_accepts_a_json_object_and_clones_it()
+    {
+        RunView.TryParseReplayInputs("""{ "parcel": "123" }""", out var inputs).ShouldBeTrue();
+        inputs.ValueKind.ShouldBe(JsonValueKind.Object);
+        // Usable after the parsed document was disposed — proves the value was cloned, not a dangling reference.
+        inputs.GetProperty("parcel").GetString().ShouldBe("123");
+    }
+
+    [Theory]
+    [InlineData("[1, 2, 3]")]      // an array — inputs must be an object
+    [InlineData("42")]             // a number
+    [InlineData("\"hello\"")]     // a string
+    [InlineData("true")]           // a bool
+    [InlineData("null")]           // JSON null
+    [InlineData("{ not valid")]   // malformed JSON
+    public void TryParseReplayInputs_rejects_non_object_or_malformed_json(string raw)
+    {
+        RunView.TryParseReplayInputs(raw, out _).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("queue_depth_exceeded", "queue is full")]
+    [InlineData("inline_not_replayable", "inline")]
+    [InlineData("payload_archived", "archived")]
+    [InlineData("unknown_payload", "no longer exists")]
+    [InlineData("unknown_revision", "no longer exists")]
+    public void ReplayRejectionMessage_maps_known_slugs_to_friendly_copy(string code, string expectedFragment)
+    {
+        RunView.ReplayRejectionMessage(code, "raw api message").ShouldContain(expectedFragment);
+    }
+
+    [Fact]
+    public void ReplayRejectionMessage_falls_back_to_the_api_message_for_an_unknown_slug()
+    {
+        RunView.ReplayRejectionMessage("some_other_code", "The API said no.").ShouldBe("The API said no.");
     }
 }
