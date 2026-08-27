@@ -2,9 +2,23 @@
 @layout AppLayout
 @attribute [Authorize]
 
-<PageTitle>Account · Crawldad</PageTitle>
+<PageTitle>Account &amp; usage · Crawldad</PageTitle>
 
+@*
+    Empty-state placeholder. Profile, API keys, plan/billing, and the usage panel are wired in a later task.
+*@
 <div class="page-header">
-    <h1 class="page-title">Account</h1>
+    <h1 class="page-title">Account &amp; usage</h1>
 </div>
-<p class="text-secondary mt-3">Your account settings will appear here.</p>
+
+<div class="card mt-3">
+    <div class="empty">
+        <div class="empty-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /></svg>
+        </div>
+        <p class="empty-title">Account &amp; usage</p>
+        <p class="empty-subtitle text-secondary">
+            Your profile, API keys, plan and billing, and slot/queue usage against your guardrails will live here.
+        </p>
+    </div>
+</div>

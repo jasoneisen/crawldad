@@ -4,7 +4,21 @@
 
 <PageTitle>Webhooks · Crawldad</PageTitle>
 
+@*
+    Empty-state placeholder. Webhook-endpoint management is wired in a later task (#70) over Crawldad.Client.
+*@
 <div class="page-header">
     <h1 class="page-title">Webhooks</h1>
 </div>
-<p class="text-secondary mt-3">Configure webhook endpoints for run-lifecycle events here.</p>
+
+<div class="card mt-3">
+    <div class="empty">
+        <div class="empty-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M4.876 13.61a4 4 0 1 0 6.124 3.39h6" /><path d="M15.066 20.502a4 4 0 1 0 1.934 -7.502c-.706 0 -1.424 .18 -2 .5l-3 -5.5" /><path d="M9 8a4 4 0 1 0 -3.938 -4.7" /></svg>
+        </div>
+        <p class="empty-title">No webhooks configured</p>
+        <p class="empty-subtitle text-secondary">
+            Endpoints that receive run-lifecycle events, such as succeeded, failed, and drifted, will be listed here.
+        </p>
+    </div>
+</div>

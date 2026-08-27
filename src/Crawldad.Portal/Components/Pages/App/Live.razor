@@ -2,9 +2,23 @@
 @layout AppLayout
 @attribute [Authorize]
 
-<PageTitle>Live · Crawldad</PageTitle>
+<PageTitle>Live trace · Crawldad</PageTitle>
 
+@*
+    Empty-state placeholder. The live event feed (SSE over Crawldad.Client) is wired in a later task (#68).
+*@
 <div class="page-header">
-    <h1 class="page-title">Live</h1>
+    <h1 class="page-title">Live trace</h1>
 </div>
-<p class="text-secondary mt-3">Live run activity will stream here.</p>
+
+<div class="card mt-3">
+    <div class="empty">
+        <div class="empty-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" /><path d="M14.828 9.172a4 4 0 0 1 0 5.656" /><path d="M17.657 6.343a8 8 0 0 1 0 11.314" /><path d="M9.168 14.828a4 4 0 0 1 0 -5.656" /><path d="M6.337 17.657a8 8 0 0 1 0 -11.314" /></svg>
+        </div>
+        <p class="empty-title">Nothing running right now</p>
+        <p class="empty-subtitle text-secondary">
+            While a run is in flight, its step-by-step trace of navigations, extractions, and misses streams here live.
+        </p>
+    </div>
+</div>
