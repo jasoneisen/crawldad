@@ -72,7 +72,7 @@ public sealed class WebhookDeliveryTests(WebhookApiFixture fixture) : IAsyncLife
         Sender.FailThenDeliver(1); // fail the first attempt, accept the retry
         await SubscribeAsync("retry-hook", "whsec_retry_0123456789");
 
-        await PublishAsync(new DeliverWebhook("retry-hook", "run.succeeded", "evt-r", "{\"id\":\"evt-r\"}", 1));
+        await PublishAsync(new DeliverWebhook("retry-hook", "run.succeeded", "evt-r", "{\"id\":\"evt-r\"}", 1, Guid.NewGuid()));
 
         await WebhookTesting.PollAsync(() => CallsTo("retry-hook") >= 2, "the retry never delivered");
         await Task.Delay(400); // let any further (unexpected) retry fire
@@ -85,7 +85,7 @@ public sealed class WebhookDeliveryTests(WebhookApiFixture fixture) : IAsyncLife
         Sender.AlwaysFail(500); // the fixture caps attempts at 3
         await SubscribeAsync("giveup-hook", "whsec_giveup_0123456789");
 
-        await PublishAsync(new DeliverWebhook("giveup-hook", "run.failed", "evt-g", "{}", 1));
+        await PublishAsync(new DeliverWebhook("giveup-hook", "run.failed", "evt-g", "{}", 1, Guid.NewGuid()));
 
         await WebhookTesting.PollAsync(() => CallsTo("giveup-hook") >= 3, "did not reach the attempt cap");
         await Task.Delay(500); // no 4th attempt should fire
@@ -97,7 +97,7 @@ public sealed class WebhookDeliveryTests(WebhookApiFixture fixture) : IAsyncLife
     {
         Sender.AlwaysDeliver();
 
-        await PublishAsync(new DeliverWebhook("ghost-hook", "run.succeeded", "evt-x", "{}", 1));
+        await PublishAsync(new DeliverWebhook("ghost-hook", "run.succeeded", "evt-x", "{}", 1, Guid.NewGuid()));
 
         await Task.Delay(600); // give the pipeline time to resolve (and not send)
         CallsTo("ghost-hook").ShouldBe(0);

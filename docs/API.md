@@ -37,6 +37,8 @@ contracts and endpoints, not from older design notes.
 17. [Served docs & health](#17-served-docs--health)
 18. [Examples](#18-examples)
 19. [Endpoint quick reference](#19-endpoint-quick-reference)
+20. [Management API — tenants & API keys](#20-management-api--tenants--api-keys----management)
+21. [Dashboard read APIs — runs list, webhook deliveries, tenant & usage](#21-dashboard-read-apis--runs-list-webhook-deliveries-tenant--usage)
 
 ---
 
@@ -1050,6 +1052,10 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `PUT /webhooks/{name}` | ✔ | `RegisterWebhookRequest` | `200 WebhookSummary` | `400` |
 | `GET /webhooks` | ✔ | — | `200 WebhookListResponse` | — |
 | `DELETE /webhooks/{name}` | ✔ | — | `204` | `404` |
+| `GET /webhooks/{name}/deliveries` | ✔ | — (opt. `?limit=N`) | `200 WebhookDeliveryResponse` | `404` |
+| `GET /runs` | ✔ | — (filters + `?page`/`?size`) | `200 RunListResponse` | `400 invalid_status` / `400 invalid_payload_id` |
+| `GET /tenant` | ✔ | — | `200 TenantProfileResponse` | — |
+| `GET /usage` | ✔ | — | `200 UsageResponse` | — |
 | `GET /health` | — | — | `200` | — |
 | `GET /schema/crawldad-1.schema.json` | — | — | `200 application/schema+json` | — |
 | `GET /llms.txt` | — | — | `200 text/plain` | — |
@@ -1142,3 +1148,126 @@ curl -s https://api.example.com/payloads -H "Authorization: Bearer ck_prod_A1b2C
 curl -sX DELETE https://api.example.com/management/tenants/acme/keys/<oldKeyId> \
   -H "Authorization: Bearer $MANAGEMENT_KEY"   # → 204
 ```
+---
+
+## 21. Dashboard read APIs — runs list, webhook deliveries, tenant & usage
+
+Four read surfaces that back the portal dashboard (issue #119). All are tenant-scoped and require auth; all are
+computed on read from existing state — no new event shapes, no heavy projections.
+
+### `GET /runs` — list runs
+
+A filterable, offset-paginated list of the tenant's runs, **newest first** (by `startedAt`, run id as the stable
+tiebreaker). It reads a lightweight `RunSummary` listing projection — list-view fields only; the full result, timeline,
+and drift stay on the per-run surfaces ([§5](#5-polling--get-runsid), [§9](#9-drift-timeline-screenshots--erasure)).
+
+Query parameters (all optional, AND-combined):
+
+| Param | Meaning |
+|---|---|
+| `status` | one of `running` / `queued` / `succeeded` / `failed` / `cancelled`. An unknown value → `400 invalid_status` (a name, never an ordinal — `?status=3` is rejected). |
+| `payloadId` | a managed payload UUID. A malformed value → `400 invalid_payload_id`. |
+| `from`, `to` | inclusive ISO-8601 bounds on `startedAt`. An unparseable bound is ignored (unbounded), never a `400`. |
+| `page` | 1-based page number (default 1; a stray value floors at 1). |
+| `size` | page size (default 25, clamped to 1..100; a stray value falls back to the default). |
+
+Response (`RunListResponse`): `runs[]`, plus `page`, `size`, `total` (the count across the whole filtered set, not just
+this page), and `hasMore`. Each row (`RunListItem`):
+
+```jsonc
+{
+  "runId": "5d1e…",
+  "status": "succeeded",
+  "startedAt": "2026-08-06T12:01:00+00:00",
+  "durationMs": 1500,           // terminal-only
+  "payloadName": "permits.search",
+  "payloadId": "9a3c…",         // omitted for an inline run
+  "payloadRevision": 3,         // omitted for an inline run
+  "inline": false,              // true → the run was launched from an inline payload document
+  "region": "us-east",          // omitted before a backend session opened
+  "stats": { "steps": 5, "requests": 12, "selectorMisses": 2 }, // terminal-only
+  "failure": { "class": "terminal", "code": "nav_failed" }      // only when status = failed
+}
+```
+
+A running/queued row omits the terminal-only fields (`durationMs`, `stats`, `failure`) and `region`. (In production the
+`RunSummary` projection is async and folds forward for new runs; a projection rebuild backfills history.)
+
+### `GET /webhooks/{name}/deliveries` — delivery history
+
+The recent delivery attempts for one endpoint, **newest first**. Each attempt — including a retry of the same event — is
+a distinct row, so a receiver's flakiness reads as its retry ladder. The log is a **rolling window**: the latest **N per
+endpoint** (`Crawldad:Webhooks:DeliveryHistory:MaxPerEndpoint`, default **50**) are kept and older rows are pruned as new
+ones land — bounded storage, not an audit ledger. An optional `?limit=N` narrows the page (clamped to 1..the cap). An
+unknown or foreign endpoint name is a `404`.
+
+Response (`WebhookDeliveryResponse`): `deliveries[]`, each:
+
+```jsonc
+{
+  "runId": "5d1e…",
+  "eventType": "run.succeeded",
+  "attempt": 1,                 // 1-based; a retried delivery shows attempt 1, 2, …
+  "delivered": true,            // the receiver returned 2xx
+  "statusCode": 200,            // omitted on a transport failure (connection error / timeout — no response)
+  "latencyMs": 42,
+  "at": "2026-08-06T12:00:00+00:00"
+}
+```
+
+The **`GET /webhooks`** listing ([§14](#14-webhooks--webhooks)) carries the same outcome as an additive `lastDelivery`
+on each row — the endpoint's most recent attempt — omitted for an endpoint that has never been delivered to.
+
+### `GET /tenant` — the authenticated tenant's profile
+
+```jsonc
+{
+  "tenantId": "tenant-alpha",
+  "displayName": "alpha@crawldad.test",  // the configured actor identity
+  "tier": "pro",                          // optional pricing-tier label; omitted when unset
+  "slotAllowance": 5,                     // concurrent-run cap: the per-tenant override, else the global default
+  "queueDepthAllowance": 20               // admission-queue depth: the per-tenant override, else the global default
+}
+```
+
+Read-only, resolved from the bound tenant options; there is deliberately no tenant-management endpoint. If a tenant
+registry lands later it can back this same shape without a wire change — this surface does **not** depend on one.
+
+### `GET /usage` — usage against guardrails
+
+Live capacity and consumption, computed on read. Pragmatic and **approximate by design** — a point-in-time occupancy and
+a recent-window sample, not a billing ledger.
+
+```jsonc
+{
+  "slots":   { "inUse": 2, "allowance": 5 },                    // slot occupancy now (admission gate) vs the cap
+  "queue":   { "depth": 0, "sampled": 37, "p95WaitMs": 1200 }, // the same reading as GET /runs/queue-stats (§10)
+  "runsStartedThisMonth": 412,                                 // this calendar month (UTC)
+  "events":  { "guardrail": 5000, "sampled": 100, "avg": 84, "max": 611 } // events-per-run over a recent window
+}
+```
+
+- `slots.inUse` is a per-process, point-in-time count from the admission gate (§4); `allowance` is the same cap as
+  `GET /tenant`'s `slotAllowance`.
+- `queue` reuses the queue-stats machinery: `depth` counts waiting runs, `p95WaitMs` is the nearest-rank p95 of the
+  recorded per-run queue waits, and `sampled` is how many waits it was computed over.
+- `events` compares the mean/peak event count over the most recent runs (a bounded window) against the
+  `max-events-per-run` guardrail ([§15.4](#154-server-limits-and-their-config-knobs)) — headroom before a run trips the cap.
+
+### Run-detail shape notes (design clarifications, issue #119)
+
+These document the **existing** truth — no response shapes changed:
+
+- **Failure screenshot/capture refs are timeline-only.** `RunResponse.failure` (`POST /runs`) and `RunStateResponse.failure`
+  (`GET /runs/{id}`, [§5](#5-polling--get-runsid)) are a `RunFailureDetail` — `class`, `code`, `message`, `atStep` — and
+  carry **no** `screenshotRef`/`captureRef`. The failing page's artifact refs ride `RunTimelineFailure` on
+  `GET /runs/{id}/timeline` ([§9](#9-drift-timeline-screenshots--erasure)). So run-detail is one call for the typed
+  failure; to show the failing page, make a second call to the timeline for its `screenshotRef`/`captureRef`, then
+  `GET /runs/{id}/screenshots/{ref}` (or fetch the capture from your BYO storage).
+- **Queue position has no SSE frame.** A queued run's 1-based `position` is surfaced by polling `GET /runs/{id}`
+  ([§5](#5-polling--get-runsid)), recomputed on read; there is no `QueuePosition` SSE event. The SSE stream
+  ([§6](#6-streaming-trace-sse--get-runsidevents)) is the run's execution trace, which only begins once the run leaves the
+  queue. (No new SSE frame is introduced here.)
+- **A running run's poll body is `{ runId, status }`.** Partial `stats` are **not** streamed mid-run — `stats` (and
+  `result`/`failure`) appear only at a terminal status. The runs list mirrors this: a running/queued `RunListItem` omits
+  `stats`. The live SSE trace ([§6](#6-streaming-trace-sse--get-runsidevents)) is the mid-run signal.

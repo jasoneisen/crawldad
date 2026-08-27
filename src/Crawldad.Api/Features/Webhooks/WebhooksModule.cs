@@ -12,9 +12,15 @@ namespace Crawldad.Api.Features.Webhooks;
 /// discovered by Wolverine; the durable outbox/retry needs no explicit registration here.</summary>
 public static class WebhooksModule
 {
-    /// <summary>Registers the plain, tenant-scoped <see cref="WebhookEndpoint"/> document (secret encrypted at rest; no
-    /// event stream carries the secret). Multi-tenancy comes from the shared <c>AllDocumentsAreMultiTenanted</c> policy.</summary>
-    public static void ConfigureMarten(StoreOptions options) => options.Schema.For<WebhookEndpoint>();
+    /// <summary>Registers the tenant-scoped webhook documents: the <see cref="WebhookEndpoint"/> registration (secret
+    /// encrypted at rest; no event stream carries the secret) and the <see cref="WebhookDelivery"/> history row, indexed
+    /// on the endpoint it belongs to for the per-endpoint recent-log query and the retention prune. Multi-tenancy comes
+    /// from the shared <c>AllDocumentsAreMultiTenanted</c> policy.</summary>
+    public static void ConfigureMarten(StoreOptions options)
+    {
+        options.Schema.For<WebhookEndpoint>();
+        options.Schema.For<WebhookDelivery>().Index(delivery => delivery.EndpointName);
+    }
 
     /// <summary>Registers the slice's services: the register validator, the encrypting endpoint store, the HTTP sender
     /// over its SSRF-hardened delivery client, and the bound delivery options with their boot-time validator. Data
@@ -23,6 +29,7 @@ public static class WebhooksModule
     {
         services.AddScoped<IValidator<RegisterWebhookRequest>, RegisterWebhookRequestValidator>();
         services.AddSingleton<IWebhookEndpointStore, MartenWebhookEndpointStore>();
+        services.AddSingleton<IWebhookDeliveryStore, MartenWebhookDeliveryStore>();
         services.AddSingleton<IWebhookSender, HttpWebhookSender>();
 
         // The delivery POST rides a dedicated, SSRF-hardened client: redirects refused and every connection

@@ -12,6 +12,7 @@ using Crawldad.Contracts.Drift;
 using Crawldad.Contracts.Fixtures;
 using Crawldad.Contracts.Payloads;
 using Crawldad.Contracts.Runs;
+using Crawldad.Contracts.Tenancy;
 using Crawldad.Contracts.Webhooks;
 
 namespace Crawldad.Api.Features.Docs;
@@ -33,6 +34,7 @@ public static class OpenApiSpec
     private const string _browsers = "Browsers";
     private const string _fixtures = "Fixtures";
     private const string _webhooks = "Webhooks";
+    private const string _tenancy = "Tenancy";
     private const string _docs = "Docs";
 
     private const string _infoDescription =
@@ -78,6 +80,7 @@ public static class OpenApiSpec
         new(nameof(RunRejection), typeof(RunRejection)),
         new(nameof(RunDriftResponse), typeof(RunDriftResponse)),
         new(nameof(RunTimelineResponse), typeof(RunTimelineResponse)),
+        new(nameof(RunListResponse), typeof(RunListResponse)),
         new(nameof(QueueStatsResponse), typeof(QueueStatsResponse)),
         new(nameof(StartRunRequest), typeof(StartRunRequest), SwapPayload: true, PayloadOptional: true),
         new(nameof(ReplayRunRequest), typeof(ReplayRunRequest)),
@@ -94,7 +97,10 @@ public static class OpenApiSpec
         new(nameof(RegisterWebhookRequest), typeof(RegisterWebhookRequest)),
         new(nameof(WebhookSummary), typeof(WebhookSummary)),
         new(nameof(WebhookListResponse), typeof(WebhookListResponse)),
+        new(nameof(WebhookDeliveryResponse), typeof(WebhookDeliveryResponse)),
         new(nameof(WebhookEventEnvelope), typeof(WebhookEventEnvelope)),
+        new(nameof(TenantProfileResponse), typeof(TenantProfileResponse)),
+        new(nameof(UsageResponse), typeof(UsageResponse)),
     ];
 
     // The single source of truth for the envelope. The drift test asserts this set of (method, path) equals the live route
@@ -122,6 +128,21 @@ public static class OpenApiSpec
                 new("429", "The tenant's admission queue is at its depth (queue_depth_exceeded) — the only admission 429; at the run cap a run queues (202) rather than being rejected.", Component: nameof(RunRejection)),
             ],
             Description: "Executes exactly one payload, inline (default, synchronous terminal RunResponse) or in the background (async:true → 202 + poll). At the tenant's concurrent-run cap the run is queued (202 { status:\"queued\", position }), not rejected. Supply the payload one of two mutually-exclusive ways: an inline `payload` document, or a pinned `payloadId` (+ optional `revision`)."),
+        new("get", "/runs", "listRuns", "List the tenant's runs.", _runs, Anonymous: false,
+            [
+                new("status", Integer: false, "Filter by run disposition (running/queued/succeeded/failed/cancelled). An unknown value is a 400 invalid_status.", Uuid: false, Query: true),
+                new("payloadId", Integer: false, "Filter by the pinned managed payload (UUID). A malformed value is a 400 invalid_payload_id.", Uuid: true, Query: true),
+                new("from", Integer: false, "Inclusive lower bound on startedAt (ISO-8601). An unparseable value is ignored (unbounded), never a 400.", Uuid: false, Query: true),
+                new("to", Integer: false, "Inclusive upper bound on startedAt (ISO-8601). An unparseable value is ignored (unbounded), never a 400.", Uuid: false, Query: true),
+                new("page", Integer: true, "The 1-based page number (default 1). A stray value floors at 1.", Uuid: false, Query: true),
+                new("size", Integer: true, "The page size (default 25, clamped to 1..100). A stray value falls back to the default.", Uuid: false, Query: true),
+            ],
+            null,
+            [
+                new("200", "A filtered, offset-paginated page of the tenant's run summaries, newest first (with the filtered total and a hasMore flag).", Component: nameof(RunListResponse)),
+                new("400", "A filter value was malformed (invalid_status / invalid_payload_id).", Component: nameof(RunRejection)),
+            ],
+            Description: "Lists the authenticated tenant's runs as lightweight summary rows (never the result body or the full timeline), newest first by startedAt. Each row carries runId, status, startedAt, duration, region, the pinned payload name+revision (or an `inline: true` marker for an inline run), headline stats (steps/requests/selectorMisses, terminal-only), and the failure class/code when failed. Filters (status, payloadId, from/to time range) AND-combine; paging is page/size (offset). Reads the lag-tolerant RunSummary listing projection."),
         new("get", "/runs/{id}", "getRun", "Poll a run's state.", _runs, Anonymous: false, [Id],
             null,
             [new("200", "The run's current state (queued/running/terminal).", Component: nameof(RunStateResponse)), NotFound("run")]),
@@ -227,9 +248,25 @@ public static class OpenApiSpec
             ],
             Description: "Registers (or replaces) a webhook endpoint for the authenticated tenant under {name}. When a run reaches a terminal disposition (succeeded/failed/cancelled), a small ref-only JSON envelope (WebhookEventEnvelope — never result content) is POSTed to the URL, signed with an HMAC-SHA256 X-Crawldad-Signature over the raw body under the endpoint's secret plus an X-Crawldad-Timestamp (replay bound). The secret is caller-supplied, encrypted at rest (ASP.NET Data Protection), and never echoed in any response, event, or log; rotate it by re-registering. The URL must be https and must not target a loopback, link-local, or private (RFC 1918 / unique-local) address (SSRF guard). Delivery is durable and at-least-once with bounded exponential-backoff retry; a down receiver never affects run execution. Empty events subscribes to all terminal-run types."),
         new("get", "/webhooks", "listWebhooks", "List registered webhook endpoints.", _webhooks, Anonymous: false, [], null,
-            [new("200", "Every webhook endpoint the tenant has registered — name, url, events, and timestamps; secrets omitted.", Component: nameof(WebhookListResponse))]),
+            [new("200", "Every webhook endpoint the tenant has registered — name, url, events, timestamps, and each endpoint's most recent delivery outcome (lastDelivery, additive; omitted when never delivered); secrets omitted.", Component: nameof(WebhookListResponse))]),
+        new("get", "/webhooks/{name}/deliveries", "listWebhookDeliveries", "List an endpoint's recent deliveries.", _webhooks, Anonymous: false,
+            [WebhookName, new("limit", Integer: true, "Cap the rows returned (default and maximum: the retention cap). A stray value falls back to the cap.", Uuid: false, Query: true)],
+            null,
+            [
+                new("200", "The endpoint's recent delivery attempts, newest first (each attempt — including a retry of the same event — a distinct row; capped by the retention policy).", Component: nameof(WebhookDeliveryResponse)),
+                NotFound("webhook"),
+            ],
+            Description: "The delivery history for one of the tenant's webhook endpoints: per-attempt rows (runId, event type, 1-based attempt number, delivered flag, HTTP status or transport-failure, measured latency, timestamp), newest first. Retained as a rolling window — the latest N attempts per endpoint (N = Crawldad:Webhooks:DeliveryHistory:MaxPerEndpoint, default 50) — so the log is bounded, not an audit ledger. Tenant-scoped: an unknown or foreign endpoint name is a 404."),
         new("delete", "/webhooks/{name}", "unregisterWebhook", "Unregister a webhook endpoint.", _webhooks, Anonymous: false, [WebhookName], null,
             [new("204", "The registration was removed."), NotFound("webhook")]),
+
+        // Tenant self-service reads (the authenticated tenant's own profile + usage; no tenant-management surface).
+        new("get", "/tenant", "getTenant", "The authenticated tenant's profile.", _tenancy, Anonymous: false, [], null,
+            [new("200", "The tenant's id, display name, optional tier label, and slot/queue-depth allowances.", Component: nameof(TenantProfileResponse))],
+            Description: "Returns the authenticated tenant's own profile: its stable id, its configured actor/display identity, an optional pricing-tier label, and its slot (concurrent-run) and queue-depth allowances — each the per-tenant override when configured, else the global default. Read-only; resolved from the bound tenant options (a future tenant registry could back the same shape). There is deliberately no tenant-management endpoint."),
+        new("get", "/usage", "getUsage", "The tenant's usage against its guardrails.", _tenancy, Anonymous: false, [], null,
+            [new("200", "Slot occupancy now, queue depth + p95 wait, runs started this month, and events-per-run over a recent window vs the guardrail.", Component: nameof(UsageResponse))],
+            Description: "The tenant's live capacity and consumption against its guardrails, computed on read from existing state: slot occupancy now (from the admission gate) against the slot allowance; admission-queue depth + p95 queue wait (the same reading as GET /runs/queue-stats); runs started this calendar month (UTC); and the avg/max events-per-run over a bounded recent window against the configured max-events-per-run guardrail. Pragmatic and approximate by design — a point-in-time occupancy count and a recent-window sample, not a billing ledger."),
     ];
 
     /// <summary>The generated OpenAPI 3.1 document, as indented JSON. Built once — deterministic, like the embedded schema.</summary>
@@ -304,7 +341,8 @@ public static class OpenApiSpec
         new JsonObject { ["name"] = _payloads, ["description"] = "Draft, revise, rename, archive, list, and diff managed payloads." },
         new JsonObject { ["name"] = _browsers, ["description"] = "Register, list, and unregister tenant browser connect credentials." },
         new JsonObject { ["name"] = _fixtures, ["description"] = "Record, list, inspect, and erase tenant fixture sets for offline payload-regression testing." },
-        new JsonObject { ["name"] = _webhooks, ["description"] = "Register, list, and unregister tenant webhook endpoints for signed run-lifecycle delivery." },
+        new JsonObject { ["name"] = _webhooks, ["description"] = "Register, list, and unregister tenant webhook endpoints for signed run-lifecycle delivery, and read their delivery history." },
+        new JsonObject { ["name"] = _tenancy, ["description"] = "The authenticated tenant's own profile and usage against its guardrails (read-only)." },
         new JsonObject { ["name"] = _docs, ["description"] = "Anonymous, tenant-independent product artifacts (health, schema, discovery, this document)." },
     ];
 
