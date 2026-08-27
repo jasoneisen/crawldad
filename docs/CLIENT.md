@@ -135,7 +135,10 @@ A run that *starts then faults* is not an exception — it is still `200`/`202` 
 
 - **Payloads:** `SavePayloadAsync`, `RevisePayloadAsync`, `RenamePayloadAsync`, `ArchivePayloadAsync`,
   `ListPayloadsAsync`, `GetPayloadAsync`, `GetPayloadRevisionAsync`, `DiffPayloadAsync`, `GetPayloadDriftStatusAsync`.
-- **Webhooks:** `RegisterWebhookAsync`, `ListWebhooksAsync`, `UnregisterWebhookAsync`.
+- **Webhooks:** `RegisterWebhookAsync`, `ListWebhooksAsync`, `GetWebhookDeliveriesAsync`, `UnregisterWebhookAsync`.
+  `ListWebhooksAsync` rows carry an additive `LastDelivery` summary (the endpoint's most recent delivery outcome, absent
+  until first delivered); `GetWebhookDeliveriesAsync(name, limit?)` reads that endpoint's recent attempts newest-first —
+  each attempt (retries included) a distinct row, with the observed status, latency, event type, and run id.
 - **Fixtures:** `RecordFixtureAsync`, `ListFixturesAsync`, `GetFixtureAsync`, `DeleteFixtureAsync`.
 - **Browsers:** `RegisterBrowserAsync`, `ListBrowsersAsync`, `UnregisterBrowserAsync`.
 

@@ -126,6 +126,15 @@ dotnet_diagnostic.CA1054.severity = none
 dotnet_diagnostic.CA1055.severity = none
 dotnet_diagnostic.CA1056.severity = none
 
+[src/Crawldad.Portal/Components/Pages/App/**.cs]
+# The webhook register form binds the caller-supplied delivery URL as a plain string, then hands it to the API where
+# WebhookUrlPolicy validates scheme/host (SSRF) and returns a classified 400 — the same string-URL treatment the API's
+# webhook slice and its wire contracts use. Binding it as System.Uri would turn a malformed URL into a model-binding
+# fault instead of that classified rejection. Off for this pages folder only (mirrors the Auth ReturnUrl scope).
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1055.severity = none
+dotnet_diagnostic.CA1056.severity = none
+
 [tests/**.cs]
 # Tests legitimately have public fixtures, magic values, short-lived disposables, and unused-looking params.
 dotnet_diagnostic.CA1707.severity = none   # underscores in test method names

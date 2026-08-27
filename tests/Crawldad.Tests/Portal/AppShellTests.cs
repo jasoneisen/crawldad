@@ -16,8 +16,8 @@ public class AppShellTests(PortalFixture fixture)
         ("/app", "Welcome to Crawldad"),
         ("/app/runs", "No runs yet"),
         ("/app/live", "Nothing running right now"),
-        ("/app/payloads", "No payloads yet"),
-        ("/app/webhooks", "No webhooks configured"),
+        ("/app/payloads", "No workspace linked"),
+        ("/app/webhooks", "No workspace linked"),
         ("/app/account", "API keys"),
     ];
 

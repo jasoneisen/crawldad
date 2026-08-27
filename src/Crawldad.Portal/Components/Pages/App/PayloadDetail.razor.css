@@ -1,0 +1,22 @@
+/* Read-only payload script viewer. Tabler styles bare <pre>, so the JSON surface is made explicit here. Scoped to
+   this component (Blazor CSS isolation), so these class names never collide with the shared app.css or sibling pages. */
+.cd-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .8125rem;
+}
+
+.cd-json {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .78rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 0;
+    color: #2a3547;
+    background: #fbfcff;
+    border: 1px solid var(--tblr-border-color);
+    border-radius: 8px;
+    padding: .85rem 1rem;
+    max-height: 40rem;
+    overflow: auto;
+}
