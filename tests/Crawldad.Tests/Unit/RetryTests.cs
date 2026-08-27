@@ -131,7 +131,7 @@ public class RetryTests
     }
 
     [Fact]
-    public async Task Page_crash_with_fail_and_pageCrashed_not_retryable_is_terminal_without_reopening()
+    public async Task Page_crash_with_fail_and_pageCrashed_not_retryable_is_retryable_exhausted_without_reopening()
     {
         // fail + pageCrashed absent from retryOn: the crash is terminal on the first hit, with no reopen and no retry —
         // the fail-fast-on-a-crash posture. onPageCrashed never changes the classification (retryOn does), so the

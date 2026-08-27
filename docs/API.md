@@ -894,7 +894,7 @@ Each error is `{ "path": <JSON Pointer>, "code": <slug>, "message": … }`. Two 
 | `fixture_unrecordable` | terminal | (record, [§13](#13-fixtures--recordreplay-for-payload-regression-testing--fixtures)) `POST /fixtures/{name}/record` hit an operation it cannot capture (a download, an in-frame or non-CSS click, or a session that never navigated) — no set is persisted |
 | `unknown_identifier` | terminal | a bare identifier was unbound at evaluation |
 | `regex_too_large` / `regex_timeout` | terminal | a regex exceeded the size / time guard |
-| `timeout` / `pageCrashed` | retryable-exhausted | the two retryable conditions, after `config.retry` exhausted |
+| `timeout` / `pageCrashed` | retryable-exhausted | the two retryable conditions, after `config.retry` exhausted. On the real backend a closed-target fault (a Playwright op that starts on an already-dead page, e.g. re-driving the same page after `onPageCrashed: "fail"`) is treated as `pageCrashed` too — provider-side session death classifies here rather than escaping as a raw engine error |
 
 `guard`/`fail` also raise **author-defined** codes (any slug, `class` `terminal` or `retryable`) from the
 node's `Failure` — e.g. the `record_not_accessible` in [§3](#3-running-a-payload--post-runs). Those are your

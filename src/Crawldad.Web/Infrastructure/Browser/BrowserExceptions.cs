@@ -69,9 +69,14 @@ public sealed class BrowserConnectException : Exception
     public bool Retryable { get; }
 }
 
-/// <summary>The page crashed. The retryable <c>pageCrashed</c> condition: with <c>onPageCrashed: "reopenPage"</c> the
-/// interpreter closes the crashed page, opens a fresh one on the same session/context, and rebinds it. A crashed
-/// page's <c>CloseAsync</c> may also throw this same type, tolerated during reopen.</summary>
+/// <summary>The page crashed. The retryable <c>pageCrashed</c> condition, classified per <c>onPageCrashed</c>: with
+/// <c>"reopenPage"</c> (default) the interpreter closes the crashed page, opens a fresh one on the same session/context,
+/// and rebinds it before the retry; with <c>"fail"</c> the reopen is skipped and the crash fails the attempt on the page
+/// it crashed on — retried only when <c>pageCrashed</c> is in <c>retryOn</c> (on that same page), otherwise terminal as
+/// <c>retryable-exhausted</c>. A crashed page's <c>CloseAsync</c> may also throw this same type, tolerated during reopen.
+/// The real backend also maps a closed-target Playwright fault (an op that starts on an already-dead page, phrased
+/// <c>"…has been closed"</c>) here, so provider-side session death classifies as <c>pageCrashed</c> rather than escaping
+/// as a raw engine error.</summary>
 [SuppressMessage("Design", "CA1032:Implement standard exception constructors",
     Justification = "A message is mandatory so run-failure surfacing always has one; a parameterless constructor would allow messageless crashes.")]
 [SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
