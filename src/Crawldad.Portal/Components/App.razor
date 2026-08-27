@@ -1,0 +1,25 @@
+@*
+    Root HTML document. The vendored Tabler UI (@tabler/core 1.4.0 — see wwwroot/lib/tabler/README.md) is served
+    from wwwroot, so there is no CDN dependency at runtime. Assets go through MapStaticAssets (@Assets[...]) for
+    content-hash fingerprinting.
+*@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="/" />
+    <link rel="stylesheet" href="@Assets["lib/tabler/1.4.0/css/tabler.min.css"]" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["Crawldad.Portal.styles.css"]" />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes />
+    <script src="@Assets["lib/tabler/1.4.0/js/tabler.min.js"]"></script>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+</body>
+
+</html>

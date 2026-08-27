@@ -1,0 +1,4 @@
+/* Scoped shell tweaks. Also guarantees the Crawldad.Portal.styles.css bundle exists for App.razor to link. */
+.page-body {
+    margin-top: 1.5rem;
+}

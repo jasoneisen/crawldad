@@ -1,0 +1,48 @@
+@inherits LayoutComponentBase
+
+@*
+    The authenticated app shell: a Tabler vertical navbar (Runs / Live / Payloads / Webhooks / Usage / Account),
+    a top bar showing the signed-in email and a sign-out control. Only ever rendered for [Authorize] pages, so
+    HttpContext.User is an authenticated principal — its email claim is read directly from the cascaded
+    HttpContext (static SSR).
+*@
+<div class="page">
+    <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+        <div class="container-fluid">
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar-menu" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <h1 class="navbar-brand navbar-brand-autodark m-0">
+                <a href="/app">Crawldad</a>
+            </h1>
+            <div class="collapse navbar-collapse" id="sidebar-menu">
+                <AppNav />
+            </div>
+        </div>
+    </aside>
+    <header class="navbar navbar-expand-md d-print-none">
+        <div class="container-xl">
+            <div class="navbar-nav flex-row order-md-last align-items-center">
+                <span class="nav-item me-3 text-secondary" data-testid="user-email">@UserEmail</span>
+                <form method="post" action="/auth/signout" class="nav-item">
+                    <AntiforgeryToken />
+                    <button type="submit" class="btn btn-outline-secondary btn-sm" data-testid="sign-out">Sign out</button>
+                </form>
+            </div>
+        </div>
+    </header>
+    <div class="page-wrapper">
+        <div class="page-body">
+            <div class="container-xl">
+                @Body
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    public HttpContext HttpContext { get; set; } = default!;
+
+    private string? UserEmail => HttpContext.User.FindFirstValue(ClaimTypes.Email);
+}
