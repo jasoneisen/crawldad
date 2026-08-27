@@ -28,8 +28,9 @@ public static class QueueStatsEndpoint
     }
 
     // The 95th percentile by the nearest-rank method: rank = ceil(0.95 * N), the rank-th smallest wait (1-based). An empty
-    // sample is 0. Kept here (not a metrics library) because the stored per-run waits are the source of truth.
-    private static long Percentile95(IReadOnlyList<long> waits)
+    // sample is 0. Kept here (not a metrics library) because the stored per-run waits are the source of truth. Internal so
+    // GET /usage folds the same queue-wait reading into its snapshot without re-deriving the percentile.
+    internal static long Percentile95(IReadOnlyList<long> waits)
     {
         if (waits.Count == 0)
         {

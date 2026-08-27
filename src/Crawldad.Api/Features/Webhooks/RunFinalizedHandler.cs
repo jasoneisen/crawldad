@@ -32,7 +32,7 @@ public static class RunFinalizedHandler
         var messages = new OutgoingMessages();
         foreach (var webhook in subscribed)
         {
-            messages.Add(new DeliverWebhook(webhook.Name, envelope.Type, envelope.Id, body, 1));
+            messages.Add(new DeliverWebhook(webhook.Name, envelope.Type, envelope.Id, body, 1, message.RunId));
         }
 
         return messages;

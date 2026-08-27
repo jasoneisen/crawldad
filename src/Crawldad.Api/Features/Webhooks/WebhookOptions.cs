@@ -11,6 +11,20 @@ public sealed class WebhookOptions
 
     /// <summary>The durable-delivery retry/backoff/timeout policy.</summary>
     public WebhookDeliveryOptions Delivery { get; init; } = new();
+
+    /// <summary>The delivery-history retention policy (how much per-endpoint delivery log is kept).</summary>
+    public WebhookDeliveryHistoryOptions DeliveryHistory { get; init; } = new();
+}
+
+/// <summary>The delivery-history retention policy: how many recent delivery attempts are kept per endpoint. A rolling
+/// window, not an audit ledger — after each attempt the endpoint's log is pruned to the newest
+/// <see cref="MaxPerEndpoint"/>, so the store stays bounded no matter how chatty a receiver's retries are. Bound the value
+/// at boot (see <see cref="WebhookOptionsValidator"/>).</summary>
+public sealed class WebhookDeliveryHistoryOptions
+{
+    /// <summary>The number of most-recent delivery attempts retained per endpoint (older rows are pruned). The default of
+    /// 50 comfortably covers a "last delivery" column plus a short drill-down without unbounded growth.</summary>
+    public int MaxPerEndpoint { get; init; } = 50;
 }
 
 /// <summary>The delivery policy: how many times a POST is attempted, the exponential-backoff schedule between attempts,
@@ -48,6 +62,7 @@ public sealed class WebhookOptionsValidator : IValidateOptions<WebhookOptions>
         Require(failures, delivery.BaseDelay > TimeSpan.Zero, "Delivery:BaseDelay", "positive");
         Require(failures, delivery.MaxDelay >= delivery.BaseDelay, "Delivery:MaxDelay", "at least Delivery:BaseDelay");
         Require(failures, delivery.Timeout > TimeSpan.Zero, "Delivery:Timeout", "positive");
+        Require(failures, options.DeliveryHistory.MaxPerEndpoint >= 1, "DeliveryHistory:MaxPerEndpoint", "at least 1");
 
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }

@@ -42,8 +42,24 @@ public static class RunsModule
             typeof(Waited), typeof(Extracted), typeof(Downloaded), typeof(Screenshotted), typeof(Captured), typeof(SelectorMiss), typeof(StepFailed), typeof(Filled),
         ]);
 
-        // The RunTimeline observability read model: the ordered step list + durations + refs + region, folded from the
-        // step trace on the shared lifecycle (async in production — the lag-tolerant dashboard view; inline under the test switch).
+        // The two cross-run listing/observability read models folded from the run streams (RunTimeline + RunSummary).
+        AddRunReadModels(options, lifecycle);
+
+        // The executor-owned run-progress read model: the pollable state + the durable resume cursor. A plain Marten
+        // document (not a projection) written solely by the executor's own sessions.
+        options.Schema.For<RunProgress>();
+
+        // The durable FIFO admission-queue entry: a plain, tenant-scoped Marten document — one per run waiting at the
+        // concurrent-run cap — so the queue survives process restarts. Written at enqueue, deleted at promotion/cancel/timeout.
+        options.Schema.For<QueuedRun>();
+    }
+
+    // The read models folded from the run streams on the shared lifecycle (async in production — the lag-tolerant
+    // dashboard views; inline under the test switch): the full RunTimeline observability projection (with its drift index)
+    // and the lightweight RunSummary listing projection (with the columns GET /runs filters/orders by).
+    private static void AddRunReadModels(StoreOptions options, ProjectionLifecycle lifecycle)
+    {
+        // The RunTimeline observability read model: the ordered step list + durations + refs + region, folded from the step trace.
         options.Projections.Add<RunTimelineProjection>(lifecycle);
 
         // Index the drift-monitoring read path (issues #47/#89): GET /payloads/{id}/drift-status filters RunTimeline by
@@ -69,13 +85,17 @@ public static class RunsModule
                 },
                 index => index.Name = "mt_doc_runtimeline_idx_drift");
 
-        // The executor-owned run-progress read model: the pollable state + the durable resume cursor. A plain Marten
-        // document (not a projection) written solely by the executor's own sessions.
-        options.Schema.For<RunProgress>();
-
-        // The durable FIFO admission-queue entry: a plain, tenant-scoped Marten document — one per run waiting at the
-        // concurrent-run cap — so the queue survives process restarts. Written at enqueue, deleted at promotion/cancel/timeout.
-        options.Schema.For<QueuedRun>();
+        // The lightweight cross-run listing read model behind GET /runs (issue #119): one small row per run folded from
+        // the coarse lifecycle events, distinct from the heavier RunTimeline. Indexed on the columns the list
+        // filters/orders by — StartedAt (the newest-first sort + the time-range filter), Status, and the pinned PayloadId —
+        // each a single-column computed index whose default name stays comfortably inside Postgres's identifier limit.
+        options.Projections.Add<RunSummaryProjection>(lifecycle);
+        options.Schema.For<RunSummary>()
+            .Index(summary => summary.StartedAt)
+            .Index(summary => summary.Status)
+            // Null-forgiving: PayloadId is a nullable value type boxed to the Expression's object result (CS8603); Marten
+            // only reads the member for the column, never the value — the same pattern as the RunTimeline drift index.
+            .Index(summary => summary.PayloadId!);
     }
 
     /// <summary>Registers the slice's services: the request validator and the browser-backend registry + fake.</summary>

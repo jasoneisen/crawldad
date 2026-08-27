@@ -31,6 +31,11 @@ public sealed class TenantDescriptor
     /// <summary>The actor/display identity stamped on this tenant's mutation events — never taken from a request body.</summary>
     public string Actor { get; init; } = "";
 
+    /// <summary>An optional descriptive pricing-tier label surfaced (read-only) by <c>GET /tenant</c>. Purely cosmetic —
+    /// the enforced numbers are <see cref="MaxConcurrentRuns"/>/<see cref="MaxQueueDepth"/>, not this string — so it needs
+    /// no boot-time validation. Null when the deployment sets no tier label (a future tenant registry could supply it).</summary>
+    public string? Tier { get; init; }
+
     /// <summary>An optional per-tenant override of the global concurrent-run cap — the per-tenant slot allowance a
     /// pricing tier sets. Null defers to the global
     /// <see cref="Crawldad.Api.Features.Runs.RunLimitsOptions.MaxConcurrentRunsPerTenant"/>.</summary>

@@ -10,4 +10,5 @@ namespace Crawldad.Api.Features.Webhooks;
 /// <param name="EventId">The event id, for the <c>X-Crawldad-Delivery</c> header (stable across this delivery's retries).</param>
 /// <param name="Body">The exact JSON body to POST and to sign.</param>
 /// <param name="Attempt">The 1-based attempt number (1 on first send, incremented on each retry).</param>
-public sealed record DeliverWebhook(string EndpointName, string EventType, string EventId, string Body, int Attempt);
+/// <param name="RunId">The run whose terminal event this delivers — recorded on each delivery-history row (never sent on the wire; the wire body already carries it).</param>
+public sealed record DeliverWebhook(string EndpointName, string EventType, string EventId, string Body, int Attempt, Guid RunId);

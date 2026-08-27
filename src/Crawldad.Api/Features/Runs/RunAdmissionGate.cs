@@ -30,6 +30,10 @@ public interface IRunAdmissionGate
     /// used only to decide whether an enqueue should nudge a promotion — so a run that enqueues in the narrow window just
     /// after the last slot frees is not stranded behind idle capacity. False when the cap is full (no spurious trigger).</summary>
     bool HasCapacity(string tenantId);
+
+    /// <summary>The number of slots the tenant holds right now — the live occupancy <c>GET /usage</c> reports. A
+    /// point-in-time in-process count (per-process, like the gate itself), not a stored metric.</summary>
+    int ActiveCount(string tenantId);
 }
 
 /// <summary>The in-process, per-tenant set of run ids holding a slot, guarded by one lock so check-and-occupy is atomic;
@@ -90,8 +94,8 @@ public sealed class RunAdmissionGate(ITenantConcurrencyOverrides tenants, IOptio
         }
     }
 
-    /// <summary>The number of slots a tenant currently holds — for observability and tests.</summary>
-    internal int ActiveCount(string tenantId)
+    /// <inheritdoc />
+    public int ActiveCount(string tenantId)
     {
         lock (_gate)
         {
