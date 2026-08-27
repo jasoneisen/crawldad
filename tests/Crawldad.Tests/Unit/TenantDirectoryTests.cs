@@ -117,29 +117,60 @@ public class TenantDirectoryTests
     }
 
     [Fact]
-    public async Task Honours_a_registry_tenants_slot_allowance_as_a_concurrency_override()
+    public async Task Resolves_a_registry_slot_allowance_from_the_store_via_prime_without_any_auth()
     {
+        // The background promotion path: no auth has warmed anything — priming must still resolve the registry cap.
         var (dir, store, _) = Build();
+        store.AddActiveTenantKey("big", slotAllowance: 5);
+
+        await dir.PrimeAsync("big", _ct);
+
+        dir.TryGetConcurrencyOverride("big", out var limit).ShouldBeTrue();
+        limit.ShouldBe(5);
+        store.FindCalls.ShouldBe(1); // resolved from the store, not the auth cache
+    }
+
+    [Fact]
+    public async Task Honours_the_registry_cap_even_after_the_auth_cache_has_expired()
+    {
+        // A long-running run outlives the auth TTL; promotion primes and must still see the registry cap (the bug: it used
+        // to fall back to the global default here).
+        var (dir, store, clock) = Build(ttlSeconds: 30);
         var key = store.AddActiveTenantKey("big", slotAllowance: 5);
-        await dir.AuthenticateAsync(key, _ct); // warm the cache
+        await dir.AuthenticateAsync(key, _ct);
+        clock.Now = clock.Now.AddSeconds(31); // the auth cache entry is now expired
+
+        await dir.PrimeAsync("big", _ct);
 
         dir.TryGetConcurrencyOverride("big", out var limit).ShouldBeTrue();
         limit.ShouldBe(5);
     }
 
     [Fact]
-    public async Task Defers_the_override_when_a_registry_tenant_sets_no_slot_allowance()
+    public async Task Primes_the_override_from_the_store_once_then_serves_it_from_cache()
     {
         var (dir, store, _) = Build();
-        var key = store.AddActiveTenantKey("std", slotAllowance: null);
-        await dir.AuthenticateAsync(key, _ct);
+        store.AddActiveTenantKey("big", slotAllowance: 5);
+
+        await dir.PrimeAsync("big", _ct);
+        await dir.PrimeAsync("big", _ct);
+
+        store.FindCalls.ShouldBe(1); // second prime is a cache hit
+    }
+
+    [Fact]
+    public async Task Defers_the_override_when_a_primed_registry_tenant_has_no_allowance()
+    {
+        var (dir, store, _) = Build();
+        store.AddActiveTenantKey("std", slotAllowance: null);
+        await dir.PrimeAsync("std", _ct);
 
         dir.TryGetConcurrencyOverride("std", out var limit).ShouldBeFalse();
         limit.ShouldBe(0);
     }
 
     [Fact]
-    public void Falls_back_to_the_env_concurrency_override()
+    public void Falls_back_to_the_env_concurrency_override_without_priming()
     {
         var (dir, _, _) = Build(envTenants: EnvTenant("envco", "env-key-0123456789abcdef", maxConcurrentRuns: 7));
 
@@ -148,25 +179,33 @@ public class TenantDirectoryTests
     }
 
     [Fact]
-    public void Defers_the_override_for_an_unknown_tenant()
+    public async Task Defers_the_override_for_an_unknown_tenant_even_after_priming()
     {
-        var (dir, _, _) = Build();
+        var (dir, store, _) = Build();
+
+        await dir.PrimeAsync("ghost", _ct); // the store has no such tenant → caches null → defers
 
         dir.TryGetConcurrencyOverride("ghost", out var limit).ShouldBeFalse();
         limit.ShouldBe(0);
+        store.FindCalls.ShouldBe(1);
     }
 
     [Fact]
-    public async Task Defers_the_override_once_the_cached_tenant_lapses()
+    public async Task An_allowance_change_takes_effect_on_the_next_prime_after_invalidation()
     {
-        var (dir, store, clock) = Build(ttlSeconds: 30);
-        var key = store.AddActiveTenantKey("big", slotAllowance: 5);
-        await dir.AuthenticateAsync(key, _ct);
+        var (dir, store, _) = Build();
+        store.AddActiveTenantKey("scaling", slotAllowance: 5);
+        await dir.PrimeAsync("scaling", _ct);
 
-        clock.Now = clock.Now.AddSeconds(31);
+        store.SetAllowance("scaling", 10); // the durable allowance changes...
+        dir.TryGetConcurrencyOverride("scaling", out var stale).ShouldBeTrue();
+        stale.ShouldBe(5); // ...but the cached value stands until invalidation
 
-        dir.TryGetConcurrencyOverride("big", out var limit).ShouldBeFalse(); // stale entry → defers to the global default
-        limit.ShouldBe(0);
+        dir.InvalidateTenant("scaling");
+        await dir.PrimeAsync("scaling", _ct);
+
+        dir.TryGetConcurrencyOverride("scaling", out var fresh).ShouldBeTrue();
+        fresh.ShouldBe(10);
     }
 
     [Fact]
@@ -188,8 +227,43 @@ public class TenantDirectoryTests
     }
 
     [Fact]
+    public async Task Does_not_cache_a_failed_key_lookup()
+    {
+        // A junk key must re-hit the store every time — negative results are never cached, so an attacker flooding random
+        // keys cannot grow the cache.
+        var (dir, store, _) = Build();
+
+        (await dir.AuthenticateAsync("ck_test_junk-0000000000", _ct)).ShouldBeNull();
+        (await dir.AuthenticateAsync("ck_test_junk-0000000000", _ct)).ShouldBeNull();
+
+        store.ResolveCalls.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Sweeps_expired_auth_cache_entries_once_the_map_grows_past_the_floor()
+    {
+        var (dir, store, clock) = Build(ttlSeconds: 30);
+        for (var i = 0; i <= TenantDirectory.PruneKeyCacheAbove; i++) // one past the floor
+        {
+            await dir.AuthenticateAsync(store.AddActiveTenantKey($"t{i}"), _ct);
+        }
+
+        dir.CachedKeyCount.ShouldBe(TenantDirectory.PruneKeyCacheAbove + 1);
+        clock.Now = clock.Now.AddSeconds(31); // every cached entry is now expired
+
+        // A fresh cold resolution trips the sweep (count is over the floor), dropping the expired entries before adding this one.
+        await dir.AuthenticateAsync(store.AddActiveTenantKey("fresh"), _ct);
+
+        dir.CachedKeyCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Rejects_a_null_presented_key() =>
         await Should.ThrowAsync<ArgumentNullException>(async () => await Build().Directory.AuthenticateAsync(null!, _ct));
+
+    [Fact]
+    public async Task Rejects_a_null_tenant_id_on_prime() =>
+        await Should.ThrowAsync<ArgumentNullException>(async () => await Build().Directory.PrimeAsync(null!, _ct));
 
     [Fact]
     public void Rejects_a_null_tenant_id_on_the_override_lookup() =>

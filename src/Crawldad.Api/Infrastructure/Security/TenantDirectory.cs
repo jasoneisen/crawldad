@@ -20,7 +20,15 @@ public interface ITenantAuthenticator
 /// override from either source without knowing which.</summary>
 public interface ITenantConcurrencyOverrides
 {
-    /// <summary>The tenant's configured concurrent-run override, or false to defer to the global default.</summary>
+    /// <summary>Resolves the tenant's override into an invalidation-driven cache so that a subsequent, <b>synchronous</b>
+    /// <see cref="TryGetConcurrencyOverride"/> is authoritative — <b>without</b> depending on the short-TTL auth cache.
+    /// The admission call sites await this before admitting, so the background promotion path (which can run long after —
+    /// or entirely without — a recent auth, e.g. restart recovery) honours a registry tenant's cap. A no-op for the env
+    /// directory (its overrides are already in memory).</summary>
+    Task PrimeAsync(string tenantId, CancellationToken ct);
+
+    /// <summary>The tenant's configured concurrent-run override, or false to defer to the global default. Reads only the
+    /// invalidation-driven admission cache (warmed by <see cref="PrimeAsync"/>) and the env overrides — never the auth cache.</summary>
     bool TryGetConcurrencyOverride(string tenantId, out int limit);
 }
 
@@ -41,10 +49,12 @@ public sealed class TenantRegistryOptions
 }
 
 /// <summary>The tenant directory: the single seam the auth handler and admission gate resolve tenants through. A presented
-/// key is matched against the DB-backed registry — behind a short-TTL, revocation-safe in-process cache — and, when it
+/// key is matched against the DB-backed registry — behind a short-TTL, revocation-safe in-process auth cache — and, when it
 /// matches no registry key, against the env-configured <see cref="TenantRegistry"/>, so existing staging/beta wiring keeps
-/// working unchanged. A registry tenant's slot allowance flows into the admission gate's per-tenant override the same way
-/// a configured tenant's <see cref="TenantDescriptor.MaxConcurrentRuns"/> does. A suspended tenant is rejected at auth.</summary>
+/// working unchanged. A suspended tenant is rejected at auth. A registry tenant's slot allowance flows into the admission
+/// gate's per-tenant override via a <b>separate</b>, invalidation-driven admission cache resolved from the store by
+/// <see cref="PrimeAsync"/> — deliberately NOT the auth cache, so the background promotion path honours the cap regardless
+/// of TTL or whether an auth even happened on this instance.</summary>
 public sealed class TenantDirectory : ITenantAuthenticator, ITenantConcurrencyOverrides
 {
     private readonly TenantRegistry _env;
@@ -53,10 +63,14 @@ public sealed class TenantDirectory : ITenantAuthenticator, ITenantConcurrencyOv
     private readonly ILogger<TenantDirectory> _logger;
     private readonly TimeSpan _ttl;
 
-    // Positive resolutions only, keyed two ways: by key hash for the auth path, by tenant id for the admission override.
-    // Negative lookups are deliberately NOT cached — an unbounded set of junk keys must not be able to grow the cache.
+    // The auth cache: positive key resolutions only (a negative lookup is NEVER cached, so a flood of junk keys cannot grow
+    // it), each with a short expiry for revocation-safety. Expired entries are ignored on read and swept opportunistically.
     private readonly ConcurrentDictionary<string, CachedKey> _byKeyHash = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, CachedTenant> _byTenantId = new(StringComparer.Ordinal);
+
+    // The admission-override cache: tenant id -> slot allowance (null = not a registry tenant, or one with no override).
+    // Resolved from the store by PrimeAsync and evicted ONLY by InvalidateTenant — no TTL — so a run that outlives the auth
+    // TTL, and a promotion re-driven after a restart with no prior auth, both still resolve the tenant's real cap.
+    private readonly ConcurrentDictionary<string, int?> _admissionOverride = new(StringComparer.Ordinal);
 
     /// <summary>Builds the directory over the env registry (the fallback) and the registry store (the primary).</summary>
     public TenantDirectory(TenantRegistry env, ITenantRegistryStore store, TimeProvider clock, IOptions<TenantRegistryOptions> options, ILogger<TenantDirectory> logger)
@@ -96,9 +110,8 @@ public sealed class TenantDirectory : ITenantAuthenticator, ITenantConcurrencyOv
             return null; // matched neither the registry nor the env directory
         }
 
-        var expiresAt = now + _ttl;
-        _byKeyHash[hash] = new CachedKey(hit.Tenant, expiresAt);
-        _byTenantId[hit.Tenant.Id] = new CachedTenant(hit.Tenant, expiresAt);
+        PruneExpiredKeys(now); // bound the auth cache before adding a fresh entry
+        _byKeyHash[hash] = new CachedKey(hit.Tenant, now + _ttl);
 
         if (hit.Tenant.Status != TenantStatus.Active)
         {
@@ -110,13 +123,29 @@ public sealed class TenantDirectory : ITenantAuthenticator, ITenantConcurrencyOv
     }
 
     /// <inheritdoc />
+    public async Task PrimeAsync(string tenantId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(tenantId);
+        if (_admissionOverride.ContainsKey(tenantId))
+        {
+            return; // already resolved; the entry is dropped only by InvalidateTenant, so it is never silently stale
+        }
+
+        // Resolve the tenant's allowance from the store (not the auth cache) and cache it. Null covers both "not a registry
+        // tenant" and "a registry tenant with no override" — TryGetConcurrencyOverride then defers to the env/global default.
+        var tenant = await _store.FindAsync(tenantId, ct);
+        _admissionOverride[tenantId] = tenant?.SlotAllowance;
+    }
+
+    /// <inheritdoc />
     public bool TryGetConcurrencyOverride(string tenantId, out int limit)
     {
         ArgumentNullException.ThrowIfNull(tenantId);
 
-        // A registry tenant just authenticated on this request is warm here; honour its slot allowance. A null allowance,
-        // an env tenant, or a cold entry falls through to the env override (and, on a miss there, the global default).
-        if (_byTenantId.TryGetValue(tenantId, out var cached) && cached.ExpiresAt > _clock.GetUtcNow() && cached.Tenant.SlotAllowance is { } allowance)
+        // The invalidation-driven admission cache (warmed by PrimeAsync from the store) is authoritative for a registry
+        // tenant's allowance — independent of the auth cache's TTL. A null/absent entry, or an env tenant, defers to the
+        // env override (and, on a miss there, the global default).
+        if (_admissionOverride.TryGetValue(tenantId, out var cached) && cached is { } allowance)
         {
             limit = allowance;
             return true;
@@ -125,15 +154,40 @@ public sealed class TenantDirectory : ITenantAuthenticator, ITenantConcurrencyOv
         return _env.TryGetConcurrencyOverride(tenantId, out limit);
     }
 
-    /// <summary>Drops every cached entry for a tenant — its tenant snapshot and all of its keys. Called in-process the
-    /// instant a management op revokes a key or changes a tenant's status, so the change is honoured immediately here;
-    /// the short TTL bounds staleness on other instances.</summary>
+    /// <summary>Drops every cached entry for a tenant — its admission override and all of its keys. Called in-process the
+    /// instant a management op revokes a key or changes a tenant's status (or allowance), so the change is honoured
+    /// immediately here; the short auth-cache TTL bounds staleness on other instances.</summary>
     public void InvalidateTenant(string tenantId)
     {
-        _byTenantId.TryRemove(tenantId, out _);
+        _admissionOverride.TryRemove(tenantId, out _);
         foreach (var entry in _byKeyHash)
         {
             if (string.Equals(entry.Value.Tenant.Id, tenantId, StringComparison.Ordinal))
+            {
+                _byKeyHash.TryRemove(entry.Key, out _);
+            }
+        }
+    }
+
+    /// <summary>The number of entries currently held in the auth cache — for tests asserting the expired-entry sweep.</summary>
+    internal int CachedKeyCount => _byKeyHash.Count;
+
+    /// <summary>The auth-cache size past which a cold write first sweeps expired entries (so a long-lived process that sees
+    /// many one-time keys does not accumulate stale entries; entries for still-used keys are refreshed in place, not swept).</summary>
+    internal const int PruneKeyCacheAbove = 64;
+
+    // Sweep expired entries when the map has grown past the floor. Only expired entries go — an active key's entry (fresh
+    // expiry) stays — so this bounds growth without ever evicting a live resolution.
+    private void PruneExpiredKeys(DateTimeOffset now)
+    {
+        if (_byKeyHash.Count <= PruneKeyCacheAbove)
+        {
+            return;
+        }
+
+        foreach (var entry in _byKeyHash)
+        {
+            if (entry.Value.ExpiresAt <= now)
             {
                 _byKeyHash.TryRemove(entry.Key, out _);
             }
@@ -161,7 +215,4 @@ public sealed class TenantDirectory : ITenantAuthenticator, ITenantConcurrencyOv
 
     [StructLayout(LayoutKind.Auto)]
     private readonly record struct CachedKey(RegistryTenantSnapshot Tenant, DateTimeOffset ExpiresAt);
-
-    [StructLayout(LayoutKind.Auto)]
-    private readonly record struct CachedTenant(RegistryTenantSnapshot Tenant, DateTimeOffset ExpiresAt);
 }

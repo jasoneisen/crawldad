@@ -1091,7 +1091,11 @@ tenant-reachable config. It is compared, never logged.
   identity a configured `Crawldad:Tenants` tenant has. `actor` defaults to `id`; `slotAllowance` (nullable) is the
   per-tenant concurrent-run override that flows into the admission cap ([§4](#4-the-three-run-shapes-sync-async-queued)),
   exactly as a configured tenant's override does — a registry tenant with `slotAllowance: 5` is capped at 5 concurrent
-  runs, and a null defers to the global default.
+  runs, and a null defers to the global default. The cap is resolved from the registry on **every** admission (the
+  immediate start **and** the background queue-promotion paths), so it holds for long-running and post-restart runs, not
+  only while a recent auth is cached. Note the concurrent-run cap is the **only** per-tenant plan knob the registry carries
+  today: the queue-**depth** override (the at-cap wait room) has no registry field yet, so a registry tenant uses the
+  global default depth; the per-tenant depth override remains a `Crawldad:Tenants` (env) knob for now.
 - **API keys are `ck_<env>_<random>`** — 256 bits of CSPRNG entropy. The **raw key is returned exactly once**, at issue
   time, and is **never stored**: only its SHA-256 (plus a short, non-secret display `prefix`) is persisted. A tenant may
   hold many keys (rotation); each carries `createdAt`, best-effort `lastUsedAt`, and `revokedAt`.

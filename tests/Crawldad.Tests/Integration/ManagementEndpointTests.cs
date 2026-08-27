@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Alba;
+using Crawldad.Api.Features.Runs;
 using Crawldad.Api.Features.Tenancy;
 using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Tests.Support;
 using Marten;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Wolverine;
 
 namespace Crawldad.Tests.Integration;
 
@@ -271,18 +273,52 @@ public sealed class ManagementEndpointTests(ManagementFixture fixture) : IAsyncL
         await AuthenticatedGetAsync("/payloads", TestTenants.PrimaryKey, StatusCodes.Status200OK);
 
     [Fact]
-    public async Task A_registry_tenants_slot_allowance_becomes_its_concurrency_override()
+    public async Task A_registry_tenants_slot_allowance_is_resolvable_by_the_admission_gate_without_auth()
     {
         var id = NewTenantId();
         await CreateTenantAsync(new { id, displayName = "Big", slotAllowance = 3 }, StatusCodes.Status201Created);
-        var raw = (await IssueKeyAsync(id)).GetProperty("apiKey").GetString()!;
+        await IssueKeyAsync(id);
 
-        // Authenticate once so the directory warms the tenant snapshot, then read the override the admission gate reads.
-        (await Host.Services.GetRequiredService<ITenantAuthenticator>().AuthenticateAsync(raw, _ct)).ShouldNotBeNull();
+        // The background promotion path: prime the gate straight from the store — no auth involved — and read the cap the
+        // gate reads. This is what PromoteOldestAsync does before TryAdmit, so a registry cap holds long after (or without) auth.
+        var gate = Host.Services.GetRequiredService<IRunAdmissionGate>();
+        await gate.PrimeAsync(id, _ct);
 
-        var overrides = Host.Services.GetRequiredService<ITenantConcurrencyOverrides>();
-        overrides.TryGetConcurrencyOverride(id, out var limit).ShouldBeTrue();
+        Host.Services.GetRequiredService<ITenantConcurrencyOverrides>().TryGetConcurrencyOverride(id, out var limit).ShouldBeTrue();
         limit.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Background_promotion_honours_a_registry_cap_on_a_cold_override_cache()
+    {
+        // The regression this guards: a run that outlives the auth-cache TTL is promoted from the background queue handler,
+        // whose cap resolution must come from the store — not a lapsed auth cache that would silently revert to the global 32.
+        var id = NewTenantId();
+        await CreateTenantAsync(new { id, displayName = "Capped", slotAllowance = 1 }, StatusCodes.Status201Created);
+
+        var gate = Host.Services.GetRequiredService<IRunAdmissionGate>();
+        var queue = Host.Services.GetRequiredService<RunQueue>();
+        var directory = Host.Services.GetRequiredService<TenantDirectory>();
+        var store = Host.Services.GetRequiredService<IDocumentStore>();
+
+        // Fill the tenant's single slot exactly as a running run would (no auth involved), then enqueue one behind it.
+        await gate.PrimeAsync(id, _ct);
+        gate.TryAdmit(id, Guid.NewGuid()).ShouldBeTrue(); // cap 1 → now full
+        await using (var session = store.LightweightSession(id))
+        {
+            session.Store(new QueuedRun { Id = Guid.NewGuid(), Sequence = 1, PayloadName = "p", QueuedAt = FakeClock.Fixed });
+            await session.SaveChangesAsync(_ct);
+        }
+
+        // Drop the override cache so promotion must re-resolve the cap from the store (the lapsed-TTL / post-restart case).
+        directory.InvalidateTenant(id);
+
+        await using var scope = Host.Services.CreateAsyncScope();
+        var promoted = await queue.PromoteOldestAsync(scope.ServiceProvider.GetRequiredService<IMessageBus>(), id, _ct);
+
+        promoted.ShouldBeFalse(); // the cap of 1 is full → nothing promoted (a reverted global cap of 32 would have promoted it)
+        await using var read = store.QuerySession(id);
+        (await read.Query<QueuedRun>().CountAsync(_ct)).ShouldBe(1); // the run is still queued
     }
 
     // ---- store branches not reachable through an endpoint --------------------------------------------------------

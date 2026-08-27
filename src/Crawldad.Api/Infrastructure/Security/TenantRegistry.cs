@@ -140,6 +140,10 @@ public sealed class TenantRegistry : ITenantConcurrencyOverrides
         return match is not null;
     }
 
+    /// <summary>A no-op: the configured overrides are already resolved in memory at construction, so nothing needs priming
+    /// from a store. Present so the env directory satisfies <see cref="ITenantConcurrencyOverrides"/> uniformly.</summary>
+    public Task PrimeAsync(string tenantId, CancellationToken ct) => Task.CompletedTask;
+
     /// <summary>The tenant's configured concurrent-run override, or defers to the global default when absent. Looked
     /// up by the admission gate; an unknown tenant id also defers to the global.</summary>
     public bool TryGetConcurrencyOverride(string tenantId, out int limit)
