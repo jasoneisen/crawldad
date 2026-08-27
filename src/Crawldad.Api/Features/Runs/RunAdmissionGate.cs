@@ -30,7 +30,7 @@ public interface IRunAdmissionGate
 /// <summary>The in-process, per-tenant set of run ids holding a slot, guarded by one lock so check-and-occupy is atomic;
 /// the cap is a per-tenant override or the global default. Counts are per-process only — a multi-instance deployment can
 /// transiently over-admit (cross-instance, or ~2× during restart catch-up) until runs finalise or self-heal via <see cref="Occupy"/>.</summary>
-public sealed class RunAdmissionGate(TenantRegistry tenants, IOptions<RunLimitsOptions> limits) : IRunAdmissionGate
+public sealed class RunAdmissionGate(ITenantConcurrencyOverrides tenants, IOptions<RunLimitsOptions> limits) : IRunAdmissionGate
 {
     private readonly int _defaultCap = limits.Value.MaxConcurrentRunsPerTenant;
     private readonly Dictionary<string, HashSet<Guid>> _active = new(StringComparer.Ordinal);

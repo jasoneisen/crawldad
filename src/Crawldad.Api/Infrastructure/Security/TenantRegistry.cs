@@ -48,8 +48,10 @@ public readonly record struct AuthenticatedTenant(string Id, string Actor);
 
 /// <summary>Validates a presented API key against the configured tenants. Keys are hash-compared (SHA-256, fixed-time
 /// equality) so a bad key leaks no timing signal; only hashes live in the registry, never plaintext. Also the
-/// authority on tenant ids for the out-of-request recovery scan that resumes each tenant's interrupted runs.</summary>
-public sealed class TenantRegistry
+/// authority on tenant ids for the out-of-request recovery scan that resumes each tenant's interrupted runs, and the
+/// env-configured source the DB-backed <see cref="TenantDirectory"/> falls back to (implementing
+/// <see cref="ITenantConcurrencyOverrides"/> so the admission gate reads a configured tenant's override through it).</summary>
+public sealed class TenantRegistry : ITenantConcurrencyOverrides
 {
     private readonly IReadOnlyList<Entry> _entries;
 

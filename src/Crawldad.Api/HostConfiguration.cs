@@ -2,6 +2,7 @@ using Crawldad.Api.Features.Browsers;
 using Crawldad.Api.Features.Fixtures;
 using Crawldad.Api.Features.Payloads;
 using Crawldad.Api.Features.Runs;
+using Crawldad.Api.Features.Tenancy;
 using Crawldad.Api.Features.Webhooks;
 using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Api.Infrastructure.Storage;
@@ -56,6 +57,7 @@ public static class HostConfiguration
                 BrowsersModule.ConfigureMarten(options); // the tenant-scoped browser-credential document (no projection)
                 FixturesModule.ConfigureMarten(options); // the tenant-scoped recorded fixture-set document (no projection)
                 WebhooksModule.ConfigureMarten(options); // the tenant-scoped webhook-endpoint registration document (no projection)
+                ManagementModule.ConfigureMarten(options); // the SINGLE-tenanted registry documents (tenants + hashed api keys)
             })
             .IntegrateWithWolverine()           // transactional outbox/inbox + aggregate handlers
             .AddAsyncDaemon(DaemonMode.HotCold);
@@ -113,6 +115,17 @@ public static class HostConfiguration
         builder.Services.AddSingleton<TenantRegistry>();
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddScoped<TenantContext>();
+
+        // The DB-backed tenant registry: the store over the single-tenanted registry documents, and the composite
+        // directory that resolves a presented key against it (cached, revocation-safe) and FALLS BACK to the env-configured
+        // TenantRegistry — so existing staging/beta wiring keeps working unchanged. The same directory feeds the admission
+        // gate a registry tenant's slot allowance as a per-tenant concurrency override. Interim management-key options too.
+        builder.Services.AddOptions<TenantRegistryOptions>().Bind(builder.Configuration.GetSection(TenantRegistryOptions.Section));
+        builder.Services.AddOptions<ManagementOptions>().Bind(builder.Configuration.GetSection(ManagementOptions.Section));
+        builder.Services.AddSingleton<ITenantRegistryStore, MartenTenantRegistryStore>();
+        builder.Services.AddSingleton<TenantDirectory>();
+        builder.Services.AddSingleton<ITenantAuthenticator>(static sp => sp.GetRequiredService<TenantDirectory>());
+        builder.Services.AddSingleton<ITenantConcurrencyOverrides>(static sp => sp.GetRequiredService<TenantDirectory>());
 
         builder.Services.AddAuthentication(CrawldadAuthentication.Scheme)
             .AddScheme<ApiKeyOptions, ApiKeyAuthenticationHandler>(CrawldadAuthentication.Scheme, configureOptions: null);
@@ -180,6 +193,10 @@ public static class HostConfiguration
             // so the async run path carries the tenant to the executor saga without any explicit plumbing.
             options.TenantId.IsClaimTypeNamed(CrawldadClaims.TenantId);
         });
+
+        // The interim server-side management surface (tenant + key administration), on its own management-key auth rather
+        // than the tenant principal — mapped only when a management key is configured, otherwise /management/* is a 404.
+        ManagementModule.MapManagementEndpoints(app);
 
         return app;
     }

@@ -34,27 +34,28 @@ internal static class CrawldadClaims
 /// configured <see cref="TenantRegistry"/>; the type exists so the scheme plugs into ASP.NET's authentication builder.</summary>
 public sealed class ApiKeyOptions : AuthenticationSchemeOptions;
 
-/// <summary>The API-key authentication handler: validates the presented key against the <see cref="TenantRegistry"/>
-/// (fixed-time hash compare) and issues a principal carrying the tenant + actor claims. A missing or unknown key
-/// surfaces as <c>401</c>; the key itself is never logged.</summary>
+/// <summary>The API-key authentication handler: validates the presented key against the <see cref="ITenantAuthenticator"/>
+/// (the DB-backed registry, cached, with an env-configured fallback) and issues a principal carrying the tenant + actor
+/// claims. A missing, unknown, revoked, or suspended-tenant key surfaces as <c>401</c>; the key itself is never logged.</summary>
 internal sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyOptions>
 {
     private const string _bearerPrefix = "Bearer ";
-    private readonly TenantRegistry _tenants;
+    private readonly ITenantAuthenticator _authenticator;
 
-    public ApiKeyAuthenticationHandler(IOptionsMonitor<ApiKeyOptions> options, ILoggerFactory logger, UrlEncoder encoder, TenantRegistry tenants)
-        : base(options, logger, encoder) => _tenants = tenants;
+    public ApiKeyAuthenticationHandler(IOptionsMonitor<ApiKeyOptions> options, ILoggerFactory logger, UrlEncoder encoder, ITenantAuthenticator authenticator)
+        : base(options, logger, encoder) => _authenticator = authenticator;
 
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         if (!TryReadKey(out var key))
         {
-            return Task.FromResult(AuthenticateResult.NoResult()); // no credential presented → challenged as 401
+            return AuthenticateResult.NoResult(); // no credential presented → challenged as 401
         }
 
-        if (!_tenants.TryAuthenticate(key, out var tenant))
+        var tenant = await _authenticator.AuthenticateAsync(key, Context.RequestAborted);
+        if (tenant is null)
         {
-            return Task.FromResult(AuthenticateResult.Fail("Invalid API key.")); // never echoes the key
+            return AuthenticateResult.Fail("Invalid API key."); // unknown/revoked/suspended — never echoes the key
         }
 
         var identity = new ClaimsIdentity(
@@ -63,7 +64,7 @@ internal sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKey
             nameType: CrawldadClaims.Actor,
             roleType: null);
         var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name);
-        return Task.FromResult(AuthenticateResult.Success(ticket));
+        return AuthenticateResult.Success(ticket);
     }
 
     // Prefer Authorization: Bearer, then X-Api-Key. A present-but-empty value is treated as absent.
