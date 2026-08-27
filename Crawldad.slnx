@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Crawldad.Contracts/Crawldad.Contracts.csproj" />
     <Project Path="src/Crawldad.Api/Crawldad.Api.csproj" />
+    <Project Path="src/Crawldad.Client/Crawldad.Client.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Crawldad.Tests/Crawldad.Tests.csproj" />

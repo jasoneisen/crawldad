@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The official typed .NET client for the Crawldad API: a thin, testable HTTP layer over the Contracts wire
+       types. Ships to customers, so it is a plain class library (no ASP.NET framework reference) and carries full
+       XML docs. The portal and any external integration consume the API exclusively through this SDK. -->
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Crawldad.Client</PackageId>
+    <Description>The official typed .NET client for the Crawldad API (runs, payloads, webhooks, fixtures, browsers, and the SSE trace stream).</Description>
+    <!-- A customer-facing SDK ships IntelliSense docs; with TreatWarningsAsErrors this also enforces that every
+         public member is documented (CS1591), which is exactly the bar we want for the public surface. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IServiceCollection.AddCrawldadClient + IHttpClientFactory typed-client registration. Brings the
+         Microsoft.Extensions.* (DI.Abstractions/Options/Http) closure the DI extension needs. -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The wire types are the shared source of truth — referenced, never duplicated. -->
+    <ProjectReference Include="..\Crawldad.Contracts\Crawldad.Contracts.csproj" />
+  </ItemGroup>
+
+  <!-- The SSE line parser and a couple of internal helpers are unit-tested directly by the 100% gate. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Crawldad.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -30,6 +30,7 @@ Curated, schema-valid payloads (each validated in CI against the schema). Commen
 
 ## Optional
 
+- [.NET client SDK](docs/CLIENT.md): the official typed .NET client (`Crawldad.Client`) — DI registration, running a payload (sync/async/pinned), streaming the SSE trace with `Last-Event-ID` resume, and the typed exception mapping. The portal and external integrations consume the API through this SDK rather than hand-rolling HTTP.
 - [Engine & runtime spec](docs/SPEC.md): the run engine's behavioral contract — execution model, error taxonomy, timeout hierarchy, resource limits, the trace/event model, checkpoints, and the backend adapter interface.
 - [Payload language spec](docs/PAYLOAD_SPEC.md): the DSL semantics behind the schema — action set, selectors, control flow, and the expression language with its enumerated builtins.
 - [Architecture](docs/ARCHITECTURE.md): the system architecture (C4 diagrams + run lifecycle) and the Azure infrastructure reference.

@@ -100,6 +100,14 @@ dotnet_diagnostic.CA1056.severity = none
 dotnet_diagnostic.CA1054.severity = none
 dotnet_diagnostic.CA1056.severity = none
 
+[src/Crawldad.Client/CrawldadExceptions.cs]
+# Every Crawldad API exception carries the HTTP status code (and most a typed rejection/problem body), so the
+# parameterless / message-only / message+inner constructors CA1032 & RCS1194 want would only ever build
+# semantically-invalid instances with a zero status and no body. The public surface is deliberately the
+# status-carrying constructors, so turn those two "standard exception constructor" rules off for this file only.
+dotnet_diagnostic.CA1032.severity = none
+dotnet_diagnostic.RCS1194.severity = none
+
 [tests/**.cs]
 # Tests legitimately have public fixtures, magic values, short-lived disposables, and unused-looking params.
 dotnet_diagnostic.CA1707.severity = none   # underscores in test method names
