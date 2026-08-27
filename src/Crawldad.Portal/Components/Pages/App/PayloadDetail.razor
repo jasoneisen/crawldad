@@ -1,0 +1,333 @@
+@page "/app/payloads/{PayloadId}"
+@layout AppLayout
+@attribute [Authorize]
+@using System.Globalization
+@using System.Text.Json
+@using Crawldad.Client
+@using Crawldad.Contracts.Drift
+@using Crawldad.Contracts.Payloads
+@using Crawldad.Portal.Tenancy
+@inject IPortalTenantContext Tenant
+
+<PageTitle>Payload · Crawldad</PageTitle>
+
+@*
+    One managed payload, read-only: identity + pinned head, the on-read canary drift assessment (baseline/delta), the
+    stored (credential-scrubbed) script for the selected revision (pretty-printed, no editor), and the revision ladder.
+    A ?rev=N query selects which revision's script to view (clamped to 1..head); revising/validating is a later task.
+*@
+<div class="page-header d-print-none">
+    <div class="row g-2 align-items-center">
+        <div class="col">
+            <div class="page-pretitle text-secondary">
+                <a href="/app/payloads">Payloads</a>
+            </div>
+            <h2 class="page-title">@Heading</h2>
+        </div>
+    </div>
+</div>
+
+@if (_notLinked)
+{
+    <div class="card mt-3">
+        <div class="empty" data-testid="not-linked">
+            <p class="empty-title">No workspace linked</p>
+            <p class="empty-subtitle text-secondary">
+                This account isn't linked to a Crawldad workspace yet. Link one from your Account to see its payloads here.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account" class="btn btn-primary">Go to Account</a>
+            </div>
+        </div>
+    </div>
+}
+else if (_notFound)
+{
+    <div class="card mt-3">
+        <div class="empty" data-testid="not-found">
+            <p class="empty-title">Payload not found</p>
+            <p class="empty-subtitle text-secondary">This payload doesn't exist in this workspace, or the link is stale.</p>
+            <div class="empty-action">
+                <a href="/app/payloads" class="btn btn-primary">Back to payloads</a>
+            </div>
+        </div>
+    </div>
+}
+else if (_loaded)
+{
+    var payload = _payload!;
+    var revision = _revision!;
+
+    <div class="card mt-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-start gap-2">
+                <div class="flex-fill">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <h3 class="m-0">@payload.Name</h3>
+                        @{
+                            var status = StatusBadge(payload.Status);
+                        }
+                        <span class="badge @status.Css" data-testid="status">@status.Label</span>
+                        @if (_drift is { Drifted: true })
+                        {
+                            <span class="badge bg-red-lt" data-testid="drift-chip">Drift detected</span>
+                        }
+                    </div>
+                    <div class="text-secondary mt-1" data-testid="identity">
+                        <span class="cd-mono">@payload.PayloadId</span>
+                        · head <span class="badge bg-secondary-lt">r@(payload.Revision)</span>
+                        · scriptHash <span class="cd-mono">@ShortHash(payload.ScriptHash)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_drift is { } drift)
+    {
+        <div class="card mt-3" data-testid="drift-card">
+            <div class="card-header">
+                <h3 class="card-title">Selector drift status</h3>
+                <div class="card-actions">
+                    @{
+                        var driftBadge = DriftBadge(drift.State);
+                    }
+                    <span class="badge @driftBadge.Css" data-testid="drift-state">@driftBadge.Label</span>
+                </div>
+            </div>
+            <div class="card-body">
+                @if (drift.State == DriftState.NoData)
+                {
+                    <p class="text-secondary m-0" data-testid="drift-nodata">No canary runs have been observed for this payload yet.</p>
+                }
+                else
+                {
+                    <div class="row g-2 mb-3">
+                        <div class="col-6 col-md-3">
+                            <div class="p-2 bg-secondary-lt rounded">
+                                <div class="text-secondary small">drifted selectors</div>
+                                <div class="fw-bold cd-mono" data-testid="drifted-count">@drift.DriftedSelectorCount</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="p-2 bg-secondary-lt rounded">
+                                <div class="text-secondary small">observed / baseline</div>
+                                <div class="fw-bold cd-mono">@drift.ObservedRuns / @drift.BaselineRuns</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="p-2 bg-secondary-lt rounded">
+                                <div class="text-secondary small">threshold</div>
+                                <div class="fw-bold cd-mono">@drift.Threshold</div>
+                            </div>
+                        </div>
+                        @if (drift.PinnedRevision is { } pinned)
+                        {
+                            <div class="col-6 col-md-3">
+                                <div class="p-2 bg-secondary-lt rounded">
+                                    <div class="text-secondary small">pinned revision</div>
+                                    <div class="fw-bold cd-mono">r@(pinned)</div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    @if (drift.Selectors.Count > 0)
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-sm table-vcenter">
+                                <thead>
+                                    <tr>
+                                        <th>Selector</th>
+                                        <th>Latest run</th>
+                                        <th>Baseline floor</th>
+                                        <th>Drift</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var selector in drift.Selectors)
+                                    {
+                                        <tr data-testid="selector-row">
+                                            <td class="cd-mono">@selector.Selector</td>
+                                            <td>
+                                                @if (selector.MissingInLatest)
+                                                {
+                                                    <span class="text-danger">missing</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-success">present</span>
+                                                }
+                                            </td>
+                                            <td>@(selector.BaselineFloor ? "yes" : "no")</td>
+                                            <td>
+                                                @if (selector.Drifted)
+                                                {
+                                                    <span class="badge bg-red-lt">newly drifted</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-secondary-lt">not alarmed</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    @if (drift.Evidence is { } evidence)
+                    {
+                        <div class="text-secondary small mt-2" data-testid="evidence">
+                            evidence: run
+                            <a href="@($"/app/runs/{evidence.RunId}")" class="cd-mono" data-testid="evidence-run">@evidence.RunId</a>
+                            · observed @FormatUtc(evidence.ObservedAt)
+                            · @evidence.CaptureRefs.Count capture(s) · @evidence.ScreenshotRefs.Count screenshot(s)
+                            @if (evidence.FailureScreenshotRef is { } shot)
+                            {
+                                <text> · failing-step screenshot <span class="cd-mono">@shot</span></text>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    <div class="row row-cards mt-1">
+        <div class="col-xl-8">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Script</h3>
+                    <div class="card-actions text-secondary" data-testid="viewing-rev">
+                        viewing <span class="badge bg-secondary-lt">r@(_selectedRevision)</span>
+                        @if (_selectedRevision == payload.Revision)
+                        {
+                            <span class="badge bg-blue-lt ms-1">head</span>
+                        }
+                    </div>
+                </div>
+                <div class="card-body">
+                    <pre class="cd-json" data-testid="script">@_prettyScript</pre>
+                </div>
+                <div class="card-footer text-secondary small">
+                    scriptHash <span class="cd-mono">@ShortHash(revision.ScriptHash)</span> · the stored, credential-scrubbed document.
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-4">
+            <div class="card">
+                <div class="card-header"><h3 class="card-title">Revisions</h3></div>
+                <div class="list-group list-group-flush">
+                    @for (var r = payload.Revision; r >= 1; r--)
+                    {
+                        var revisionNumber = r;
+                        var active = revisionNumber == _selectedRevision ? " active" : "";
+                        <a href="@($"/app/payloads/{payload.PayloadId}?rev={revisionNumber}")"
+                           class="list-group-item list-group-item-action d-flex align-items-center gap-2@(active)"
+                           data-testid="revision-row">
+                            <span class="badge bg-secondary-lt">r@(revisionNumber)</span>
+                            <span class="flex-fill"></span>
+                            @if (revisionNumber == payload.Revision)
+                            {
+                                <span class="badge bg-blue-lt">head</span>
+                            }
+                        </a>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string PayloadId { get; set; } = "";
+
+    [SupplyParameterFromQuery(Name = "rev")]
+    public int? Rev { get; set; }
+
+    private bool _notLinked;
+    private bool _notFound;
+    private bool _loaded;
+    private PayloadResponse? _payload;
+    private PayloadRevisionResponse? _revision;
+    private PayloadDriftStatus? _drift;
+    private int _selectedRevision;
+    private string _prettyScript = "";
+
+    private string Heading => _payload is { } payload ? payload.Name : "Payload";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var tenant = await Tenant.TryResolveAsync();
+        if (tenant is null)
+        {
+            _notLinked = true;
+            return;
+        }
+
+        if (!Guid.TryParse(PayloadId, out var id))
+        {
+            _notFound = true;
+            return;
+        }
+
+        try
+        {
+            _payload = await tenant.Client.GetPayloadAsync(id);
+        }
+        catch (CrawldadNotFoundException)
+        {
+            _notFound = true;
+            return;
+        }
+
+        _selectedRevision = ClampRevision(Rev, _payload.Revision);
+        _revision = await tenant.Client.GetPayloadRevisionAsync(id, _selectedRevision);
+        _prettyScript = Pretty(_revision.Script);
+        _drift = await LoadDriftAsync(tenant.Client, id);
+        _loaded = true;
+    }
+
+    // Best-effort drift read: an existing payload with no canary is a valid NoData (200); a genuine miss (e.g. a
+    // just-archived payload) degrades to "no drift panel" rather than failing the page.
+    private static async Task<PayloadDriftStatus?> LoadDriftAsync(CrawldadClient client, Guid id)
+    {
+        try
+        {
+            return await client.GetPayloadDriftStatusAsync(id);
+        }
+        catch (CrawldadNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    // The requested revision, defaulting to head and clamped into 1..head so a stray ?rev never over- or under-reads.
+    private static int ClampRevision(int? requested, int head) => Math.Clamp(requested ?? head, 1, head);
+
+    private static string Pretty(JsonElement script) =>
+        JsonSerializer.Serialize(script, new JsonSerializerOptions { WriteIndented = true });
+
+    private static string ShortHash(string hash) =>
+        hash.Length <= 12 ? hash : $"{hash[..6]}…{hash[^4..]}";
+
+    private static string FormatUtc(DateTimeOffset at) =>
+        at.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
+
+    private static (string Css, string Label) StatusBadge(PayloadStatus status) => status switch
+    {
+        PayloadStatus.Archived => ("bg-secondary-lt", "archived"),
+        _ => ("bg-green-lt", "active"),
+    };
+
+    private static (string Css, string Label) DriftBadge(DriftState state) => state switch
+    {
+        DriftState.Drifted => ("bg-red-lt", "drifted"),
+        DriftState.Steady => ("bg-green-lt", "steady"),
+        DriftState.WarmingUp => ("bg-yellow-lt", "warming up"),
+        _ => ("bg-secondary-lt", "no data"),
+    };
+}

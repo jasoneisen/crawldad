@@ -1,24 +1,391 @@
 @page "/app/webhooks"
 @layout AppLayout
 @attribute [Authorize]
+@using System.Globalization
+@using Crawldad.Client
+@using Crawldad.Contracts.Webhooks
+@using Crawldad.Portal.Tenancy
+@inject IPortalTenantContext Tenant
+@inject NavigationManager Nav
 
 <PageTitle>Webhooks · Crawldad</PageTitle>
 
 @*
-    Empty-state placeholder. Webhook-endpoint management is wired in a later task (#70) over Crawldad.Client.
+    Webhook endpoints: the tenant's registered endpoints (name, url, events, timestamps, last-delivery outcome), the
+    recent delivery history for a selected endpoint (?endpoint=name — status, attempt, latency, event, run link), and a
+    static-SSR register form (antiforgery-protected like the login/sign-out forms). Deregister is a server-rendered
+    confirm (?delete=name → a POST form). The signing secret is write-only: the field is never rendered back.
 *@
-<div class="page-header">
-    <h1 class="page-title">Webhooks</h1>
-</div>
-
-<div class="card mt-3">
-    <div class="empty">
-        <div class="empty-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M4.876 13.61a4 4 0 1 0 6.124 3.39h6" /><path d="M15.066 20.502a4 4 0 1 0 1.934 -7.502c-.706 0 -1.424 .18 -2 .5l-3 -5.5" /><path d="M9 8a4 4 0 1 0 -3.938 -4.7" /></svg>
+<div class="page-header d-print-none">
+    <div class="row g-2 align-items-center">
+        <div class="col">
+            @if (_notLinked is false)
+            {
+                <div class="page-pretitle text-secondary" data-testid="tenant">@_tenantId</div>
+            }
+            <h2 class="page-title">Webhooks</h2>
         </div>
-        <p class="empty-title">No webhooks configured</p>
-        <p class="empty-subtitle text-secondary">
-            Endpoints that receive run-lifecycle events, such as succeeded, failed, and drifted, will be listed here.
-        </p>
     </div>
 </div>
+
+@if (_notLinked)
+{
+    <div class="card mt-3">
+        <div class="empty" data-testid="not-linked">
+            <p class="empty-title">No workspace linked</p>
+            <p class="empty-subtitle text-secondary">
+                This account isn't linked to a Crawldad workspace yet. Link one from your Account to register webhook endpoints.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account" class="btn btn-primary">Go to Account</a>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(Registered))
+    {
+        <div class="alert alert-success mt-3" role="status" data-testid="registered">
+            Endpoint <span class="fw-semibold">@Registered</span> registered.
+        </div>
+    }
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger mt-3" role="alert" data-testid="register-error">@_error</div>
+    }
+
+    @if (_deleteTarget is { } target)
+    {
+        <div class="card mt-3 border-danger" data-testid="delete-confirm">
+            <div class="card-body">
+                <h3 class="mb-1">Delete endpoint “@target”?</h3>
+                <p class="text-secondary">
+                    Crawldad will stop delivering events to this endpoint. Re-registering later needs a fresh signing secret.
+                </p>
+                <EditForm FormName="delete-webhook" Model="Removal" OnValidSubmit="DeleteAsync" data-testid="delete-form">
+                    <input type="hidden" name="Removal.Name" value="@target" />
+                    <button type="submit" class="btn btn-danger">Delete endpoint</button>
+                    <a href="/app/webhooks" class="btn btn-link">Cancel</a>
+                </EditForm>
+            </div>
+        </div>
+    }
+
+    <div class="row row-cards mt-1">
+        <div class="col-lg-7">
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h3 class="card-title">Registered endpoints</h3>
+                    <div class="card-actions text-secondary small" data-testid="endpoint-count">@_webhooks.Count</div>
+                </div>
+                @if (_webhooks.Count == 0)
+                {
+                    <div class="card-body">
+                        <p class="text-secondary m-0" data-testid="no-endpoints">No endpoints registered yet.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-vcenter card-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>URL</th>
+                                    <th>Events</th>
+                                    <th>Updated</th>
+                                    <th>Last delivery</th>
+                                    <th class="w-1"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var webhook in _webhooks)
+                                {
+                                    <tr data-testid="endpoint-row">
+                                        <td class="fw-semibold">@webhook.Name</td>
+                                        <td class="cd-mono cd-truncate text-secondary">@webhook.Url</td>
+                                        <td>
+                                            @if (webhook.Events.Count == 0)
+                                            {
+                                                <span class="badge bg-secondary-lt">all events</span>
+                                            }
+                                            else
+                                            {
+                                                @foreach (var evt in webhook.Events)
+                                                {
+                                                    <span class="badge bg-blue-lt me-1">@evt</span>
+                                                }
+                                            }
+                                        </td>
+                                        <td class="text-secondary">@FormatUtc(webhook.UpdatedAt)</td>
+                                        <td>
+                                            @if (webhook.LastDelivery is { } last)
+                                            {
+                                                var badge = DeliveryBadge(last.Delivered, last.StatusCode);
+                                                <span class="badge @badge.Css" data-testid="last-delivery">@badge.Label</span>
+                                                <span class="text-secondary small ms-1">@FormatUtc(last.At)</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-secondary" data-testid="no-delivery">—</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <a href="@EndpointLink(webhook.Name)" class="btn btn-sm" data-testid="deliveries-link">Deliveries</a>
+                                            <a href="@DeleteLink(webhook.Name)" class="btn btn-sm btn-ghost-danger" data-testid="delete-link">Delete</a>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
+            @if (_selectedEndpoint is { } selected)
+            {
+                <div class="card" data-testid="deliveries-card">
+                    <div class="card-header">
+                        <h3 class="card-title">Recent deliveries — <span class="cd-mono">@selected</span></h3>
+                    </div>
+                    @if (_deliveries is null)
+                    {
+                        <div class="card-body">
+                            <p class="text-secondary m-0" data-testid="deliveries-unknown">No such endpoint in this workspace.</p>
+                        </div>
+                    }
+                    else if (_deliveries.Count == 0)
+                    {
+                        <div class="card-body">
+                            <p class="text-secondary m-0" data-testid="deliveries-empty">No deliveries recorded yet.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-vcenter table-sm card-table">
+                                <thead>
+                                    <tr>
+                                        <th>Event</th>
+                                        <th>Run</th>
+                                        <th>Attempt</th>
+                                        <th>Response</th>
+                                        <th>When</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var delivery in _deliveries)
+                                    {
+                                        <tr data-testid="delivery-row">
+                                            <td><span class="badge bg-blue-lt">@delivery.EventType</span></td>
+                                            <td>
+                                                <a href="@($"/app/runs/{delivery.RunId}")" class="cd-mono" data-testid="delivery-run">@delivery.RunId</a>
+                                            </td>
+                                            <td class="cd-mono">@delivery.Attempt</td>
+                                            <td>
+                                                @{
+                                                    var badge = DeliveryBadge(delivery.Delivered, delivery.StatusCode);
+                                                }
+                                                <span class="badge @badge.Css">@badge.Label</span>
+                                                <span class="text-secondary small ms-1">@delivery.LatencyMs ms</span>
+                                            </td>
+                                            <td class="text-secondary">@FormatUtc(delivery.At)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="card-footer text-secondary small">
+                            At-least-once delivery; each attempt (retries included) is its own row. A 3xx is a failed delivery — redirects are not followed.
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="col-lg-5">
+            <div class="card">
+                <div class="card-header"><h3 class="card-title">Register endpoint</h3></div>
+                <div class="card-body">
+                    <EditForm FormName="register-webhook" Model="Register" OnValidSubmit="RegisterAsync" data-testid="register-form">
+                        <div class="mb-3">
+                            <label class="form-label required" for="wh-name">Name</label>
+                            <InputText id="wh-name" class="form-control" autocomplete="off" @bind-Value="Register.Name" />
+                            <small class="form-hint">Lowercase slug — letters, digits, hyphens (1–64). Becomes the endpoint id; re-registering replaces.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label required" for="wh-url">Payload URL</label>
+                            <InputText id="wh-url" class="form-control" autocomplete="off" @bind-Value="Register.Url" />
+                            <small class="form-hint"><span class="text-green">https</span> only, and not a loopback / private / link-local address (SSRF guard).</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Events</label>
+                            <label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="Register.Succeeded" /><span class="form-check-label">run.succeeded</span></label>
+                            <label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="Register.Failed" /><span class="form-check-label">run.failed</span></label>
+                            <label class="form-check"><InputCheckbox class="form-check-input" @bind-Value="Register.Cancelled" /><span class="form-check-label">run.cancelled</span></label>
+                            <small class="form-hint">Leave all unchecked to receive <strong>all</strong> terminal-run events.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label required" for="wh-secret">Signing secret</label>
+                            <InputText id="wh-secret" type="password" class="form-control" autocomplete="new-password" @bind-Value="Register.Secret" />
+                            <small class="form-hint">Write-only — never echoed back. At least 16 characters. HMAC-SHA256 over <span class="cd-mono">{timestamp}.{body}</span>. Rotate by re-registering.</small>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Register endpoint</button>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "endpoint")]
+    public string? Endpoint { get; set; }
+
+    [SupplyParameterFromQuery(Name = "delete")]
+    public string? DeleteTarget { get; set; }
+
+    [SupplyParameterFromQuery(Name = "registered")]
+    public string? Registered { get; set; }
+
+    [SupplyParameterFromForm(FormName = "register-webhook")]
+    public RegisterWebhookInput Register { get; set; } = default!;
+
+    [SupplyParameterFromForm(FormName = "delete-webhook")]
+    public DeleteWebhookInput Removal { get; set; } = default!;
+
+    private bool _notLinked;
+    private string _tenantId = "";
+    private IReadOnlyList<WebhookSummary> _webhooks = [];
+    private string? _selectedEndpoint;
+    private IReadOnlyList<WebhookDeliveryItem>? _deliveries;
+    private string? _deleteTarget;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Form models are bound by the framework on POST; on GET they are null, so seed fresh instances (avoids BL0008
+        // and a null-ref when rendering the empty form).
+        Register ??= new();
+        Removal ??= new();
+
+        var tenant = await Tenant.TryResolveAsync();
+        if (tenant is null)
+        {
+            _notLinked = true;
+            return;
+        }
+
+        _tenantId = tenant.TenantId;
+        _webhooks = (await tenant.Client.ListWebhooksAsync()).Webhooks;
+
+        // Default the deliveries panel to the first endpoint; ?endpoint=name overrides. A selected name we don't know
+        // is surfaced as "no such endpoint" rather than a failed read.
+        _selectedEndpoint = string.IsNullOrEmpty(Endpoint) ? _webhooks.FirstOrDefault()?.Name : Endpoint;
+        if (_selectedEndpoint is { } selected)
+        {
+            _deliveries = await LoadDeliveriesAsync(tenant.Client, selected);
+        }
+
+        // Only offer the delete confirm for an endpoint that actually exists (no confirm dialog for a stale link).
+        if (!string.IsNullOrEmpty(DeleteTarget) && _webhooks.Any(webhook => string.Equals(webhook.Name, DeleteTarget, StringComparison.Ordinal)))
+        {
+            _deleteTarget = DeleteTarget;
+        }
+    }
+
+    private static async Task<IReadOnlyList<WebhookDeliveryItem>?> LoadDeliveriesAsync(CrawldadClient client, string name)
+    {
+        try
+        {
+            return (await client.GetWebhookDeliveriesAsync(name)).Deliveries;
+        }
+        catch (CrawldadNotFoundException)
+        {
+            return null; // selected endpoint isn't registered (stale ?endpoint=)
+        }
+    }
+
+    private async Task RegisterAsync()
+    {
+        var name = Register.Name?.Trim() ?? "";
+        var url = Register.Url?.Trim() ?? "";
+        var secret = Register.Secret ?? "";
+        // The secret leaves the model the moment we've captured it into the request — it is never rendered back.
+        Register.Secret = null;
+
+        if (name.Length == 0 || url.Length == 0 || secret.Length == 0)
+        {
+            _error = "Name, payload URL, and signing secret are all required.";
+            return;
+        }
+
+        var tenant = await Tenant.RequireAsync();
+        try
+        {
+            await tenant.Client.RegisterWebhookAsync(name, new RegisterWebhookRequest(url, secret, SelectedEvents()));
+        }
+        catch (CrawldadValidationException ex)
+        {
+            // ex.Message already surfaces the first field error (e.g. "…: secret must be at least 16 characters").
+            _error = ex.Message;
+            return;
+        }
+
+        Nav.NavigateTo($"/app/webhooks?registered={Uri.EscapeDataString(name)}", forceLoad: true);
+    }
+
+    private async Task DeleteAsync()
+    {
+        var name = Removal.Name ?? "";
+        if (name.Length > 0)
+        {
+            var tenant = await Tenant.RequireAsync();
+            try
+            {
+                await tenant.Client.UnregisterWebhookAsync(name);
+            }
+            catch (CrawldadNotFoundException)
+            {
+                // Already gone — deregister is idempotent from the UI's point of view.
+            }
+        }
+
+        Nav.NavigateTo("/app/webhooks", forceLoad: true);
+    }
+
+    private IReadOnlyList<string>? SelectedEvents()
+    {
+        var events = new List<string>();
+        if (Register.Succeeded)
+        {
+            events.Add("run.succeeded");
+        }
+
+        if (Register.Failed)
+        {
+            events.Add("run.failed");
+        }
+
+        if (Register.Cancelled)
+        {
+            events.Add("run.cancelled");
+        }
+
+        return events.Count == 0 ? null : events; // null/empty subscribes to all terminal-run events
+    }
+
+    private static string EndpointLink(string name) => $"/app/webhooks?endpoint={Uri.EscapeDataString(name)}";
+
+    private static string DeleteLink(string name) => $"/app/webhooks?delete={Uri.EscapeDataString(name)}";
+
+    private static (string Css, string Label) DeliveryBadge(bool delivered, int? statusCode)
+    {
+        var label = statusCode?.ToString(CultureInfo.InvariantCulture) ?? (delivered ? "sent" : "no response");
+        return (delivered ? "bg-green-lt" : "bg-red-lt", label);
+    }
+
+    private static string FormatUtc(DateTimeOffset at) =>
+        at.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
+}

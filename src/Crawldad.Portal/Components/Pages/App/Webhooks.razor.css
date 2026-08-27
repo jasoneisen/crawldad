@@ -1,0 +1,14 @@
+/* Scoped (Blazor CSS isolation) so these names never collide with the shared app.css or sibling pages. */
+.cd-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: .8125rem;
+}
+
+.cd-truncate {
+    display: inline-block;
+    max-width: 18rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}

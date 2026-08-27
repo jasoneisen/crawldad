@@ -1,24 +1,161 @@
 @page "/app/payloads"
 @layout AppLayout
 @attribute [Authorize]
+@using Crawldad.Client
+@using Crawldad.Contracts.Drift
+@using Crawldad.Contracts.Payloads
+@using Crawldad.Portal.Tenancy
+@inject IPortalTenantContext Tenant
 
 <PageTitle>Payloads · Crawldad</PageTitle>
 
 @*
-    Empty-state placeholder. The managed-payload catalog is wired in a later task (#69) over Crawldad.Client.
+    The managed-payload registry (read-only): one row per payload — name (→ detail), pinned head revision, lifecycle
+    status, last update, and its canary drift disposition (GET /payloads/{id}/drift-status, resolved per row and degraded
+    to no badge if unavailable). Save/revise/validate is a later, form-heavy task; this view only reads.
 *@
-<div class="page-header">
-    <h1 class="page-title">Payloads</h1>
-</div>
-
-<div class="card mt-3">
-    <div class="empty">
-        <div class="empty-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="48" height="48" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /><path d="M10 13l-1 2l1 2" /><path d="M14 13l1 2l-1 2" /></svg>
+<div class="page-header d-print-none">
+    <div class="row g-2 align-items-center">
+        <div class="col">
+            @if (_notLinked is false)
+            {
+                <div class="page-pretitle text-secondary" data-testid="tenant">@_tenantId</div>
+            }
+            <h2 class="page-title">Payloads</h2>
         </div>
-        <p class="empty-title">No payloads yet</p>
-        <p class="empty-subtitle text-secondary">
-            Saved and managed extraction payloads you can launch on demand, with their revisions, will appear here.
-        </p>
     </div>
 </div>
+
+@if (_notLinked)
+{
+    <div class="card mt-3">
+        <div class="empty" data-testid="not-linked">
+            <p class="empty-title">No workspace linked</p>
+            <p class="empty-subtitle text-secondary">
+                This account isn't linked to a Crawldad workspace yet. Link one from your Account to see its payloads here.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account" class="btn btn-primary">Go to Account</a>
+            </div>
+        </div>
+    </div>
+}
+else if (_payloads.Count == 0)
+{
+    <div class="card mt-3">
+        <div class="empty" data-testid="empty">
+            <p class="empty-title">No payloads yet</p>
+            <p class="empty-subtitle text-secondary">
+                Saved and managed extraction payloads you can launch on demand, with their revisions, will appear here.
+            </p>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card mt-3">
+        <div class="card-header">
+            <h3 class="card-title">Registry</h3>
+            <div class="card-actions text-secondary" data-testid="count">@_payloads.Count</div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Head</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th>Drift</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _payloads)
+                    {
+                        <tr data-testid="payload-row">
+                            <td>
+                                <a href="@($"/app/payloads/{row.Item.PayloadId}")" class="fw-semibold" data-testid="payload-link">@row.Item.Name</a>
+                            </td>
+                            <td><span class="badge bg-secondary-lt">r@(row.Item.Revision)</span></td>
+                            <td>
+                                @{
+                                    var status = StatusBadge(row.Item.Status);
+                                }
+                                <span class="badge @status.Css">@status.Label</span>
+                            </td>
+                            <td class="text-secondary">@FormatUtc(row.Item.UpdatedAt)</td>
+                            <td>
+                                @if (row.Drift is { } state)
+                                {
+                                    var drift = DriftBadge(state);
+                                    <span class="badge @drift.Css" data-testid="drift">@drift.Label</span>
+                                }
+                                else
+                                {
+                                    <span class="text-secondary" data-testid="drift-unknown">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _notLinked;
+    private string _tenantId = "";
+    private IReadOnlyList<PayloadRow> _payloads = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var tenant = await Tenant.TryResolveAsync();
+        if (tenant is null)
+        {
+            _notLinked = true;
+            return;
+        }
+
+        _tenantId = tenant.TenantId;
+        var list = await tenant.Client.ListPayloadsAsync();
+        _payloads = await Task.WhenAll(list.Payloads.Select(item => LoadRowAsync(tenant.Client, item)));
+    }
+
+    // One registry row: the summary plus its drift disposition. The drift read is best-effort — a payload with no
+    // canary is a valid NoData state (200), and an unavailable drift read degrades to no badge rather than failing the
+    // whole listing.
+    private static async Task<PayloadRow> LoadRowAsync(CrawldadClient client, PayloadListItem item)
+    {
+        try
+        {
+            var drift = await client.GetPayloadDriftStatusAsync(item.PayloadId);
+            return new PayloadRow(item, drift.State);
+        }
+        catch (CrawldadException)
+        {
+            return new PayloadRow(item, null);
+        }
+    }
+
+    private static (string Css, string Label) StatusBadge(PayloadStatus status) => status switch
+    {
+        PayloadStatus.Archived => ("bg-secondary-lt", "archived"),
+        _ => ("bg-green-lt", "active"),
+    };
+
+    private static (string Css, string Label) DriftBadge(DriftState state) => state switch
+    {
+        DriftState.Drifted => ("bg-red-lt", "drifted"),
+        DriftState.Steady => ("bg-green-lt", "steady"),
+        DriftState.WarmingUp => ("bg-yellow-lt", "warming up"),
+        _ => ("bg-secondary-lt", "no data"),
+    };
+
+    // A compact, deterministic absolute UTC stamp (relative "N min ago" would need an injected clock and is not
+    // worth the non-determinism for a read-only list).
+    private static string FormatUtc(DateTimeOffset at) =>
+        at.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+
+    private sealed record PayloadRow(PayloadListItem Item, DriftState? Drift);
+}

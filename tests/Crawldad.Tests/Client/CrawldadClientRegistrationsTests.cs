@@ -53,6 +53,53 @@ public class CrawldadClientRegistrationsTests
     }
 
     [Fact]
+    public async Task List_webhooks_surfaces_the_enriched_last_delivery_when_present()
+    {
+        var runId = Guid.NewGuid();
+        var last = new WebhookDeliverySummary(runId, "run.failed", 2, false, 502, 87, DateTimeOffset.UnixEpoch);
+        var summary = new WebhookSummary("prod", "https://hooks.test/x", [], DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, last);
+        var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new WebhookListResponse([summary])));
+        var client = ClientTestHarness.ClientFor(handler);
+
+        var only = (await client.ListWebhooksAsync()).Webhooks.ShouldHaveSingleItem();
+
+        only.LastDelivery.ShouldNotBeNull();
+        only.LastDelivery!.StatusCode.ShouldBe(502);
+        only.LastDelivery.Delivered.ShouldBeFalse();
+        only.LastDelivery.RunId.ShouldBe(runId);
+    }
+
+    [Fact]
+    public async Task Get_webhook_deliveries_without_a_limit_omits_the_query()
+    {
+        var runId = Guid.NewGuid();
+        var item = new WebhookDeliveryItem(runId, "run.failed", 1, true, 200, 142, DateTimeOffset.UnixEpoch);
+        var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new WebhookDeliveryResponse([item])));
+        var client = ClientTestHarness.ClientFor(handler);
+
+        var only = (await client.GetWebhookDeliveriesAsync("prod")).Deliveries.ShouldHaveSingleItem();
+
+        only.RunId.ShouldBe(runId);
+        only.StatusCode.ShouldBe(200);
+        only.Delivered.ShouldBeTrue();
+        handler.Last.Method.ShouldBe(HttpMethod.Get);
+        handler.Last.Path.ShouldBe("/webhooks/prod/deliveries");
+        handler.Last.Query.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Get_webhook_deliveries_with_a_limit_sets_the_query()
+    {
+        var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new WebhookDeliveryResponse([])));
+        var client = ClientTestHarness.ClientFor(handler);
+
+        (await client.GetWebhookDeliveriesAsync("prod", limit: 5)).Deliveries.ShouldBeEmpty();
+
+        handler.Last.Path.ShouldBe("/webhooks/prod/deliveries");
+        handler.Last.Query.ShouldBe("?limit=5");
+    }
+
+    [Fact]
     public async Task Unregister_webhook_deletes_and_returns_on_204()
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Empty(HttpStatusCode.NoContent));
