@@ -16,7 +16,7 @@
     <ThresholdType>line,branch</ThresholdType>
     <ThresholdStat>total</ThresholdStat>
     <!-- Measure ONLY product assemblies (excludes the test assembly + framework). -->
-    <Include>[Crawldad.Api]*,[Crawldad.Contracts]*</Include>
+    <Include>[Crawldad.Api]*,[Crawldad.Contracts]*,[Crawldad.Client]*</Include>
     <!-- Don't count trivial auto-property accessors on DTOs/aggregates. -->
     <SkipAutoProps>true</SkipAutoProps>
     <!-- Exclude framework source-generated dispatchers (Marten/JasperFx/Wolverine evolvers) and the entry-point
@@ -45,6 +45,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Crawldad.Api\Crawldad.Api.csproj" />
     <ProjectReference Include="..\..\src\Crawldad.Contracts\Crawldad.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Crawldad.Client\Crawldad.Client.csproj" />
   </ItemGroup>
 
   <!-- The suite hosts the ASP.NET app (Alba) and tests its Data-Protection wiring, so reference the shared framework

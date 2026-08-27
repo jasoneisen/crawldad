@@ -53,6 +53,13 @@
     <PackageVersion Include="Azure.Identity" Version="1.12.0" />
   </ItemGroup>
 
+  <ItemGroup Label="Client SDK">
+    <!-- The typed client SDK (src/Crawldad.Client) is a plain class library, so it references the HTTP factory
+         package explicitly (the API host gets it from the ASP.NET shared framework). Pinned to the .NET 10 wave that
+         matches the rest of the solution; its Microsoft.Extensions.* transitive closure is auto-pinned above. -->
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.0" />
+  </ItemGroup>
+
   <ItemGroup Label="Validation">
     <!-- Payload validation-at-save: the JSON Schema (schema/crawldad-1.schema.json) is enforced by
          JsonSchema.Net — the de-facto System.Text.Json-native JSON Schema engine. Pinned to 8.0.0, the last
