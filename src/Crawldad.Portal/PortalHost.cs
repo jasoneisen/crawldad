@@ -23,6 +23,10 @@ public static class PortalHost
             // Email is the account identity → unique by construction, and case-insensitive because we always
             // store it lower-invariant.
             options.Schema.For<PortalUser>().Identity(u => u.Email);
+
+            // Optimistic concurrency on the challenge: parallel verify attempts serialize on the document version,
+            // so the per-challenge attempt cap can't be beaten by racing guesses (see PortalAuthService.VerifyCodeAsync).
+            options.Schema.For<OtpChallenge>().UseOptimisticConcurrency(true);
         });
 
         // Dev convenience only: diff/apply the schema on boot. Prod/CI would apply it out-of-band.
@@ -57,7 +61,10 @@ public static class PortalHost
             });
         builder.Services.AddAuthorization();
 
-        // Blazor Web App — Interactive Server render mode ONLY (no WebAssembly).
+        // Blazor Web App — Interactive Server render mode ONLY (no WebAssembly). Note: every page in this skeleton
+        // is static SSR (no @rendermode), which is what lets the login form handler call HttpContext.SignInAsync
+        // to issue the cookie. The first page to opt into @rendermode InteractiveServer runs over a circuit with a
+        // null cascaded HttpContext, so cookie issuance must stay on this static-SSR POST, never move into it.
         builder.Services.AddRazorComponents()
             .AddInteractiveServerComponents();
 

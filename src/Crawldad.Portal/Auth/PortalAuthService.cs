@@ -1,3 +1,4 @@
+using JasperFx;
 using Marten;
 
 namespace Crawldad.Portal.Auth;
@@ -62,11 +63,12 @@ internal sealed class PortalAuthService(
             CreatedAt = now,
             ExpiresAt = now + CodeLifetime,
         });
-        await session.SaveChangesAsync(cancellationToken);
 
-        // A challenge is created and "sent" for EVERY address, whether or not a PortalUser exists — the observable
-        // behaviour is identical, so an attacker cannot tell registered addresses from unregistered ones.
+        // Send BEFORE persisting: a fail-closed sender (non-dev, unconfigured) throws here and leaves no orphan
+        // challenge row behind. A challenge is created and "sent" for EVERY address, whether or not a PortalUser
+        // exists — identical observable behaviour, so registered addresses can't be enumerated.
         await emailSender.SendOtpCodeAsync(normalized, code, cancellationToken);
+        await session.SaveChangesAsync(cancellationToken);
         return RequestCodeOutcome.Sent;
     }
 
@@ -74,6 +76,26 @@ internal sealed class PortalAuthService(
     {
         var normalized = NormalizeEmail(email);
         var entered = NormalizeCode(code);
+
+        // OtpChallenge is stored with optimistic concurrency, so a verify attempt whose increment loses a race
+        // throws ConcurrencyException instead of silently last-write-wins. Retry against the fresh version: the
+        // attempt cap is re-checked each pass, so parallel guesses can never exceed it. This terminates — once the
+        // cap is reached the reject path saves nothing and cannot conflict.
+        while (true)
+        {
+            try
+            {
+                return await VerifyOnceAsync(normalized, entered, cancellationToken);
+            }
+            catch (ConcurrencyException)
+            {
+                // Lost the race for this challenge's version; reload and re-evaluate.
+            }
+        }
+    }
+
+    private async Task<VerifyResult> VerifyOnceAsync(string normalized, string entered, CancellationToken cancellationToken)
+    {
         var now = clock.GetUtcNow();
         await using var session = store.LightweightSession();
 
@@ -98,24 +120,36 @@ internal sealed class PortalAuthService(
         }
 
         challenge.AttemptCount++;
-        if (!OtpHasher.Verify(entered, challenge.Salt, challenge.CodeHash))
+        var matched = OtpHasher.Verify(entered, challenge.Salt, challenge.CodeHash);
+
+        PortalUser? user = null;
+        if (matched)
         {
-            session.Store(challenge);
-            await session.SaveChangesAsync(cancellationToken);
-            return VerifyResult.Fail(VerifyOutcome.InvalidCode, normalized);
+            challenge.Consumed = true;
+            user = await session.LoadAsync<PortalUser>(normalized, cancellationToken)
+                ?? new PortalUser { Email = normalized, CreatedAt = now };
+            user.LastLoginAt = now;
+            session.Store(user);
         }
 
-        challenge.Consumed = true;
         session.Store(challenge);
 
-        var user = await session.LoadAsync<PortalUser>(normalized, cancellationToken)
-            ?? new PortalUser { Email = normalized, CreatedAt = now };
-        user.LastLoginAt = now;
-        session.Store(user);
+        // Test seam (null in production): lets a test run between the load above and this save to force a real
+        // ConcurrencyException, so the retry path in VerifyCodeAsync is covered deterministically.
+        if (ConcurrencyProbe is not null)
+        {
+            await ConcurrencyProbe(cancellationToken);
+        }
+
         await session.SaveChangesAsync(cancellationToken);
 
-        return new VerifyResult(VerifyOutcome.Success, normalized, user.DisplayName);
+        return matched
+            ? new VerifyResult(VerifyOutcome.Success, normalized, user!.DisplayName)
+            : VerifyResult.Fail(VerifyOutcome.InvalidCode, normalized);
     }
+
+    /// <summary>Test-only seam — see <see cref="VerifyOnceAsync"/>. Null in production.</summary>
+    internal Func<CancellationToken, Task>? ConcurrencyProbe { get; set; }
 
     /// <summary>Case- and whitespace-normalize an email to its canonical stored form.</summary>
     internal static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
