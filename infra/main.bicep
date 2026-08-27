@@ -39,6 +39,9 @@ param aspNetCoreEnvironment string = 'Staging'
 @description('Container image for the app + db-apply job. Defaults to a public placeholder so the FIRST deploy can create the ACR; the workflow then builds the real image and redeploys pinned by digest.')
 param serveImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
+@description('Container image for the customer portal. Independent of serveImage (a separate Dockerfile/image); same placeholder default so the FIRST deploy can create the ACR before the real image exists.')
+param portalImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
+
 // ── Postgres ──────────────────────────────────────────────────────────────────────
 @description('PostgreSQL administrator login.')
 param pgAdminLogin string = 'crawldadadmin'
@@ -114,6 +117,7 @@ var names = {
   containerEnv: 'cae-crawldad-${envToken}'
   app: 'ca-crawldad-${envToken}'
   dbApplyJob: 'caj-crawldad-${envToken}-dbapply'
+  portalApp: 'ca-crawldad-${envToken}-portal'
 }
 
 var tags = {
@@ -215,10 +219,12 @@ module app 'modules/app.bicep' = {
     environmentName: names.containerEnv
     appName: names.app
     jobName: names.dbApplyJob
+    portalAppName: names.portalApp
     logAnalyticsName: monitoring.outputs.name
     appIdentityId: identity.outputs.id
     appIdentityClientId: identity.outputs.clientId
     image: serveImage
+    portalImage: portalImage
     acrLoginServer: registry.outputs.loginServer
     keyVaultUri: keyvault.outputs.vaultUri
     martenSecretName: keyvault.outputs.martenSecretName
@@ -248,5 +254,7 @@ output keyVaultName string = keyvault.outputs.name
 output appName string = app.outputs.appName
 output appFqdn string = app.outputs.appFqdn
 output dbApplyJobName string = app.outputs.dbApplyJobName
+output portalAppName string = app.outputs.portalAppName
+output portalAppFqdn string = app.outputs.portalAppFqdn
 output postgresFqdn string = postgres.outputs.fqdn
 output appIdentityClientId string = identity.outputs.clientId

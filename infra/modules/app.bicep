@@ -25,6 +25,9 @@ param appName string
 @description('db-apply job name (CAF: caj-crawldad-<env>-dbapply).')
 param jobName string
 
+@description('Portal app name (CAF: ca-crawldad-<env>-portal).')
+param portalAppName string
+
 @description('Log Analytics workspace name (referenced existing for its shared key, kept out of deploy outputs).')
 param logAnalyticsName string
 
@@ -36,6 +39,9 @@ param appIdentityClientId string
 
 @description('Container image for the app + job (pinned by digest by the deploy workflow).')
 param image string
+
+@description('Container image for the portal (pinned by digest by the deploy workflow; independent of the API image).')
+param portalImage string
 
 @description('ACR login server (the app pulls from here with its identity).')
 param acrLoginServer string
@@ -236,7 +242,68 @@ resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
+// ── Portal ────────────────────────────────────────────────────────────────────────────────────────────────
+// The customer-facing Blazor SSR portal, sharing this environment, identity, and registry with the API. It is a thin
+// auth+shell host with its OWN Marten document store on the SAME Postgres, isolated in the code-configured "portal"
+// schema — so it needs only the Marten connection to boot (the identical KV secret the API uses; same server, the
+// portal picks its schema in code). It carries NO storage/tenant/DataProtection config: those are API concerns.
+//
+// Schema: the portal has no out-of-band db-apply command, and a normal start applies schema only in Development, so in
+// Staging/Production it relies on Marten's default runtime auto-create (AutoCreate.CreateOrUpdate) on first document
+// use. The anonymous marketing "/" route touches no database, so the app boots and serves before any schema exists —
+// which is what the ingress probes + the deploy smoke-test target.
+//
+// KNOWN LIMITATION (issue #119): outside Development the portal's email sender is fail-closed (UnconfiguredEmailSender),
+// so requesting a sign-in OTP surfaces a 500 until a real email provider is wired. Deploying the shell now is
+// deliberate; sign-in is not expected to work end-to-end yet.
+resource portal 'Microsoft.App/containerApps@2024-03-01' = {
+  name: portalAppName
+  location: location
+  tags: tags
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${appIdentityId}': {} } }
+  properties: {
+    managedEnvironmentId: cae.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        targetPort: 8080
+        transport: 'auto'
+        traffic: [ { weight: 100, latestRevision: true } ]
+      }
+      registries: registries
+      // The portal reuses the API's marten-connection-string KV secret verbatim (same Postgres; its "portal" schema is
+      // selected in code, not in the connection string), resolved passwordless via the app identity.
+      secrets: [
+        { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: appIdentityId }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'portal'
+          image: portalImage
+          resources: { cpu: json(cpu), memory: memory }
+          env: [
+            { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
+            { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
+          ]
+          // The portal has no /health endpoint; probe the anonymous marketing "/" (a 200 proves Kestrel + the Blazor
+          // SSR pipeline composed and started — it renders without any database access).
+          probes: [
+            { type: 'Liveness', httpGet: { path: '/', port: 8080 }, initialDelaySeconds: 10, periodSeconds: 30, failureThreshold: 3 }
+            { type: 'Readiness', httpGet: { path: '/', port: 8080 }, initialDelaySeconds: 5, periodSeconds: 10, failureThreshold: 6 }
+          ]
+        }
+      ]
+      scale: { minReplicas: minReplicas, maxReplicas: maxReplicas }
+    }
+  }
+}
+
 output environmentName string = cae.name
 output appName string = app.name
 output appFqdn string = app.properties.configuration.ingress.fqdn
 output dbApplyJobName string = dbApplyJob.name
+output portalAppName string = portal.name
+output portalAppFqdn string = portal.properties.configuration.ingress.fqdn
