@@ -5,8 +5,8 @@ using Microsoft.Playwright;
 namespace Crawldad.Tests.Unit;
 
 /// <summary>The <see cref="PlaywrightFaults"/> mapping onto the exception taxonomy, driven with synthetic
-/// exceptions so every branch (timeout, crash, non-crash passthrough, success) is covered without a real browser.
-/// A real timeout is separately exercised end-to-end through the local adapter.</summary>
+/// exceptions so every branch (timeout, crash, closed-target, non-crash passthrough, success) is covered without a
+/// real browser. A real timeout is separately exercised end-to-end through the local adapter.</summary>
 public class PlaywrightFaultsTests
 {
     [Fact]
@@ -20,6 +20,11 @@ public class PlaywrightFaultsTests
         // A crash PlaywrightException → retryable BrowserPageCrashedException (the reopen path).
         await Should.ThrowAsync<BrowserPageCrashedException>(
             () => PlaywrightFaults.RunAsync(() => throw new PlaywrightException("Page crashed")));
+
+        // A closed-target PlaywrightException (an op that starts on an already-dead page — the internal
+        // TargetClosedException's bare default message) → the same retryable BrowserPageCrashedException.
+        await Should.ThrowAsync<BrowserPageCrashedException>(
+            () => PlaywrightFaults.RunAsync(() => throw new PlaywrightException("Target page, context or browser has been closed")));
 
         // A non-crash PlaywrightException is left to propagate unchanged (a terminal engine error).
         await Should.ThrowAsync<PlaywrightException>(
@@ -36,6 +41,9 @@ public class PlaywrightFaultsTests
 
         await Should.ThrowAsync<BrowserPageCrashedException>(
             () => PlaywrightFaults.RunAsync(() => Fail<int>(new PlaywrightException("Target crashed"))));
+
+        await Should.ThrowAsync<BrowserPageCrashedException>(
+            () => PlaywrightFaults.RunAsync(() => Fail<int>(new PlaywrightException("Target page, context or browser has been closed"))));
 
         await Should.ThrowAsync<PlaywrightException>(
             () => PlaywrightFaults.RunAsync(() => Fail<int>(new PlaywrightException("net::ERR_FAILED"))));
