@@ -14,6 +14,10 @@ param aspNetCoreEnvironment = 'Staging'
 // the public placeholder so the ACR can be created before the real image exists.
 param serveImage = readEnvironmentVariable('SERVE_IMAGE', 'mcr.microsoft.com/k8se/quickstart:latest')
 
+// The portal image, built + pinned by digest in the SAME deploy workflow (SERVE_PORTAL_IMAGE). Same placeholder
+// fallback so the first-run infra bootstrap can create the ACR before the real portal image exists.
+param portalImage = readEnvironmentVariable('SERVE_PORTAL_IMAGE', 'mcr.microsoft.com/k8se/quickstart:latest')
+
 // Postgres (Burstable B1ms, 32 GiB, PG16 — the POC floor).
 param pgAdminLogin = 'crawldadadmin'
 param pgDatabaseName = 'crawldad'

@@ -11,8 +11,9 @@
 #   env secrets      PG_ADMIN_PASSWORD · STAGING_TENANT_API_KEY   (generated, never committed)
 #
 # Flow: pre-flight secrets → OIDC login → ensure ACR (first-run infra bootstrap with a placeholder image if none) →
-# build the image to ACR → what-if (validated; output WITHHELD — it contains KV secret values) → deploy pinned by
-# digest → run the db-apply job and wait for Succeeded → smoke-test GET /health (fails the run if not 200).
+# build the API + portal images to ACR → what-if (validated; output WITHHELD — it contains KV secret values) → deploy
+# pinned by digest (both container apps) → run the db-apply job and wait for Succeeded → smoke-test GET /health (API)
+# and GET / (portal) (fails the run if either is not 200).
 #
 # The db-apply-BEFORE-health ordering is load-bearing: with scale-to-zero the app first boots when the health gate
 # hits it, so the Marten + Wolverine schema is already applied by then (a normal server start never applies schema in
@@ -137,13 +138,23 @@ jobs:
 
       # Build the app image server-side in ACR (no local docker), stamping this run's SHA for traceability. Runs on
       # the ARM token cached at login, so it tolerates a long first-run infra deploy before it.
-      - name: Build image to ACR
+      - name: Build API image to ACR
         env:
           ACR: ${{ steps.acr.outputs.name }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_SHA::7}"
           az acr build -r "$ACR" -t "crawldad:$TAG" --build-arg SOURCE_REVISION_ID="$GITHUB_SHA" -f Dockerfile .
+
+      # Build the portal image the same way, into the same ACR under a distinct repository (crawldad-portal). It is a
+      # separate Dockerfile/image from the API, deployed to its own container app alongside it.
+      - name: Build Portal image to ACR
+        env:
+          ACR: ${{ steps.acr.outputs.name }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_SHA::7}"
+          az acr build -r "$ACR" -t "crawldad-portal:$TAG" --build-arg SOURCE_REVISION_ID="$GITHUB_SHA" -f Dockerfile.portal .
 
       # Re-login: the GitHub OIDC client assertion is valid only ~5 minutes, and the first-run infra deploy + image
       # build can outlive it. Digest resolution below needs a NEW AAD token (ACR data plane), which redeems the
@@ -155,9 +166,9 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ steps.cfg.outputs.subscription_id }}
 
-      # Resolve the immutable digest to pin the deployment. Publish it to $GITHUB_ENV so the .bicepparam
-      # (readEnvironmentVariable SERVE_IMAGE) picks it up in the what-if + deploy steps below.
-      - name: Resolve image digest
+      # Resolve the immutable digests to pin the deployment. Publish them to $GITHUB_ENV so the .bicepparam
+      # (readEnvironmentVariable SERVE_IMAGE / SERVE_PORTAL_IMAGE) picks them up in the what-if + deploy steps below.
+      - name: Resolve image digests (API + Portal)
         env:
           ACR: ${{ steps.acr.outputs.name }}
         run: |
@@ -167,6 +178,9 @@ jobs:
           DIGEST=$(az acr repository show -n "$ACR" --image "crawldad:$TAG" --query digest -o tsv)
           echo "SERVE_IMAGE=$SERVER/crawldad@$DIGEST" >> "$GITHUB_ENV"
           echo "built $SERVER/crawldad@$DIGEST"
+          PORTAL_DIGEST=$(az acr repository show -n "$ACR" --image "crawldad-portal:$TAG" --query digest -o tsv)
+          echo "SERVE_PORTAL_IMAGE=$SERVER/crawldad-portal@$PORTAL_DIGEST" >> "$GITHUB_ENV"
+          echo "built $SERVER/crawldad-portal@$PORTAL_DIGEST"
 
       # what-if validates the template + the digest-pinned deploy. Its output is a full resource diff that INCLUDES
       # the KV secret VALUES being written (PG password inside the marten string, storage key inside the blob string,
@@ -198,9 +212,11 @@ jobs:
           az deployment sub create -l "$REGION" -n "$DEPLOY_NAME" -f infra/main.bicep -p "$PARAM_FILE" -o none
           FQDN=$(az deployment sub show -n "$DEPLOY_NAME" --query "properties.outputs.appFqdn.value" -o tsv)
           JOB=$(az deployment sub show -n "$DEPLOY_NAME" --query "properties.outputs.dbApplyJobName.value" -o tsv)
+          PORTAL_FQDN=$(az deployment sub show -n "$DEPLOY_NAME" --query "properties.outputs.portalAppFqdn.value" -o tsv)
           echo "app_fqdn=$FQDN" >> "$GITHUB_OUTPUT"
           echo "dbapply_job=$JOB" >> "$GITHUB_OUTPUT"
-          echo "deploy complete — appFqdn=$FQDN, dbApplyJob=$JOB"
+          echo "portal_fqdn=$PORTAL_FQDN" >> "$GITHUB_OUTPUT"
+          echo "deploy complete — appFqdn=$FQDN, dbApplyJob=$JOB, portalFqdn=$PORTAL_FQDN"
 
       # Apply the Marten + Wolverine schema out-of-band by running the db-apply job (it reaches Postgres over the
       # "allow Azure services" firewall rule — the runner itself cannot). Runs BEFORE the health gate so the schema is
@@ -253,4 +269,30 @@ jobs:
             sleep 10
           done
           echo "::error::Health gate failed after ~5 minutes: https://$APP_FQDN/health never returned HTTP 200."
+          exit 1
+
+      # Portal smoke test: the portal has no /health endpoint, so GET the anonymous marketing "/" and fail the run if
+      # it is not 200. A 200 proves Kestrel + the Blazor SSR pipeline composed and started (the page renders with no
+      # database access). NOTE: this only proves the shell boots — portal sign-in is a KNOWN-BROKEN path until an email
+      # provider is wired (the fail-closed sender 500s on OTP send; issue #119), which this gate deliberately does NOT
+      # exercise. The retry window absorbs the scale-from-zero cold start (min-replicas 0).
+      - name: Smoke-test Portal / (must return 200)
+        env:
+          PORTAL_FQDN: ${{ steps.deploy.outputs.portal_fqdn }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PORTAL_FQDN:-}" ]; then
+            echo "::error::deploy produced no portalAppFqdn — cannot smoke-test the portal."; exit 1
+          fi
+          echo "Boot-gating https://$PORTAL_FQDN/"
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "https://$PORTAL_FQDN/" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Portal up: HTTP 200 after $i attempt(s)."
+              exit 0
+            fi
+            echo "Attempt $i/30: HTTP $code (scale-from-zero cold start can take ~20–40s)"
+            sleep 10
+          done
+          echo "::error::Portal boot gate failed after ~5 minutes: https://$PORTAL_FQDN/ never returned HTTP 200."
           exit 1

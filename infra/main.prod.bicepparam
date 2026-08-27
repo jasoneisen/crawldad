@@ -16,6 +16,7 @@ param envToken = 'prod'
 param aspNetCoreEnvironment = 'Production'
 
 param serveImage = readEnvironmentVariable('SERVE_IMAGE', 'mcr.microsoft.com/k8se/quickstart:latest')
+param portalImage = readEnvironmentVariable('SERVE_PORTAL_IMAGE', 'mcr.microsoft.com/k8se/quickstart:latest')
 
 param pgAdminLogin = 'crawldadadmin'
 param pgDatabaseName = 'crawldad'

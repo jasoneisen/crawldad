@@ -32,5 +32,6 @@ eng/
 tests/
 **/*.md
 Dockerfile
+Dockerfile.portal
 .dockerignore
 .gitignore
