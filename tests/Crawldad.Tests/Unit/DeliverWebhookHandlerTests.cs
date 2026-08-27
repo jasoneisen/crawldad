@@ -160,8 +160,6 @@ public class DeliverWebhookHandlerTests
 
         public Task<WebhookSummary> RegisterAsync(string tenant, string name, string url, string secret, IReadOnlyList<string> events, CancellationToken ct) => throw new NotSupportedException();
 
-        public Task<IReadOnlyList<WebhookSummary>> ListAsync(string tenant, CancellationToken ct) => throw new NotSupportedException();
-
         public Task<IReadOnlyList<WebhookSummary>> ListAsync(IQuerySession session, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<bool> DeleteAsync(string tenant, string name, CancellationToken ct) => throw new NotSupportedException();
