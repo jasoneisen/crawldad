@@ -1,5 +1,7 @@
 using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
+using Crawldad.Portal.Infrastructure.Security;
+using Microsoft.Extensions.Options;
 
 namespace Crawldad.Portal.Tenancy;
 
@@ -48,11 +50,14 @@ internal sealed class WorkspaceLinker : IWorkspaceLinker
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IPortalTenantLinkStore _links;
+    private readonly bool _consoleMode;
 
-    public WorkspaceLinker(IHttpClientFactory httpClientFactory, IPortalTenantLinkStore links)
+    public WorkspaceLinker(IHttpClientFactory httpClientFactory, IPortalTenantLinkStore links, IOptions<PortalConsoleAuthOptions> consoleAuth)
     {
+        ArgumentNullException.ThrowIfNull(consoleAuth);
         _httpClientFactory = httpClientFactory;
         _links = links;
+        _consoleMode = consoleAuth.Value.Enabled;
     }
 
     public async Task<WorkspaceLinkResult> LinkAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default)
@@ -88,24 +93,43 @@ internal sealed class WorkspaceLinker : IWorkspaceLinker
                 $"That key is valid, but it authenticates workspace ‘{profile.TenantId}’ — not ‘{entered}’. Check the workspace ID.");
         }
 
-        // Validated: record the account's OWNER membership (the console authorization authority) using the same proven
-        // key, so a later console read for this email resolves to the tenant. Best-effort — an env-configured tenant has no
-        // membership surface (400 self_service_unavailable) and a transient API fault must not fail linking; the stored key
-        // (below) still authenticates every call until the console path lands.
-        try
+        // Validated: record the account's OWNER membership (the console authorization authority) using the same proven key,
+        // so a later console read/write for this email resolves to the tenant. In stored-key mode this is additive best-effort;
+        // in console-mode it is what the discard below depends on (it becomes the only authenticator), so its success gates the
+        // discard. An env-configured tenant has no membership surface (400) and a transient fault both degrade to keeping the key.
+        var membershipRecorded = await TryRecordMembershipAsync(probe, email, cancellationToken);
+
+        if (_consoleMode && membershipRecorded)
         {
-            await probe.RecordOwnerMembershipAsync(email, cancellationToken);
+            // Verify-then-discard (issue #119 PR5): the membership is recorded, so the console credential authenticates —
+            // store the AUTHORITATIVE email→tenant mapping WITHOUT the key. The stored key is now unnecessary.
+            await _links.UpsertKeylessAsync(email, profile.TenantId, cancellationToken);
         }
-        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        else
         {
-            // Membership is additive to the key link; a failure here degrades to the stored-key path, never blocks the link.
+            // Stored-key mode (byte-identical to today), OR console-mode where membership recording failed — persist the link
+            // WITH the encrypted key so the user is never locked out: it authenticates (unconfigured) or is the transition
+            // read-fallback (console-mode). The store protects the key at rest; the tenant id is the authoritative one.
+            await _links.UpsertAsync(email, profile.TenantId, apiKey, cancellationToken);
         }
 
-        // Persist the link with the AUTHORITATIVE tenant id from the key (never the raw entered casing); the store protects
-        // the key at rest. The key is retained even in console-mode — writes still ride it until PR5.
-        await _links.UpsertAsync(email, profile.TenantId, apiKey, cancellationToken);
         return new WorkspaceLinkResult(
             WorkspaceLinkOutcome.Linked,
             $"Workspace ‘{profile.TenantId}’ is linked.");
+    }
+
+    // Records the signed-in account's Owner membership best-effort, returning whether it was recorded. A failure (an env
+    // tenant's 400, or a transient API fault) is swallowed — the caller keeps the stored key so the account is never locked out.
+    private static async Task<bool> TryRecordMembershipAsync(CrawldadClient probe, string email, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await probe.RecordOwnerMembershipAsync(email, cancellationToken);
+            return true;
+        }
+        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        {
+            return false; // membership surface unavailable / transient — degrade to keeping the stored key
+        }
     }
 }

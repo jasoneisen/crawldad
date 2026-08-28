@@ -12,11 +12,12 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>The binding, reviewable definition of the console READ scope (issue #119 PR4). The intended set is an
-/// INDEPENDENT hand-list here; the test derives the LIVE admitting-set from endpoint authorization metadata and asserts
-/// they are exactly equal — so a route added to (or dropped from) <see cref="ConsoleReadEndpoints"/> without updating this
-/// list fails CI as scope creep. It then proves the behaviour both ways: every non-console route rejects a valid console
-/// token (<c>401</c>), and every console route accepts it once a membership exists (never <c>401</c>/<c>403</c>).</summary>
+/// <summary>The binding, reviewable definition of the console scope — reads (issue #119 PR4) AND writes (PR5), pinned as two
+/// INDEPENDENT hand-lists here; the test derives the LIVE admitting-set from endpoint authorization metadata and asserts it
+/// equals their union — so a route added to (or dropped from) <see cref="ConsoleReadEndpoints"/> / <see cref="ConsoleWriteEndpoints"/>
+/// without updating these lists fails CI as scope creep. It then proves the behaviour both ways: every non-console route
+/// rejects a valid console token (<c>401</c>), and every console route (read or write) accepts it once a membership exists
+/// (never <c>401</c>/<c>403</c>).</summary>
 [Collection(ConsoleAuthCollection.Name)]
 public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IAsyncLifetime
 {
@@ -46,6 +47,27 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
         "GET /billing/config",
         "GET /tenant/keys",
     };
+
+    // The intended console-WRITE scope (PR5) — the writes the portal performs, and only those. Kept independent of
+    // ConsoleWriteEndpoints.Routes on purpose (a separate list from the reads above), so this stays a real tripwire.
+    private static readonly HashSet<string> _intendedConsoleWrites = new(StringComparer.Ordinal)
+    {
+        "POST /runs/{id}/replay",
+        "PUT /webhooks/{name}",
+        "DELETE /webhooks/{name}",
+        "POST /payloads",
+        "POST /payloads/{id}/revise",
+        "POST /billing/checkout-session",
+        "POST /billing/portal-session",
+        "POST /tenant/keys",
+        "POST /tenant/keys/{id}/rotate",
+        "DELETE /tenant/keys/{id}",
+        "POST /tenant/memberships",
+    };
+
+    // The full console scope: reads + writes. A route accepts a console principal iff it is in one of these lists.
+    private static readonly HashSet<string> _intendedConsoleScope =
+        new(_intendedConsoleReads.Concat(_intendedConsoleWrites), StringComparer.Ordinal);
 
     // Anonymous, tenant-independent routes (identical to AuthenticationTests) — never console-reachable, never asserted.
     private static readonly HashSet<string> _anonymousRoutes = new(StringComparer.Ordinal)
@@ -84,7 +106,7 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
             }
         }
 
-        admitting.ShouldBe(_intendedConsoleReads, ignoreOrder: true);
+        admitting.ShouldBe(_intendedConsoleScope, ignoreOrder: true); // exactly the reads + writes, nothing more
     }
 
     [Fact]
@@ -95,9 +117,9 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
         {
             var route = endpoint.RoutePattern.RawText!;
             var path = BuildProbePath(endpoint.RoutePattern);
-            if (_anonymousRoutes.Contains(path) || _intendedConsoleReads.Contains($"{Method(endpoint)} {route}"))
+            if (_anonymousRoutes.Contains(path) || _intendedConsoleScope.Contains($"{Method(endpoint)} {route}"))
             {
-                continue; // anonymous, or a curated console-read route (asserted positively below)
+                continue; // anonymous, or a curated console read/write route (asserted positively below)
             }
 
             var status = await ConsoleTokenStatusAsync(Method(endpoint), path);
@@ -116,13 +138,14 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
         var offenders = new List<string>();
         foreach (var endpoint in RoutableEndpoints())
         {
-            if (!_intendedConsoleReads.Contains($"{Method(endpoint)} {endpoint.RoutePattern.RawText}"))
+            if (!_intendedConsoleScope.Contains($"{Method(endpoint)} {endpoint.RoutePattern.RawText}"))
             {
                 continue;
             }
 
-            // A valid console token + the seeded (email, workspace) membership authorizes the read: the resource may be a
-            // 200 or a 404 (a random path-param id), but authentication/authorization has passed — never 401/403.
+            // A valid console token + the seeded (email, workspace) membership authorizes the request (read OR write): the
+            // resource may be a 200/201/204 or a 4xx/503 (a random id, an empty body, or billing unconfigured), but
+            // authentication/authorization has passed — never 401/403.
             var status = await ConsoleTokenStatusAsync(Method(endpoint), BuildProbePath(endpoint.RoutePattern));
             if (status is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden)
             {

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Alba;
 using Crawldad.Api.Features.Runs;
+using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Support;
 using Marten;
@@ -71,7 +72,7 @@ public sealed class RegistryTenantReadTests(ManagementFixture fixture) : IAsyncL
         // exact probe that 500'd for a registry tenant before this fix — then upserts only on a valid, matching key. A
         // freshly provisioned registry tenant must now link.
         var store = new RecordingLinkStore();
-        var linker = new WorkspaceLinker(new TestServerHttpClientFactory(Host), store);
+        var linker = new WorkspaceLinker(new TestServerHttpClientFactory(Host), store, Options.Create(new PortalConsoleAuthOptions()));
 
         var result = await linker.LinkAsync("owner@example.com", id, raw);
 
@@ -137,5 +138,8 @@ public sealed class RegistryTenantReadTests(ManagementFixture fixture) : IAsyncL
             Upserts.Add((email, tenantId, apiKey));
             return Task.FromResult(new PortalTenantLink { Email = email, TenantId = tenantId });
         }
+
+        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException(); // this test drives the stored-key (unconfigured) linker path
     }
 }

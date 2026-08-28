@@ -58,6 +58,7 @@ public class DevTenantLinkSeederTests(PortalFixture fixture)
         var link = await store.GetAsync(email);
         link.ShouldNotBeNull();
         link.TenantId.ShouldBe("seed-tenant");
+        link.ProtectedApiKey.ShouldNotBeNull(); // the dev seeder always seeds a stored-key link
         var protector = PortalTenancy.ApiKeyProtector(fixture.App.Services.GetRequiredService<IDataProtectionProvider>());
         protector.Unprotect(link.ProtectedApiKey).ShouldBe("sk_SEED_LEAKME");
     }
@@ -74,5 +75,8 @@ public class DevTenantLinkSeederTests(PortalFixture fixture)
             Upserts.Add((email, tenantId, apiKey));
             return Task.FromResult(new PortalTenantLink { Email = email, TenantId = tenantId, ProtectedApiKey = "cipher" });
         }
+
+        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException(); // the dev seeder always seeds a stored-key link
     }
 }

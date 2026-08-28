@@ -21,4 +21,10 @@ public sealed class PortalConsoleAuthOptions
     /// posture; neither is disabled; exactly one is a misconfiguration the validator rejects. The module reads the section
     /// directly at registration time (IOptions is not yet available) to decide whether to wire console-mode.</summary>
     public string Audience { get; init; } = "";
+
+    /// <summary>Whether console-mode is configured — both knobs set. When true the portal calls the API as its first-party
+    /// console identity (reads console-first with a stored-key fallback; writes console-only) and the attach flow records a
+    /// membership and discards the key (issue #119 PR5); when false the portal is byte-for-byte on the stored-key path. Mirrors
+    /// the API's <c>ConsoleAuthOptions.Enabled</c> and the module's own registration-time both-or-neither guard.</summary>
+    public bool Enabled => !string.IsNullOrWhiteSpace(TenantId) && !string.IsNullOrWhiteSpace(Audience);
 }

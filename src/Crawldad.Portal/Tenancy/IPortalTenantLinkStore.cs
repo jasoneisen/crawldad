@@ -18,6 +18,14 @@ public interface IPortalTenantLinkStore
     /// <paramref name="apiKey"/> at rest. A replace preserves the original <see cref="PortalTenantLink.CreatedAt"/>
     /// and advances <see cref="PortalTenantLink.UpdatedAt"/>. Returns the stored document (ciphertext).</summary>
     Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates or replaces the link for <paramref name="email"/> (normalized) as a <b>keyless</b> console-mode link
+    /// (issue #119 PR5): the email→tenant mapping with <see cref="PortalTenantLink.ProtectedApiKey"/> = <see langword="null"/>,
+    /// so no key is stored. Written by the attach flow when console-mode is configured, after it has verified the key and
+    /// recorded the membership — the console credential authenticates from here on. A replace preserves the original
+    /// <see cref="PortalTenantLink.CreatedAt"/> and advances <see cref="PortalTenantLink.UpdatedAt"/>; a replace of a
+    /// previously stored-key link <b>clears</b> the ciphertext. Returns the stored document.</summary>
+    Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>The Marten-backed <see cref="IPortalTenantLinkStore"/>. Opens its own session per call over the shared
@@ -44,7 +52,15 @@ internal sealed class MartenPortalTenantLinkStore : IPortalTenantLinkStore
         return await session.LoadAsync<PortalTenantLink>(id, cancellationToken);
     }
 
-    public async Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default)
+    public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default) =>
+        UpsertCoreAsync(email, tenantId, _protector.Protect(apiKey), cancellationToken);
+
+    public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
+        UpsertCoreAsync(email, tenantId, protectedApiKey: null, cancellationToken);
+
+    // The shared upsert: create-or-replace by normalized email, preserving CreatedAt and advancing UpdatedAt. A null
+    // protectedApiKey stores a keyless (console-mode) link and clears any previously stored ciphertext.
+    private async Task<PortalTenantLink> UpsertCoreAsync(string email, string tenantId, string? protectedApiKey, CancellationToken cancellationToken)
     {
         var id = PortalAuthService.NormalizeEmail(email);
         await using var session = _store.LightweightSession();
@@ -54,7 +70,7 @@ internal sealed class MartenPortalTenantLinkStore : IPortalTenantLinkStore
         {
             Email = id,
             TenantId = tenantId,
-            ProtectedApiKey = _protector.Protect(apiKey),
+            ProtectedApiKey = protectedApiKey,
             CreatedAt = existing?.CreatedAt ?? now,
             UpdatedAt = now,
         };

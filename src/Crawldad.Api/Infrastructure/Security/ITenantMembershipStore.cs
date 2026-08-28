@@ -43,6 +43,11 @@ public interface ITenantMembershipStore
     /// <summary>Every active membership for <paramref name="email"/> across tenants (the user's workspaces), newest first.</summary>
     Task<IReadOnlyList<TenantMembership>> ListForEmailAsync(string email, CancellationToken ct);
 
+    /// <summary>True when the tenant has at least one active <see cref="MembershipRole.Owner"/> membership — the human
+    /// OTP→console recovery path that makes revoking the tenant's last API key safe (issue #119 PR5). Owners are counted in
+    /// memory so the check never depends on enum-in-LINQ translation.</summary>
+    Task<bool> HasActiveOwnerAsync(string tenantId, CancellationToken ct);
+
     /// <summary>Revokes the tenant's active membership <paramref name="membershipId"/>, stamping <paramref name="now"/> —
     /// unless it is the tenant's last active Owner, which is refused (<see cref="MembershipRevokeOutcome.LastOwner"/>) so the
     /// workspace is never orphaned. Idempotent: a repeat revoke is <see cref="MembershipRevokeOutcome.NotFound"/>.</summary>
@@ -108,9 +113,25 @@ internal sealed class MartenTenantMembershipStore(IDocumentStore store) : ITenan
             .ToListAsync(ct);
     }
 
+    public async Task<bool> HasActiveOwnerAsync(string tenantId, CancellationToken ct)
+    {
+        await using var session = store.QuerySession();
+        var active = await session.Query<TenantMembership>()
+            .Where(m => m.TenantId == tenantId && m.RevokedAt == null)
+            .ToListAsync(ct);
+        return active.Any(m => m.Role == MembershipRole.Owner); // count in memory — never depend on enum-in-LINQ translation
+    }
+
     public async Task<MembershipRevokeOutcome> RevokeAsync(string tenantId, Guid membershipId, DateTimeOffset now, CancellationToken ct)
     {
         await using var session = store.LightweightSession();
+
+        // Serialize this tenant's membership revokes so the last-Owner guard is atomic (issue #119 PR5): a concurrent revoke
+        // of a sibling Owner queues on the lock and re-reads the owner count only after this one commits — two racing revokes
+        // can never both pass the guard and orphan the workspace. TenantMembership also carries optimistic concurrency, so a
+        // stale write to the SAME membership loses; the lock covers the cross-row count the version cannot.
+        await TenantWriteLock.AcquireAsync(session, TenantWriteLock.MembershipRevocationClass, tenantId, ct);
+
         var membership = await session.LoadAsync<TenantMembership>(membershipId, ct);
         if (membership is null || !string.Equals(membership.TenantId, tenantId, StringComparison.Ordinal) || membership.RevokedAt is not null)
         {

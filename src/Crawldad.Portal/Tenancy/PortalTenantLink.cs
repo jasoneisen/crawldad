@@ -19,9 +19,12 @@ public sealed class PortalTenantLink
     public string TenantId { get; set; } = "";
 
     /// <summary>The tenant's Crawldad API key as Data-Protection ciphertext (purpose
-    /// <see cref="PortalTenancy.ApiKeyProtectorPurpose"/>). Never the raw key; decrypted only per request by
-    /// <see cref="IPortalTenantContext"/> to authenticate the tenant's <c>CrawldadClient</c>.</summary>
-    public string ProtectedApiKey { get; set; } = "";
+    /// <see cref="PortalTenancy.ApiKeyProtectorPurpose"/>), or <see langword="null"/> for a <b>console-mode</b> link (issue
+    /// #119 PR5): when console-mode is configured the attach flow records a membership and <b>discards</b> the key, so the
+    /// link is an email→tenant mapping the console credential authenticates — no stored key. In the stored-key (unconfigured)
+    /// mode this is always set. Never the raw key; decrypted only per request by <see cref="IPortalTenantContext"/> to build
+    /// the tenant's key <c>CrawldadClient</c> (or, in console-mode, as the transition read-fallback while a stored key remains).</summary>
+    public string? ProtectedApiKey { get; set; }
 
     /// <summary>When the link was first created (preserved across updates).</summary>
     public DateTimeOffset CreatedAt { get; set; }

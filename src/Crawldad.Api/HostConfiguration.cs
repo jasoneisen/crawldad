@@ -127,6 +127,15 @@ public static class HostConfiguration
         builder.Services.AddOptions<ManagementOptions>().Bind(builder.Configuration.GetSection(ManagementOptions.Section));
         builder.Services.AddSingleton<ITenantRegistryStore, MartenTenantRegistryStore>();
         builder.Services.AddSingleton<ITenantMembershipStore, MartenTenantMembershipStore>(); // console authorization authority (PR4)
+        builder.Services.AddSingleton<IConsoleAuditStore, MartenConsoleAuditStore>();          // console-write audit trail (PR5)
+
+        // The console-write guard's knobs + the per-(email,tenant) sliding-window limiter (issue #119 PR5). Always registered
+        // (generous defaults; the section may be omitted); inert until a console-authenticated write actually occurs, which
+        // only happens when the console scheme is configured. A non-positive limit/window fails the boot.
+        builder.Services.AddOptions<ConsoleWriteOptions>().Bind(builder.Configuration.GetSection(ConsoleWriteOptions.Section)).ValidateOnStart();
+        builder.Services.AddSingleton<IValidateOptions<ConsoleWriteOptions>, ConsoleWriteOptionsValidator>();
+        builder.Services.AddSingleton<ConsoleWriteRateLimiter>();
+
         builder.Services.AddSingleton<TenantDirectory>();
         builder.Services.AddSingleton<ITenantAuthenticator>(static sp => sp.GetRequiredService<TenantDirectory>());
         builder.Services.AddSingleton<ITenantConcurrencyOverrides>(static sp => sp.GetRequiredService<TenantDirectory>());
@@ -187,6 +196,11 @@ public static class HostConfiguration
         app.UseAuthentication();
         app.UseAuthorization();
 
+        // The console-write guard (issue #119 PR5): after authorization (so it only sees requests that passed ConsoleOrKey),
+        // before the endpoint — it rate-limits + audits console-authenticated writes and passes everything else through. Inert
+        // on a host where the console scheme is unconfigured (no request can be console-authenticated).
+        app.UseMiddleware<ConsoleWriteAuditMiddleware>();
+
         // The JSON API. Validation failures become 400 ProblemDetails via the FluentValidation middleware.
         app.MapWolverineEndpoints(options =>
         {
@@ -197,14 +211,16 @@ public static class HostConfiguration
             // balancer); the endpoint-enumeration test asserts every other route rejects an unauthenticated request.
             options.RequireAuthorizeOnAll();
 
-            // The enumerated console-read scope (issue #119 PR4): exactly the ConsoleReadEndpoints GET routes ALSO accept a
-            // console principal, via the ConsoleOrKey policy layered on top of the blanket gate above. Every other endpoint
-            // keeps the default ApiKey-only policy. When Crawldad:ConsoleAuth is unconfigured the ConsoleOrKey policy is
-            // ApiKey-only, so a console-read endpoint is byte-for-byte as it is today. The enumeration test pins the live set.
+            // The enumerated console scope: exactly the ConsoleReadEndpoints GET routes (issue #119 PR4) AND the
+            // ConsoleWriteEndpoints (method, route) writes (PR5) ALSO accept a console principal, via the ConsoleOrKey policy
+            // layered on top of the blanket gate above. Every other endpoint keeps the default ApiKey-only policy. When
+            // Crawldad:ConsoleAuth is unconfigured the ConsoleOrKey policy is ApiKey-only, so these endpoints are byte-for-byte
+            // as they are today. The enumeration test pins the live set (reads + writes, as separate lists).
             options.ConfigureEndpoints(chain =>
             {
-                // Every mapped HTTP chain carries a RoutePattern here; ConsoleReadEndpoints.Includes handles a null RawText.
-                if (ConsoleReadEndpoints.Includes(chain.HttpMethods, chain.RoutePattern!.RawText))
+                // Every mapped HTTP chain carries a RoutePattern here; the Includes checks handle a null RawText.
+                if (ConsoleReadEndpoints.Includes(chain.HttpMethods, chain.RoutePattern!.RawText)
+                    || ConsoleWriteEndpoints.Includes(chain.HttpMethods, chain.RoutePattern!.RawText))
                 {
                     chain.RequireAuthorization(ConsoleAuthModule.ConsoleOrKeyPolicy);
                 }

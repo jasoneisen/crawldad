@@ -1,5 +1,6 @@
 using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Contracts.Tenancy;
+using JasperFx;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -91,6 +92,57 @@ public sealed class TenantMembershipStoreTests(ManagementFixture fixture) : IAsy
 
         await Store.RevokeAsync(tenant, owner.Id, DateTimeOffset.UnixEpoch, _ct); // revoke it once (o2 keeps the workspace owned)
         (await Store.RevokeAsync(tenant, owner.Id, DateTimeOffset.UnixEpoch, _ct)).ShouldBe(MembershipRevokeOutcome.NotFound); // already revoked
+    }
+
+    [Fact]
+    public async Task Has_active_owner_reflects_the_console_recovery_path()
+    {
+        var tenant = NewTenant();
+        (await Store.HasActiveOwnerAsync(tenant, _ct)).ShouldBeFalse(); // no membership → no recovery path
+
+        var owner = await Store.CreateOwnerAsync(tenant, "owner@x.test", DateTimeOffset.UnixEpoch, _ct);
+        (await Store.HasActiveOwnerAsync(tenant, _ct)).ShouldBeTrue(); // an active Owner is the recovery path
+
+        var member = await SeedMemberAsync(tenant, "member@x.test");
+        await Store.RevokeAsync(tenant, member, DateTimeOffset.UnixEpoch, _ct); // a Member is not an Owner either way
+
+        // Revoke the only Owner (allowed only because the invariant is checked in RevokeAsync — here we force it via the doc)
+        // to prove a workspace with only revoked/non-owner memberships reports no recovery path.
+        await ForceRevokeAsync(owner.Id);
+        (await Store.HasActiveOwnerAsync(tenant, _ct)).ShouldBeFalse(); // only a revoked Owner remains → no recovery path
+    }
+
+    [Fact]
+    public async Task Optimistic_concurrency_rejects_a_stale_membership_write()
+    {
+        var tenant = NewTenant();
+        var membership = await Store.CreateOwnerAsync(tenant, "occ@x.test", DateTimeOffset.UnixEpoch, _ct);
+        var docStore = fixture.Host.Services.GetRequiredService<IDocumentStore>();
+
+        // Two sessions load the same membership at the same version; the first write wins, the second (stale) must conflict —
+        // the PR#153-mandated guard that keeps a future member-management endpoint safe.
+        await using var first = docStore.LightweightSession();
+        await using var second = docStore.LightweightSession();
+        var d1 = (await first.LoadAsync<TenantMembership>(membership.Id, _ct))!;
+        var d2 = (await second.LoadAsync<TenantMembership>(membership.Id, _ct))!;
+
+        d1.UpdatedAt = DateTimeOffset.UnixEpoch.AddMinutes(1);
+        first.Store(d1);
+        await first.SaveChangesAsync(_ct);
+
+        d2.UpdatedAt = DateTimeOffset.UnixEpoch.AddMinutes(2);
+        second.Store(d2);
+        await Should.ThrowAsync<ConcurrencyException>(async () => await second.SaveChangesAsync(_ct));
+    }
+
+    // Revokes a membership directly (bypassing the last-Owner guard), to set up a "no active Owner" state for the recovery test.
+    private async Task ForceRevokeAsync(Guid membershipId)
+    {
+        await using var session = fixture.Host.Services.GetRequiredService<IDocumentStore>().LightweightSession();
+        var doc = (await session.LoadAsync<TenantMembership>(membershipId, _ct))!;
+        doc.RevokedAt = DateTimeOffset.UnixEpoch;
+        session.Store(doc);
+        await session.SaveChangesAsync(_ct);
     }
 
     // Seeds a non-owner Member membership directly (no member-creation flow exists yet), returning its id.

@@ -1379,11 +1379,14 @@ revoke or a rotate-out is honoured immediately on the serving instance and withi
 - **Rotate** (`POST /tenant/keys/{id}/rotate`) mints a replacement **and** revokes `{id}` in one transaction — the
   anti-lockout way to replace a key. It is allowed even for the **last** key (a replacement is minted first, so there is
   no gap) and even for the **current** key (swap to the returned key). The replacement inherits the rotated key's label.
-- **Revoke** (`DELETE /tenant/keys/{id}`) takes effect immediately. It **refuses**, with a `409`, to revoke the tenant's
-  **last active key** (`last_active_key`) or the key authenticating **this** request (`current_key`) — since
-  self-service auth needs a live key, rotate those instead. (This last-key guard is a deliberate stop-gap for the
-  key-authenticated surface; automation/MCP callers have no other recovery path.) An unknown, foreign, or already-revoked
-  id is a `404 key_not_found` with no existence oracle — so a repeat `DELETE` is `204` then `404`.
+- **Revoke** (`DELETE /tenant/keys/{id}`) takes effect immediately. The key authenticating **this** request is never
+  revocable — rotate it instead (`409 current_key`); a console-authenticated caller presents no key, so it can revoke the
+  last key. The tenant's **last active key** may be revoked only when a **console recovery path** exists — the tenant has
+  **≥1 active Owner membership**, so a human can still reach the workspace through the portal (OTP → console) after every
+  key is gone. A tenant with **no** membership (env-configured, operator-provisioned, or pure-API/automation) keeps
+  **refuse-last-key** (`409 last_active_key`), since it has no other way back in. Both guards are enforced **atomically**
+  under a per-tenant advisory lock, so two concurrent revokes can never both empty the active set. An unknown, foreign, or
+  already-revoked id is a `404 key_not_found` with no existence oracle — so a repeat `DELETE` is `204` then `404`.
 
 ### Mint → rotate → revoke
 

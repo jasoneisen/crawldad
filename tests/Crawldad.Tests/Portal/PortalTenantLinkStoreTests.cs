@@ -37,6 +37,33 @@ public class PortalTenantLinkStoreTests(PortalFixture fixture)
     }
 
     [Fact]
+    public async Task Keyless_upsert_stores_the_email_tenant_mapping_with_no_key()
+    {
+        var email = NewEmail();
+        var stored = await Store.UpsertKeylessAsync(email, "tenant-console");
+
+        stored.ProtectedApiKey.ShouldBeNull(); // a console-mode verify-then-discard link holds no key
+        var got = await Store.GetAsync(email);
+        got.ShouldNotBeNull();
+        got.TenantId.ShouldBe("tenant-console");
+        got.ProtectedApiKey.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Keyless_upsert_over_a_stored_key_link_clears_the_ciphertext_and_preserves_created_at()
+    {
+        var email = NewEmail();
+        var first = await Store.UpsertAsync(email, "tenant-x", "sk_first_key");
+        first.ProtectedApiKey.ShouldNotBeNull();
+
+        var relinked = await Store.UpsertKeylessAsync(email, "tenant-x");
+
+        relinked.ProtectedApiKey.ShouldBeNull();                            // the stored key is cleared (retired)
+        relinked.CreatedAt.ShouldBe(first.CreatedAt);                       // createdAt preserved across the re-link
+        relinked.UpdatedAt.ShouldBeGreaterThanOrEqualTo(first.UpdatedAt);   // updatedAt advanced (or equal under a frozen clock)
+    }
+
+    [Fact]
     public async Task The_stored_document_holds_ciphertext_and_decrypts_back()
     {
         var email = NewEmail();
@@ -47,6 +74,7 @@ public class PortalTenantLinkStoreTests(PortalFixture fixture)
         var doc = await session.LoadAsync<PortalTenantLink>(PortalAuthService.NormalizeEmail(email));
 
         doc.ShouldNotBeNull();
+        doc.ProtectedApiKey.ShouldNotBeNull();          // a stored-key upsert always persists ciphertext
         doc.ProtectedApiKey.ShouldNotBe(apiKey);        // encrypted, not plaintext
         doc.ProtectedApiKey.ShouldNotContain(apiKey);
 
