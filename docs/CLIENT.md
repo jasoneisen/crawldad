@@ -198,6 +198,38 @@ UsageResponse usage = await crawldad.GetUsageAsync();
 key surfaces as `CrawldadUnauthorizedException` (`401`) rather than a valid response — which is exactly how the portal
 verifies a pasted key before storing it.
 
+## Manage your API keys
+
+A tenant manages its **own** keys with its own key — list, mint, rotate, revoke — so automation, an MCP server, or an
+agent can rotate its credentials without an operator. The raw key comes back **exactly once**, from mint and rotate; it
+is never listed and the SDK never logs it. See [docs/API.md §22](API.md#22-tenant-self-service-api-keys--tenantkeys) for
+the wire shapes.
+
+```csharp
+// GET /tenant/keys — prefixes + metadata only; the key you're calling with is flagged Current.
+TenantApiKeyList keys = await crawldad.ListTenantKeysAsync();
+foreach (TenantApiKeyInfo k in keys.Keys)
+{
+    // k.KeyId, k.Prefix, k.Label, k.CreatedAt, k.LastUsedAt, k.Active, k.Current
+}
+
+// POST /tenant/keys — mint a key; the raw value is on the result ONCE. Store it now.
+TenantApiKeyCreated minted = await crawldad.MintTenantKeyAsync(label: "ci");
+string raw = minted.ApiKey; // shown once — never retrievable again
+
+// POST /tenant/keys/{id}/rotate — mint a replacement + revoke the old key atomically.
+// The anti-lockout way to replace the key you're currently using: swap to the returned key.
+TenantApiKeyCreated rotated = await crawldad.RotateTenantKeyAsync(minted.KeyId);
+
+// DELETE /tenant/keys/{id} — revoke a key you no longer need.
+await crawldad.RevokeTenantKeyAsync(someOldKeyId);
+```
+
+Guardrails (all server-enforced): the surface is **registry tenants only** — an env-configured tenant is a `400`
+(`CrawldadApiException`, `self_service_unavailable`). Revoking your **last active key**, or the key this client is
+authenticating with, is refused with a `409` (`CrawldadApiException`) — **rotate** it instead. A rotate is always safe:
+it mints the replacement before revoking the old key, so there is never a moment with no live key.
+
 ## Billing
 
 Three tenant-scoped calls back the portal's billing card. The SDK only ever receives a **URL to follow** — it never holds

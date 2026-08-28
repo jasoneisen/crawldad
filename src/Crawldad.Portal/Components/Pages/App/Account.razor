@@ -1,6 +1,7 @@
 @page "/app/account"
 @layout AppLayout
 @attribute [Authorize]
+@using System.Globalization
 @using System.Security.Cryptography
 @using Crawldad.Client
 @using Crawldad.Contracts.Billing
@@ -310,14 +311,166 @@
 <div class="card mt-3 mb-3" id="apikeys">
     <div class="card-header"><h3 class="card-title">API keys</h3></div>
     <div class="card-body">
-        <p class="mb-1">
-            API keys are issued, rotated, and revoked by the Crawldad operator today. Use one here to link your
-            workspace above.
-        </p>
-        <p class="text-secondary mb-0 small">
-            Self-service key management from the portal is on the roadmap. For your security, key material is never
-            displayed here — the key you link is stored encrypted and shown to no one again.
-        </p>
+        @if (!_linked || _relinkNeeded)
+        {
+            <div class="empty" data-testid="keys-unlinked">
+                <p class="empty-title">Link your workspace to manage keys</p>
+                <p class="empty-subtitle text-secondary">
+                    Once your workspace is linked, mint, rotate, and revoke its API keys here.
+                </p>
+            </div>
+        }
+        else if (_keysOperatorManaged)
+        {
+            <div data-testid="keys-operator-managed">
+                <p class="mb-1">This workspace's API keys are managed by the Crawldad operator.</p>
+                <p class="text-secondary mb-0 small">
+                    Self-service key management isn't available for this workspace. For your security, key material is
+                    never displayed here.
+                </p>
+            </div>
+        }
+        else if (_keysError)
+        {
+            <div class="empty" data-testid="keys-error">
+                <p class="empty-title">Keys are unavailable right now</p>
+                <p class="empty-subtitle text-secondary">We couldn't read your keys from the API. Try again shortly.</p>
+            </div>
+        }
+        else
+        {
+            @if (_mintedKey is not null)
+            {
+                <div class="alert alert-success" role="status" data-testid="minted-key">
+                    <div class="fw-semibold mb-1">New API key@(_mintedLabel is null ? "" : $" ({_mintedLabel})") — copy it now</div>
+                    <p class="text-secondary small mb-2">
+                        This is the only time the full key is shown. Store it somewhere safe — you can't see it again.
+                    </p>
+                    <div class="input-group">
+                        @* Show-once: rendered on THIS response only, never persisted by the portal and never in a later GET. *@
+                        <input id="minted-key" class="form-control cd-mono" readonly value="@_mintedKey" onclick="this.select()" data-testid="minted-key-value" />
+                        <button type="button" class="btn btn-outline-primary" data-testid="minted-key-copy"
+                                onclick="navigator.clipboard.writeText(document.getElementById('minted-key').value);this.textContent='Copied';">Copy</button>
+                    </div>
+                </div>
+            }
+
+            @if (_keysActionError is not null)
+            {
+                <div class="alert alert-danger" role="alert" data-testid="keys-action-error">@_keysActionError</div>
+            }
+
+            @if (RevokeConfirmTarget() is { } toRevoke)
+            {
+                <div class="card mb-3 border-danger" data-testid="revoke-confirm">
+                    <div class="card-body">
+                        <h3 class="mb-1">Revoke key @toRevoke.Prefix…?</h3>
+                        <p class="text-secondary">Any client using this key stops working immediately. This can't be undone.</p>
+                        <EditForm FormName="revoke-key" Model="RevokeForm" OnValidSubmit="RevokeKeyAsync" data-testid="revoke-form">
+                            <input type="hidden" name="RevokeForm.KeyId" value="@toRevoke.KeyId" />
+                            <button type="submit" class="btn btn-danger" data-testid="revoke-submit">Revoke key</button>
+                            <a href="/app/account" class="btn btn-link">Cancel</a>
+                        </EditForm>
+                    </div>
+                </div>
+            }
+
+            @if (RotateConfirmTarget() is { } toRotate)
+            {
+                <div class="card mb-3 border-warning" data-testid="rotate-confirm">
+                    <div class="card-body">
+                        <h3 class="mb-1">Rotate key @toRotate.Prefix…?</h3>
+                        <p class="text-secondary">
+                            A new key is minted and this one is revoked immediately.
+                            @(toRotate.Current
+                                ? "This is the key this session uses — the portal switches to the new key automatically."
+                                : "Any client using the old key must switch to the new one.")
+                        </p>
+                        <EditForm FormName="rotate-key" Model="RotateForm" OnValidSubmit="RotateKeyAsync" data-testid="rotate-form">
+                            <input type="hidden" name="RotateForm.KeyId" value="@toRotate.KeyId" />
+                            <button type="submit" class="btn btn-warning" data-testid="rotate-submit">Rotate key</button>
+                            <a href="/app/account" class="btn btn-link">Cancel</a>
+                        </EditForm>
+                    </div>
+                </div>
+            }
+
+            @if (_keyListStale)
+            {
+                <div class="empty" data-testid="keys-stale">
+                    <p class="empty-title">Session key rotated</p>
+                    <p class="empty-subtitle text-secondary">The portal is now using your new key. Refresh to see the updated key list.</p>
+                    <div class="empty-action"><a href="/app/account" class="btn btn-primary">Refresh</a></div>
+                </div>
+            }
+            else if (_keys.Count == 0)
+            {
+                <p class="text-secondary" data-testid="keys-empty">No keys yet — mint one below.</p>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-vcenter card-table">
+                        <thead>
+                            <tr><th>Key</th><th>Label</th><th>Created</th><th>Last used</th><th>Status</th><th class="w-1"></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var key in _keys)
+                            {
+                                <tr data-testid="key-row">
+                                    <td class="cd-mono">@key.Prefix…</td>
+                                    <td>@(key.Label ?? "—")</td>
+                                    <td class="text-secondary">@FormatUtc(key.CreatedAt)</td>
+                                    <td class="text-secondary">@(key.LastUsedAt is { } used ? FormatUtc(used) : "—")</td>
+                                    <td>
+                                        @if (!key.Active)
+                                        {
+                                            <span class="badge bg-secondary-lt" data-testid="key-status-revoked">Revoked</span>
+                                        }
+                                        else if (key.Current)
+                                        {
+                                            <span class="badge bg-green-lt" data-testid="key-status-current">Active · this session</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-green-lt" data-testid="key-status-active">Active</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (key.Active)
+                                        {
+                                            <a href="@($"/app/account?rotate={key.KeyId}#apikeys")" class="btn btn-sm btn-ghost-secondary" data-testid="rotate-link">Rotate</a>
+                                            @if (!key.Current)
+                                            {
+                                                <a href="@($"/app/account?revoke={key.KeyId}#apikeys")" class="btn btn-sm btn-ghost-danger" data-testid="revoke-link">Revoke</a>
+                                            }
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            <hr class="my-3" />
+            <div class="fw-semibold mb-2">Mint a new key</div>
+            <p class="text-secondary small">
+                Use keys to authenticate the API and the SDK. Rotating or revoking the key this session uses is guarded —
+                rotate replaces it without a gap.
+            </p>
+            <EditForm FormName="mint-key" Model="Mint" OnValidSubmit="MintKeyAsync" data-testid="mint-form">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-8">
+                        <label class="form-label" for="key-label">Label <span class="text-secondary fw-normal">(optional)</span></label>
+                        <InputText id="key-label" class="form-control" autocomplete="off" spellcheck="false" placeholder="e.g. ci, laptop, mcp-agent" @bind-Value="Mint.Label" />
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary w-100" data-testid="mint-submit">Mint key</button>
+                    </div>
+                </div>
+            </EditForm>
+        }
     </div>
 </div>
 
@@ -333,6 +486,23 @@
     [SupplyParameterFromQuery(Name = "linked")]
     public bool ShowLinked { get; set; }
 
+    // The self-service key forms (bound on POST; seeded fresh on GET — no initializer, BL0008).
+    [SupplyParameterFromForm(FormName = "mint-key")]
+    public MintKeyInput Mint { get; set; } = default!;
+
+    [SupplyParameterFromForm(FormName = "rotate-key")]
+    public KeyActionInput RotateForm { get; set; } = default!;
+
+    [SupplyParameterFromForm(FormName = "revoke-key")]
+    public KeyActionInput RevokeForm { get; set; } = default!;
+
+    // Which key (if any) a confirm card is being shown for, from the row action link (?rotate=/?revoke=<keyId>).
+    [SupplyParameterFromQuery(Name = "rotate")]
+    public string? RotateTarget { get; set; }
+
+    [SupplyParameterFromQuery(Name = "revoke")]
+    public string? RevokeTarget { get; set; }
+
     private bool _linked;
     private bool _relinkNeeded;
     private string? _tenantId;
@@ -341,6 +511,16 @@
     private bool _usageError;
     private BillingConfigResponse? _billingConfig;
     private string? _error;
+
+    // API keys section state.
+    private PortalTenant? _tenant;     // the resolved tenant from LoadAsync; the key forms render only when this is set
+    private IReadOnlyList<TenantApiKeyInfo> _keys = [];
+    private bool _keysOperatorManaged; // env tenant — self-service unavailable (a 400 from GET /tenant/keys)
+    private bool _keysError;           // the keys read failed for another reason (degrade cleanly, never a 500)
+    private string? _mintedKey;        // the just-minted/rotated raw key, shown ONCE on this response, never persisted here
+    private string? _mintedLabel;
+    private string? _keysActionError;  // a mint/rotate/revoke failure surfaced in-place (incl. the last/current-key refusal)
+    private bool _keyListStale;        // set after rotating the session key: the old client can't re-list, so prompt a refresh
 
     private string? Email => HttpContext.User.FindFirstValue(ClaimTypes.Email);
 
@@ -358,6 +538,9 @@
         // this for every request, so the current link + usage are resolved here for both the GET and the form-post
         // re-render — the submit handler only redirects (on success) or sets an error (on failure).
         Input ??= new();
+        Mint ??= new();
+        RotateForm ??= new();
+        RevokeForm ??= new();
         await LoadAsync();
     }
 
@@ -407,6 +590,7 @@
         }
 
         _linked = true;
+        _tenant = tenant;
         _tenantId = tenant.TenantId;
         try
         {
@@ -421,6 +605,9 @@
         // Billing config is loaded independently of usage: a failure here degrades the billing card to a friendly
         // "not yet available" state without touching the usage panel (and a usage failure never hides the billing card).
         _billingConfig = await LoadBillingConfigAsync(tenant);
+
+        // The tenant's own keys, for the API-keys section (independent of usage/billing state).
+        await LoadKeysAsync(tenant);
     }
 
     // The tenant's billing config, or null when the provider call fails — which the billing card renders as the friendly
@@ -447,5 +634,143 @@
         return seconds < 60
             ? $"{seconds:0.0}s"
             : $"{(int)(seconds / 60)}m {(int)Math.Round(seconds % 60)}s";
+    }
+
+    // ---- API keys ------------------------------------------------------------------------------------------------
+
+    // The authenticated tenant's keys, or the operator-managed / error state — never a throw (the section degrades cleanly).
+    private async Task LoadKeysAsync(PortalTenant tenant)
+    {
+        try
+        {
+            _keys = (await tenant.Client.ListTenantKeysAsync(HttpContext.RequestAborted)).Keys;
+        }
+        catch (CrawldadApiException ex) when (ex.StatusCode == StatusCodes.Status400BadRequest)
+        {
+            _keysOperatorManaged = true; // env tenant — its keys are operator config (self_service_unavailable)
+        }
+        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        {
+            _keysError = true;
+        }
+    }
+
+    // Mints a key and shows its raw value ONCE — no redirect, so the one-time secret is on this response body only and is
+    // never persisted by the portal nor visible on a later GET.
+    private async Task MintKeyAsync()
+    {
+        var tenant = _tenant!; // the mint form renders only when linked, so the tenant is resolved
+        try
+        {
+            ShowMinted(await tenant.Client.MintTenantKeyAsync(Mint.Label, HttpContext.RequestAborted));
+            await LoadKeysAsync(tenant); // the session key is unchanged, so the list re-reads cleanly
+        }
+        catch (CrawldadException ex)
+        {
+            _keysActionError = ex.Message; // e.g. a too-long label (validation)
+        }
+        catch (HttpRequestException)
+        {
+            _keysActionError = "Couldn't reach the API. Try again shortly.";
+        }
+
+        Mint = new(); // clear the label input on the re-render
+    }
+
+    // Rotates a key: mints a replacement (shown once) and revokes the old one. Rotating the SESSION key re-links the portal
+    // to the replacement so it keeps working; the old client then can't re-list, so the list is marked stale for a refresh.
+    private async Task RotateKeyAsync()
+    {
+        var tenant = _tenant!;
+        var wasCurrent = _keys.Any(key => key.KeyId == RotateForm.KeyId && key.Current);
+        try
+        {
+            var created = await tenant.Client.RotateTenantKeyAsync(RotateForm.KeyId, HttpContext.RequestAborted);
+            ShowMinted(created);
+
+            if (wasCurrent)
+            {
+                // The portal was authenticating with the key we just rotated out; persist the replacement so it keeps
+                // working (email is guaranteed by [Authorize]). The revoked client can't re-list — prompt a refresh instead.
+                await Linker.LinkAsync(Email!, tenant.TenantId, created.ApiKey, HttpContext.RequestAborted);
+                _keyListStale = true;
+            }
+            else
+            {
+                await LoadKeysAsync(tenant);
+            }
+        }
+        catch (CrawldadNotFoundException)
+        {
+            _keysActionError = "That key no longer exists — it may have already been rotated or revoked.";
+        }
+        catch (CrawldadException ex)
+        {
+            _keysActionError = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            _keysActionError = "Couldn't reach the API. Try again shortly.";
+        }
+    }
+
+    // Revokes a key, then redirects (PRG) so the fresh list reflects it. A refusal (the last/current-key guard) or another
+    // error is surfaced in place; an already-gone key (404) is treated as done.
+    private async Task RevokeKeyAsync()
+    {
+        var tenant = _tenant!;
+        try
+        {
+            await tenant.Client.RevokeTenantKeyAsync(RevokeForm.KeyId, HttpContext.RequestAborted);
+        }
+        catch (CrawldadNotFoundException)
+        {
+            // Already gone — treat as done and let the redirect refresh the list.
+        }
+        catch (CrawldadException ex)
+        {
+            _keysActionError = ex.Message; // the 409 last/current-key refusal, surfaced with its rotate guidance
+            return;
+        }
+        catch (HttpRequestException)
+        {
+            _keysActionError = "Couldn't reach the API. Try again shortly.";
+            return;
+        }
+
+        Nav.NavigateTo("/app/account", forceLoad: true);
+    }
+
+    private void ShowMinted(TenantApiKeyCreated created)
+    {
+        _mintedKey = created.ApiKey;
+        _mintedLabel = created.Label;
+    }
+
+    // The key the ?revoke= row action points at (by id), or null — the confirm card renders for it; the API backstops a
+    // crafted id (a revoked/current key is a 404 / a 409 on submit).
+    private TenantApiKeyInfo? RevokeConfirmTarget() =>
+        Guid.TryParse(RevokeTarget, out var id) ? _keys.FirstOrDefault(key => key.KeyId == id) : null;
+
+    // The key the ?rotate= row action points at (by id), or null.
+    private TenantApiKeyInfo? RotateConfirmTarget() =>
+        Guid.TryParse(RotateTarget, out var id) ? _keys.FirstOrDefault(key => key.KeyId == id) : null;
+
+    // A UTC timestamp as a compact, stable string for a key's created / last-used columns.
+    private static string FormatUtc(DateTimeOffset when) =>
+        when.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
+
+    /// <summary>The optional label for a minted key.</summary>
+    public sealed class MintKeyInput
+    {
+        /// <summary>An optional display label for the new key.</summary>
+        public string? Label { get; set; }
+    }
+
+    /// <summary>The key a rotate/revoke form targets (its id rides in a hidden field).</summary>
+    public sealed class KeyActionInput
+    {
+        /// <summary>The key record id to act on.</summary>
+        public Guid KeyId { get; set; }
     }
 }
