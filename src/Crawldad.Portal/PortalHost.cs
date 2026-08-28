@@ -163,6 +163,11 @@ public static class PortalHost
         // (optional ctor param → null in stored-key mode), which is exactly when the service reports "unavailable".
         builder.Services.AddScoped<IPortalProvisioningService, PortalProvisioningService>();
 
+        // The public signup flow's post-verification landing decision (issue #119 PR8): a zero-workspace account is
+        // provisioned its free workspace and lands on the first-run dashboard; a returning account lands like a /login. Scoped
+        // because it depends on the scoped provisioning service; the signup page is the only caller.
+        builder.Services.AddScoped<ISignupLanding, SignupLanding>();
+
         // One pooled HttpClient the SDK rides on, base address from config (validated at boot so a missing/malformed
         // URL fails loudly here, not on the first API call). The per-request API key is applied by the context — the
         // client is never registered with a baked-in or empty key.

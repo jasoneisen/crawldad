@@ -30,11 +30,32 @@ internal static class PortalHttp
     }
 
     internal static FormUrlEncodedContent LoginForm(
-        string token, string email, string step, string? code = null, string? returnUrl = null)
+        string token, string email, string step, string? code = null, string? returnUrl = null) =>
+        OtpForm("login", token, email, step, code, returnUrl);
+
+    /// <summary>Drives the full request→verify flow over the SIGNUP page (issue #119 PR8) — the same two-step OTP mechanic as
+    /// <see cref="SignInAsync"/>, posted to <c>/signup</c> — leaving the auth cookie in the jar. Returns the final redirect.</summary>
+    internal static async Task<HttpResponseMessage> SignUpAsync(HttpClient client, CapturingEmailSender email, string address)
+    {
+        var requestToken = ExtractAntiforgeryToken(await client.GetStringAsync(Rel("/signup")));
+        var requestResp = await client.PostAsync(Rel("/signup"), SignupForm(requestToken, address, "request"));
+        var code = email.LastCodeFor(Crawldad.Portal.Auth.PortalAuthService.NormalizeEmail(address));
+        var verifyToken = ExtractAntiforgeryToken(await requestResp.Content.ReadAsStringAsync());
+        return await client.PostAsync(Rel("/signup"), SignupForm(verifyToken, address, "verify", code));
+    }
+
+    /// <summary>A signup-page form post (the same fields as <see cref="LoginForm"/>, keyed to the <c>signup</c> handler).</summary>
+    internal static FormUrlEncodedContent SignupForm(
+        string token, string email, string step, string? code = null, string? returnUrl = null) =>
+        OtpForm("signup", token, email, step, code, returnUrl);
+
+    // The shared two-step OTP form body for both the login and signup pages, differing only by the form handler name.
+    private static FormUrlEncodedContent OtpForm(
+        string handler, string token, string email, string step, string? code, string? returnUrl)
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["_handler"] = "login",
+            ["_handler"] = handler,
             ["__RequestVerificationToken"] = token,
             ["Input.Email"] = email,
             ["Input.Step"] = step,

@@ -4,10 +4,10 @@ using Crawldad.Portal.Components.Pages;
 namespace Crawldad.Tests.Portal;
 
 /// <summary>bUnit rendering of the public marketing landing page ("/"): the above-the-fold pitch, the required
-/// sections, conversion CTAs that route to /login, the BUSINESS_MODEL.md pricing numbers, and the copy-accuracy
-/// invariant that webhooks + drift monitoring are presented as shipped (never "coming soon"). The page is pure
-/// static markup, so a single render exercises it fully; the full-pipeline render (through LandingLayout) is
-/// covered by the HTTP test.</summary>
+/// sections, the acquisition CTAs that route to /signup while sign-in stays on /login (issue #119 PR8), the
+/// BUSINESS_MODEL.md pricing numbers, and the copy-accuracy invariant that webhooks + drift monitoring are
+/// presented as shipped (never "coming soon"). The page is pure static markup, so a single render exercises it
+/// fully; the full-pipeline render (through LandingLayout) is covered by the HTTP test.</summary>
 public class MarketingHomeTests : BunitContext
 {
     private IRenderedComponent<Home> RenderHome() => Render<Home>();
@@ -35,17 +35,25 @@ public class MarketingHomeTests : BunitContext
     }
 
     [Fact]
-    public void Conversion_ctas_route_to_the_existing_login()
+    public void Acquisition_ctas_route_to_signup_while_sign_in_stays_on_login()
     {
         var cut = RenderHome();
 
-        // nav (sign in + start free), hero, the three self-serve plan cards, the final CTA, and the footer sign-in.
-        cut.FindAll("a[href=\"/login\"]").Count.ShouldBe(8);
+        // "Start free" is the acquisition CTA (issue #119 PR8): nav, hero, the Free plan card, and the final CTA → /signup.
+        var startFree = cut.FindAll("a[href=\"/signup\"]");
+        startFree.Count.ShouldBe(4);
+        foreach (var cta in startFree)
+        {
+            cta.TextContent.Trim().ShouldBe("Start free"); // copy stays truthful — every /signup link is a "Start free"
+        }
 
-        // The primary hero CTA specifically.
+        // "Sign in" (nav + footer) and the paid "Choose <plan>" cards stay on the OTP /login — the same passwordless mechanic.
+        cut.FindAll("a[href=\"/login\"]").Count.ShouldBe(4);
+
+        // The primary hero CTA specifically now starts the signup.
         var hero = cut.Find("section#top");
         var primary = hero.QuerySelector("a.btn-brand");
-        primary!.GetAttribute("href").ShouldBe("/login");
+        primary!.GetAttribute("href").ShouldBe("/signup");
         primary.TextContent.Trim().ShouldBe("Start free");
     }
 

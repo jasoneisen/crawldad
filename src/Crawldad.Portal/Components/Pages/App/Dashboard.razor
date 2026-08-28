@@ -6,11 +6,30 @@
 
 @*
     The authenticated landing page. A lightweight overview that orients a new tenant and links out to each
-    section; the sections themselves fill in with live data in later tasks.
+    section; the sections themselves fill in with live data in later tasks. When a fresh signup lands here with
+    ?welcome=true (issue #119 PR8) it also shows a brief first-run on-ramp — reusing the standard .empty empty-state
+    pattern, and phrased from docs/MARKETING.md's on-ramp (no new marketing copy).
 *@
 <div class="page-header">
     <h1 class="page-title">Dashboard</h1>
 </div>
+
+@if (Welcome)
+{
+    <div class="card mt-2 mb-3" data-testid="first-run-welcome">
+        <div class="empty">
+            <p class="empty-title">Your free workspace is ready</p>
+            <p class="empty-subtitle text-secondary">
+                Point a payload at your existing <span class="cd-mono">connectUrl</span> — no new infra, no VPN, first run
+                in minutes. Mint an API key, declare a payload, and watch it run live.
+            </p>
+            <div class="empty-action">
+                <a href="/app/account#apikeys" class="btn btn-primary" data-testid="welcome-keys">Mint an API key</a>
+                <a href="/app/payloads" class="btn btn-primary" data-testid="welcome-payloads">Create a payload</a>
+            </div>
+        </div>
+    </div>
+}
 
 <p class="text-secondary mt-2 mb-4">
     Welcome to Crawldad. Pick a section from the left to get started — runs, payloads, and usage fill in here as
@@ -84,3 +103,10 @@
         </a>
     </div>
 </div>
+
+@code {
+    // Set by the signup first-run redirect (/app?welcome=true) so a just-provisioned account gets the on-ramp; absent on
+    // every other visit, so the dashboard is unchanged for returning users.
+    [SupplyParameterFromQuery(Name = "welcome")]
+    public bool Welcome { get; set; }
+}
