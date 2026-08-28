@@ -250,6 +250,40 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
+    public void A_console_workspace_list_failure_falls_back_to_the_current_workspace()
+    {
+        // GET /workspaces fails but the membership read succeeds: the Workspaces card degrades to the single current
+        // workspace, labelled by the user's own role from the membership.
+        var memberships = new TenantMembershipList([new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
+        var handler = new StubHttpMessageHandler(req =>
+            req.Path.EndsWith("workspaces", StringComparison.Ordinal) ? ClientTestHarness.Empty(System.Net.HttpStatusCode.InternalServerError)
+            : req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.Json(memberships)
+            : req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
+            : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
+            : ClientTestHarness.Json(_profile));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+
+        var rows = cut.FindAll("[data-testid=workspace-row]");
+        rows.Count.ShouldBe(1);                                    // the single current workspace fallback
+        rows[0].TextContent.ShouldContain("Owner");                // labelled with the signed-in user's role
+    }
+
+    [Fact]
+    public void The_member_roster_renders_without_an_email_claim()
+    {
+        // A render with no email claim still lists members read-only (the signed-in user matches none, so it is not an Owner).
+        var memberships = new TenantMembershipList(
+        [
+            new(Guid.NewGuid(), "owner@x.test", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
+            new(Guid.NewGuid(), "member@x.test", MembershipRole.Member, DateTimeOffset.UnixEpoch, null, true),
+        ]);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships), PortalAuthMode.Console)), Authed(email: null));
+
+        cut.FindAll("[data-testid=member-row]").Count.ShouldBe(2);
+        cut.Find("[data-testid=members-readonly]").ShouldNotBeNull(); // no email ⇒ not an Owner ⇒ read-only
+    }
+
+    [Fact]
     public void A_member_action_error_is_surfaced_from_the_redirect()
     {
         var memberships = new TenantMembershipList([new(Guid.NewGuid(), "owner@example.com", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);

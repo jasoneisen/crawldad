@@ -230,6 +230,39 @@ Guardrails (all server-enforced): the surface is **registry tenants only** — a
 authenticating with, is refused with a `409` (`CrawldadApiException`) — **rotate** it instead. A rotate is always safe:
 it mints the replacement before revoking the old key, so there is never a moment with no live key.
 
+## Workspaces & members
+
+A workspace (tenant) can have multiple **members** — verified emails mapped to a **role** (`Owner` / `Member`). List the
+members, add a teammate, change a role, or remove one; list the **workspaces** the caller can act as. See
+[docs/API.md §23](API.md#23-workspace-memberships--the-console-role-model--tenantmemberships-workspaces) for the role
+model and wire shapes.
+
+```csharp
+// GET /tenant/memberships — this workspace's members (metadata only).
+TenantMembershipList members = await crawldad.ListMembershipsAsync();
+
+// POST /tenant/memberships — add a teammate with a role (idempotent; a re-add returns the existing membership unchanged).
+TenantMembershipInfo added = await crawldad.AddMembershipAsync("teammate@example.com", MembershipRole.Member);
+
+// POST /tenant/memberships/{id}/role — change a member's role.
+await crawldad.ChangeMembershipRoleAsync(added.MembershipId, MembershipRole.Owner);
+
+// DELETE /tenant/memberships/{id} — remove a member.
+await crawldad.RemoveMembershipAsync(added.MembershipId);
+
+// GET /workspaces — every workspace the caller is a member of (the switcher's source).
+WorkspaceList mine = await crawldad.ListMyWorkspacesAsync();
+foreach (WorkspaceSummary w in mine.Workspaces)
+{
+    // w.TenantId, w.DisplayName, w.Role
+}
+```
+
+On a **tenant API key** the membership *writes* are unrestricted (key possession is full authority). On the **console**
+channel (the portal), the writes are **Owner-only** — a Member is a `403` — and a workspace's **last active Owner** can
+never be removed or downgraded (`409 last_owner`, a `CrawldadApiException`). `ListMyWorkspacesAsync` on a key client
+reflects the key's own tenant, so it is typically empty — the switcher is a portal/console feature.
+
 ## Billing
 
 Three tenant-scoped calls back the portal's billing card. The SDK only ever receives a **URL to follow** — it never holds

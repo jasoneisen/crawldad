@@ -126,6 +126,20 @@ public sealed class ConsoleRoleMatrixTests(ConsoleAuthFixture fixture) : IAsyncL
         workspaces[0].GetProperty("role").GetString().ShouldBe("member");
     }
 
+    [Fact]
+    public async Task Workspaces_skips_a_membership_whose_workspace_no_longer_exists()
+    {
+        // The owner also holds a membership on a tenant that has no RegistryTenant (deleted/never-provisioned) — GET
+        // /workspaces skips it rather than surfacing a dangling row, so only the live workspace comes back.
+        await Host.Services.GetRequiredService<ITenantMembershipStore>()
+            .CreateAsync("gone-tenant-id", _owner, MembershipRole.Owner, DateTimeOffset.UnixEpoch, _ct);
+
+        var body = await JsonAsync(_owner, "GET", "/workspaces", body: null, StatusCodes.Status200OK);
+        var ids = body.GetProperty("workspaces").EnumerateArray().Select(w => w.GetProperty("tenantId").GetString()).ToList();
+
+        ids.ShouldBe([_tenantId]); // the dangling membership on "gone-tenant-id" is filtered out
+    }
+
     private async Task<int> StatusAsync(string user, string method, string path, JsonNode? body = null)
     {
         var result = await Host.Scenario(x =>

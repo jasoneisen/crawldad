@@ -1039,8 +1039,12 @@
                 string.Equals(w.TenantId, _tenantId, StringComparison.Ordinal)))];
         }
 
-        var role = _myMembership?.Role.ToString() ?? "—";
-        return [new WorkspaceRow(_tenantId ?? "", _profile?.DisplayName ?? _tenantId ?? "", role, true)];
+        // Stored-key / single-workspace fallback: the current tenant (set whenever this card renders), labelled by its
+        // profile display name when the profile loaded, else its id.
+        var id = _tenantId!;
+        var label = string.IsNullOrEmpty(_profile?.DisplayName) ? id : _profile!.DisplayName;
+        var role = _myMembership is { } m ? m.Role.ToString() : "—";
+        return [new WorkspaceRow(id, label, role, true)];
     }
 
     // This workspace's active members (the listing already orders newest first).

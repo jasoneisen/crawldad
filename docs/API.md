@@ -40,6 +40,7 @@ contracts and endpoints, not from older design notes.
 20. [Management API — tenants & API keys](#20-management-api--tenants--api-keys----management)
 21. [Dashboard read APIs — runs list, webhook deliveries, tenant & usage](#21-dashboard-read-apis--runs-list-webhook-deliveries-tenant--usage)
 22. [Tenant self-service API keys — `/tenant/keys`](#22-tenant-self-service-api-keys--tenantkeys)
+23. [Workspace memberships & the console role model — `/tenant/memberships`, `/workspaces`](#23-workspace-memberships--the-console-role-model--tenantmemberships-workspaces)
 
 ---
 
@@ -1407,3 +1408,73 @@ curl -sX POST https://api.example.com/tenant/keys/<ciKeyId>/rotate -H "Authoriza
 # Revoke a key you no longer need (not your last one, not the one you're calling with)
 curl -sX DELETE https://api.example.com/tenant/keys/<oldKeyId> -H "Authorization: Bearer $MY_KEY"   # → 204
 ```
+
+---
+
+## 23. Workspace memberships & the console role model — `/tenant/memberships`, `/workspaces`
+
+A **workspace** (the customer-facing name for a **tenant** — the API/infra term) can have multiple **members**: verified
+portal emails mapped to a **role**. Membership is the authorization authority for the **console** channel (the portal's
+first-party `ConsolePrincipal` scheme — see [`CONSOLE_AUTH_RUNBOOK.md`](CONSOLE_AUTH_RUNBOOK.md)); it does not change how a
+**tenant API key** authenticates (key possession has always been full tenant authority, and remains so).
+
+### The role model
+
+Two roles, and enforcement applies **only to the console channel**:
+
+| Capability (console channel) | Owner | Member |
+|---|:--:|:--:|
+| Reads — runs, payloads, webhooks, `/tenant`, `/usage`, `/billing/config`, `/tenant/keys`, `/tenant/memberships`, `/workspaces` | ✅ | ✅ |
+| Operational writes — replay a run, register/unregister a webhook, draft/revise a payload, mint a billing session | ✅ | ✅ |
+| Key management — mint / rotate / revoke `/tenant/keys` | ✅ | ❌ 403 |
+| Membership management — add / remove / change-role `/tenant/memberships` | ✅ | ❌ 403 |
+
+- **API-key callers are unaffected** — a request authenticated by a tenant key is unrestricted on all of the above (no role
+  gate). The role model is purely a **console** (portal) concern.
+- **Fail-closed on the console channel:** a console principal with **no** active membership is a `403` everywhere (it stamps
+  no tenant); a console principal whose role is missing or unrecognized is a `403` on the Owner-only endpoints (only an
+  explicit `owner` is accepted there).
+- The **last active Owner** of a workspace can never be removed or downgraded (a workspace must always keep an Owner as its
+  human recovery path). Enforced atomically under a per-tenant advisory lock.
+
+**Registry tenants only** (parity with `/tenant/keys`): memberships only reference DB-backed registry tenants; an
+env-configured tenant is a `400 self_service_unavailable`.
+
+### Endpoints — `/tenant/memberships`
+
+Tenant-authed reads are console-readable (a Member may list); the **writes are Owner-only on the console channel** (and
+unrestricted for an API key).
+
+| Method + route | Body | Success | Errors |
+|---|---|---|---|
+| `GET /tenant/memberships` | — | `200 { memberships: [{ membershipId, email, role, createdAt, revokedAt?, active }] }` | `400 self_service_unavailable` |
+| `POST /tenant/memberships` | `{ email, role? }` | `200 { membershipId, email, role, … }` | `400` (missing email / `self_service_unavailable`) |
+| `DELETE /tenant/memberships/{id}` | — | `204` | `404 membership_not_found`, `409 last_owner`, `400 self_service_unavailable` |
+| `POST /tenant/memberships/{id}/role` | `{ role }` | `200 { membershipId, email, role, … }` | `404 membership_not_found`, `409 last_owner`, `400 self_service_unavailable` |
+
+- **Record / add** (`POST`) is idempotent: an already-active `(workspace, email)` is returned **unchanged** (its role is
+  not altered — use the role endpoint). `role` is optional and defaults to **`owner`** — the portal's attach flow records
+  the signed-in user as the workspace Owner after proving key possession; an Owner adding a teammate passes an explicit
+  `role` (typically `member`).
+- **Remove** (`DELETE`) revokes a membership. Self-removal is allowed; the workspace's **last active Owner** is refused
+  (`409 last_owner`). An unknown/foreign/already-revoked id is a `404 membership_not_found` (no existence oracle).
+- **Change role** (`POST …/role`) sets a membership's role. Downgrading the workspace's **last active Owner** to a Member
+  is refused (`409 last_owner`); setting the role it already has is a clean no-op.
+
+### `GET /workspaces` — the caller's own workspaces
+
+Returns every workspace the **authenticated user** is an active member of — the cross-tenant read that backs the portal's
+workspace switcher (multi-workspace). It is a **console read** (authorized like any other: a valid console token and a
+workspace the caller is a member of), but the list is keyed on the **authenticated actor** (the human email the console
+scheme stamps), never a request body — so it can only ever list the caller's own workspaces.
+
+```jsonc
+// 200
+{ "workspaces": [
+    { "tenantId": "…", "displayName": "Acme", "role": "owner"  },
+    { "tenantId": "…", "displayName": "Beta", "role": "member" }
+] }
+```
+
+On the **API-key** channel the actor is the key's own tenant, so a key caller typically gets an empty list — the switcher
+is a portal/console feature. A membership whose workspace no longer exists is skipped, never surfaced as a dangling row.

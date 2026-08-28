@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using Bunit;
 using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
@@ -153,6 +154,47 @@ public class AppLayoutTests : BunitContext
         switchForm.QuerySelector("input[name=workspace]")!.GetAttribute("value").ShouldBe("tenant-beta");
     }
 
+    [Fact]
+    public void A_console_workspace_list_failure_falls_back_to_the_single_workspace()
+    {
+        // In console mode, if GET /workspaces fails the switcher degrades to the active workspace (from the profile), never
+        // breaking the shell. The usage widget still loads independently.
+        var handler = new StubHttpMessageHandler(req =>
+            req.Path.EndsWith("workspaces", StringComparison.Ordinal) ? ClientTestHarness.Empty(HttpStatusCode.InternalServerError)
+            : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(new UsageResponse(new UsageSlots(0, 5), new UsageQueueStats(0, 0, 0), 0, new UsageEvents(0, 0, 0, 0)))
+            : ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "Alpha Co", "Team", 5, 100)));
+        var cut = RenderShell(context: ConsoleContext("tenant-alpha", handler));
+
+        cut.Find("[data-testid=workspace-current]").TextContent.ShouldContain("Alpha Co"); // the single active workspace
+        cut.FindAll("[data-testid=workspace-menu]").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_stale_active_selection_not_in_the_list_shows_the_select_prompt()
+    {
+        // If the active workspace is not among the listed ones (a stale selection), none is badged active and the toggle
+        // shows the neutral "Select" prompt — every workspace offers a switch.
+        var handler = ApiReturningWorkspaces(
+            new TenantProfileResponse("tenant-x", "X Co", "Team", 5, 100),
+            new UsageResponse(new UsageSlots(0, 5), new UsageQueueStats(0, 0, 0), 0, new UsageEvents(0, 0, 0, 0)),
+            new WorkspaceList([new("tenant-x", "X Co", MembershipRole.Owner), new("tenant-y", "Y Co", MembershipRole.Member)]));
+        var cut = RenderShell(context: ConsoleContext("tenant-stale", handler)); // active tenant is in neither row
+
+        cut.Find("[data-testid=workspace-active]").TextContent.ShouldContain("Select");
+        cut.FindAll("form[action=\"/app/workspace\"]").Count.ShouldBe(2); // both workspaces are switchable
+    }
+
+    [Fact]
+    public void An_unresolvable_tenant_context_leaves_the_chrome_bare_without_a_switcher()
+    {
+        // The tenant context throwing (e.g. a rotated key ring) must not break the shell: no switcher, quiet usage placeholder.
+        var cut = RenderShell(context: new ThrowingTenantContext());
+
+        cut.FindAll("[data-testid=workspace-switcher]").ShouldBeEmpty();
+        cut.Find("[data-testid=usage-slots]").TextContent.ShouldContain("—");
+        cut.FindAll("a.nav-link").Count.ShouldBe(5); // the nav chrome is intact
+    }
+
     private static FakePortalTenantContext LinkedContext(StubHttpMessageHandler handler) =>
         new(PortalRunsTestSupport.TenantOver(handler));
 
@@ -174,4 +216,13 @@ public class AppLayoutTests : BunitContext
         new(req => req.Path.EndsWith("usage", StringComparison.Ordinal)
             ? ClientTestHarness.Json(usage)
             : ClientTestHarness.Json(profile));
+
+    private sealed class ThrowingTenantContext : IPortalTenantContext
+    {
+        public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) =>
+            Task.FromException<PortalTenant?>(new CryptographicException("ring rotated"));
+
+        public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
 }
