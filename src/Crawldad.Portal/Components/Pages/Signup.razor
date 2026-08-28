@@ -1,0 +1,159 @@
+@page "/signup"
+@inject IPortalAuthService Auth
+@inject ISignupLanding Landing
+@inject NavigationManager Nav
+
+<PageTitle>Create your free workspace · Crawldad</PageTitle>
+
+@*
+    Public signup (issue #119 PR8). Signup and sign-in are the SAME passwordless email-OTP mechanic — this page is a
+    purpose-framed wrapper over the EXISTING IPortalAuthService flow (enter email → emailed 6-character code → verify),
+    NOT a second OTP path. Static SSR so the form handler runs on the real HTTP POST and can issue the cookie
+    (HttpContext.SignInAsync) before the response is sent, exactly like /login. The ONLY thing signup does differently is
+    after verification (ISignupLanding): a brand-new, zero-workspace account is provisioned its one free workspace and lands
+    on the first-run dashboard; a returning account is treated exactly like a /login sign-in (ReturnUrl via SafeRedirect).
+    Enumeration-safe by construction: the email→code step is byte-identical to /login (same service, same neutral copy), and
+    the account-state branch happens only AFTER the OTP proves control of the address — never before, so an unknown and a
+    known address are indistinguishable through the whole request→verify exchange.
+*@
+<div class="container container-tight py-6">
+    <div class="text-center mb-4">
+        <a href="/" class="navbar-brand navbar-brand-autodark h1">Crawldad</a>
+    </div>
+    <div class="card card-md">
+        <div class="card-body">
+            <h2 class="h3 text-center mb-1">Create your free workspace</h2>
+            <p class="text-secondary text-center mb-4">
+                2 concurrent slots, bring your own browser, no credit card. We'll email you a one-time code — no password needed.
+            </p>
+
+            @if (_status is not null)
+            {
+                <div class="alert alert-info" role="status">@_status</div>
+            }
+            @if (_error is not null)
+            {
+                <div class="alert alert-danger" role="alert">@_error</div>
+            }
+
+            <EditForm Model="Input" FormName="signup" OnValidSubmit="HandleSubmitAsync">
+                <DataAnnotationsValidator />
+                <input type="hidden" name="Input.Step" value="@Input.Step" />
+                <input type="hidden" name="Input.ReturnUrl" value="@Input.ReturnUrl" />
+
+                <div class="mb-3">
+                    <label class="form-label" for="email">Email address</label>
+                    <InputText id="email" type="email" class="form-control" autocomplete="email"
+                               readonly="@IsVerifyStep" @bind-Value="Input.Email" />
+                    <ValidationMessage For="() => Input.Email" />
+                </div>
+
+                @if (IsVerifyStep)
+                {
+                    <div class="mb-3">
+                        <label class="form-label" for="code">Sign-in code</label>
+                        <InputText id="code" class="form-control" autocomplete="one-time-code"
+                                   placeholder="6-character code" @bind-Value="Input.Code" />
+                    </div>
+                }
+
+                <div class="form-footer">
+                    <button type="submit" class="btn btn-primary w-100">
+                        @(IsVerifyStep ? "Create workspace & sign in" : "Email me a code")
+                    </button>
+                </div>
+            </EditForm>
+
+            @if (IsVerifyStep)
+            {
+                <p class="text-center text-secondary mt-3">
+                    <a href="/signup">Use a different email</a>
+                </p>
+            }
+        </div>
+    </div>
+    <p class="text-center text-secondary mt-3">
+        Already have a workspace? <a href="/login">Sign in</a>
+    </p>
+</div>
+
+@code {
+    [CascadingParameter]
+    public HttpContext HttpContext { get; set; } = default!;
+
+    // No initializer here (BL0008): a form post would clobber it. The framework binds it on POST; on GET it is null, so
+    // OnInitialized seeds a fresh instance. The login form model is reused verbatim — signup is the same two-step wizard.
+    [SupplyParameterFromForm]
+    public LoginInput Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    private string? _status;
+    private string? _error;
+
+    private bool IsVerifyStep => string.Equals(Input.Step, LoginInput.StepVerify, StringComparison.Ordinal);
+
+    protected override void OnInitialized() => Input ??= new();
+
+    protected override void OnParametersSet()
+    {
+        // Seed the hidden ReturnUrl from the query on the initial GET, but only then — once the form carries it, the posted
+        // value wins. Byte-identical to the login page, so the SafeRedirect/ReturnUrl semantics are preserved.
+        if (string.IsNullOrEmpty(Input.ReturnUrl) && !string.IsNullOrEmpty(ReturnUrl))
+        {
+            Input.ReturnUrl = ReturnUrl;
+        }
+    }
+
+    private async Task HandleSubmitAsync()
+    {
+        if (IsVerifyStep)
+        {
+            await VerifyAsync();
+        }
+        else
+        {
+            await RequestAsync();
+        }
+    }
+
+    private async Task RequestAsync()
+    {
+        // Identical to /login: one challenge is created and "sent" for every address, so a known and an unknown address are
+        // indistinguishable (enumeration-safe). No branch on account state here — that would leak whether the address exists.
+        var email = PortalAuthService.NormalizeEmail(Input.Email);
+        var outcome = await Auth.RequestCodeAsync(email, HttpContext.RequestAborted);
+
+        Input.Email = email;
+        Input.Code = "";
+        Input.Step = LoginInput.StepVerify;
+        _status = OtpMessages.DescribeRequest(outcome, email);
+        _error = null;
+    }
+
+    private async Task VerifyAsync()
+    {
+        var result = await Auth.VerifyCodeAsync(Input.Email, Input.Code, HttpContext.RequestAborted);
+        if (result.Outcome != VerifyOutcome.Success)
+        {
+            Input.Step = LoginInput.StepVerify;
+            _status = null;
+            _error = OtpMessages.DescribeFailure(result.Outcome);
+            return;
+        }
+
+        // The OTP has now proven control of the address, so branching on account state below is safe. Cookie issuance is
+        // identical to /login and stays on this static-SSR POST (an interactive circuit has a null HttpContext).
+        await HttpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            PortalPrincipal.Create(result.Email, result.DisplayName),
+            new AuthenticationProperties { IsPersistent = true });
+
+        // The one thing signup does beyond /login: a brand-new account is provisioned its free workspace and lands on the
+        // first-run dashboard; a returning account lands exactly where /login would (ReturnUrl via SafeRedirect). Static SSR
+        // issues the redirect by throwing NavigationException; control does not return past this call.
+        var destination = await Landing.ResolveAsync(result.Email, Input.ReturnUrl, HttpContext.RequestAborted);
+        Nav.NavigateTo(destination, forceLoad: true);
+    }
+}

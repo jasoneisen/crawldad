@@ -6,8 +6,10 @@
 @*
     Public marketing landing page. Static SSR only (no @rendermode): every interaction is a link or an in-page
     anchor, and the FAQ accordions are native <details>/<summary> — no JavaScript beyond what the vendored Tabler
-    bundle already ships. Conversion CTAs ("Start free", "Sign in", "Choose <plan>") route to the existing OTP
-    /login; section links are in-page anchors. Styling lives in wwwroot/marketing.css (linked by LandingLayout).
+    bundle already ships. Acquisition CTAs ("Start free") route to /signup (create the free workspace); "Sign in"
+    and the paid "Choose <plan>" cards route to the existing OTP /login (issue #119 PR8); section links are in-page
+    anchors. Both /signup and /login run the SAME passwordless OTP mechanic — /signup just provisions on first login.
+    Styling lives in wwwroot/marketing.css (linked by LandingLayout).
     Copy tracks docs/MARKETING.md (value-equation framing, personas, risk-reversal) and docs/BUSINESS_MODEL.md
     (Free / $99 Team / $499 Scale / Enterprise); webhooks and drift monitoring are shipped features and are
     presented as such.
@@ -55,7 +57,7 @@
             </nav>
             <div class="ms-auto d-flex align-items-center gap-2">
                 <a class="navlink d-none d-sm-inline me-2" href="/login">Sign in</a>
-                <a class="btn btn-brand" href="/login">Start free</a>
+                <a class="btn btn-brand" href="/signup">Start free</a>
             </div>
         </div>
     </div>
@@ -77,7 +79,7 @@
                     codebase, and never operate scraping infrastructure again.
                 </p>
                 <div class="d-flex flex-wrap gap-2 mb-4">
-                    <a class="btn btn-brand btn-lg px-4" href="/login">Start free</a>
+                    <a class="btn btn-brand btn-lg px-4" href="/signup">Start free</a>
                     <a class="btn btn-ghost-ink btn-lg px-4" href="#how">Read the docs</a>
                 </div>
                 <div class="trust-row d-flex flex-wrap align-items-center gap-2">
@@ -307,7 +309,7 @@
                     </div>
                     <div class="mb-1"><span class="price-amt">$0</span></div>
                     <div class="mb-3"><span class="price-slots">2 slots</span> <span class="small" style="color:var(--muted)">concurrent</span></div>
-                    <a class="btn btn-quiet w-100 mb-3" href="/login">Start free</a>
+                    <a class="btn btn-quiet w-100 mb-3" href="/signup">Start free</a>
                     <ul class="plist">
                         <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>1 seat · 5 managed payloads</li>
                         <li><svg class="ck" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6" /></svg>7-day timeline retention</li>
@@ -480,7 +482,7 @@
             <h2 class="h2-section mb-2">Point a payload at your browser. First run in minutes.</h2>
             <p class="lead-tight mb-4 mx-auto" style="max-width:36rem;">The free tier is a genuine lead magnet — 2 concurrent slots, BYO browser, no credit card. Grow into slots and collaboration only when a wall actually arrives.</p>
             <div class="d-flex flex-wrap gap-2 justify-content-center">
-                <a class="btn btn-brand btn-lg px-4" href="/login">Start free</a>
+                <a class="btn btn-brand btn-lg px-4" href="/signup">Start free</a>
                 <a class="btn btn-quiet btn-lg px-4" href="#how">Read the docs</a>
             </div>
         </div>
