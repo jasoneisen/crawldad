@@ -33,6 +33,12 @@ param tenantApiKey = readEnvironmentVariable('PROD_TENANT_API_KEY', 'PLACEHOLDER
 param postmarkServerToken = readEnvironmentVariable('PROD_PORTAL_POSTMARK_SERVER_TOKEN', '')
 param portalEmailFromAddress = 'noreply@crawldad.dev'
 
+// Console auth (issue #119 PR2): the API's ConsolePrincipal scheme audience/issuer, set ONCE by the operator after
+// running docs/CONSOLE_AUTH_RUNBOOK.md (App Registration + Console.Access AppRole — Microsoft Graph, not ARM). Empty
+// (default) ⇒ inert, deploy stays green. Non-secret; read from the environment so this file needs no edit.
+param consoleAuthTenantId = readEnvironmentVariable('PROD_CONSOLE_AUTH_TENANT_ID', '')
+param consoleAuthAudience = readEnvironmentVariable('PROD_CONSOLE_AUTH_AUDIENCE', '')
+
 param storageContainer = 'crawldad-blobs'
 
 // Production durability shape: keep at least one replica warm (Wolverine queue polling, RunDeadline scheduling,

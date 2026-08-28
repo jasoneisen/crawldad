@@ -41,6 +41,13 @@ param betaTenantApiKey = readEnvironmentVariable('BETA_TENANT_API_KEY', '')
 param postmarkServerToken = readEnvironmentVariable('PORTAL_POSTMARK_SERVER_TOKEN', '')
 param portalEmailFromAddress = 'noreply@crawldad.dev' // matches the Postmark-registered crawldad.dev domain (DKIM/Return-Path verification via Cloudflare DNS)
 
+// Console auth (issue #119 PR2): the API's ConsolePrincipal scheme audience/issuer, set ONCE by the operator after
+// running docs/CONSOLE_AUTH_RUNBOOK.md (which stands up the App Registration + Console.Access AppRole — Microsoft Graph,
+// not ARM). Empty (default) ⇒ the scheme stays inert and the deploy stays green. Non-secret (a directory GUID + a public
+// App ID URI), read from the environment so this file needs no edit; RequiredRole keeps its 'Console.Access' default.
+param consoleAuthTenantId = readEnvironmentVariable('CONSOLE_AUTH_TENANT_ID', '')
+param consoleAuthAudience = readEnvironmentVariable('CONSOLE_AUTH_AUDIENCE', '')
+
 param storageContainer = 'crawldad-blobs'
 
 // Scale-to-zero for cost (ARCHITECTURE.md B.3 trade-off documented in the PR). 0.5 vCPU / 1 GiB is a valid

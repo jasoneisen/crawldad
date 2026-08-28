@@ -88,6 +88,21 @@ param portalEmailFromAddress string = 'noreply@crawldad.dev'
 @description('Postmark message stream for portal OTP mail. The Postmark built-in transactional stream is named outbound; only change it for a differently-named transactional stream. Ignored unless postmarkServerToken is set.')
 param portalEmailMessageStream string = 'outbound'
 
+// ── Console auth (issue #119 PR2 — the inert ConsolePrincipal scheme's audience/issuer) ───────────────────────────────
+// These are set by the operator ONCE after running docs/CONSOLE_AUTH_RUNBOOK.md (which stands up the API App Registration
+// + Console.Access AppRole and assigns it to the portal's UAMI — Microsoft Graph objects, not ARM, so they are provisioned
+// out of band). Empty (the default) ⇒ the API's ConsolePrincipal scheme is never registered and ApiKey stays the sole
+// scheme, so the deploy stays green and behaviour is unchanged until the operator opts in. Non-secret (a directory GUID +
+// a public App ID URI), read from the environment so the param files need no edit.
+@description('Entra directory (tenant) GUID that issues the portal UAMI access token the ConsolePrincipal scheme validates. Empty ⇒ the scheme stays inert.')
+param consoleAuthTenantId string = ''
+
+@description('The API App Registration App ID URI used as the ConsolePrincipal token audience (e.g. api://crawldad-api-stg). Empty ⇒ the scheme stays inert.')
+param consoleAuthAudience string = ''
+
+@description('The AppRole value the portal UAMI must carry (fail-closed). Defaults to Console.Access; only wired when both consoleAuthTenantId and consoleAuthAudience are set.')
+param consoleAuthRequiredRole string = 'Console.Access'
+
 // ── Storage ─────────────────────────────────────────────────────────────────────────
 @description('Blob container all tenants share (partitioned by a {tenant}/ prefix).')
 param storageContainer string = 'crawldad-blobs'
@@ -128,6 +143,7 @@ var names = {
   logAnalytics: 'log-crawldad-${envToken}'
   acr: 'crcrawldad${envToken}${uniq}'
   appIdentity: 'id-crawldad-${envToken}-app'
+  portalIdentity: 'id-crawldad-${envToken}-portal'
   postgres: 'psql-crawldad-${envToken}-${uniq}'
   storage: 'stcrawldad${envToken}${uniq}'
   keyVault: take('kv-crawldad-${envToken}-${uniq}', 24)
@@ -171,6 +187,21 @@ module identity 'modules/identity.bicep' = {
   }
 }
 
+// The PORTAL's OWN least-privilege identity (issue #119 PR2). The portal container app runs under THIS identity instead
+// of the API's shared one — it gets AcrPull, a Key Vault Secrets User grant scoped to ONLY the two secrets the portal
+// reads (marten connection string + Postmark token), Crypto User on ONLY its Data-Protection wrapping key, and Blob Data
+// Contributor on ONLY its Data-Protection container. So a portal compromise can no longer read the API's whole vault, and
+// the portal ring keeps decrypting (the review's finding #6). The API identity above is untouched.
+module portalIdentity 'modules/identity.bicep' = {
+  scope: rg
+  name: 'portal-identity'
+  params: {
+    name: names.portalIdentity
+    location: location
+    tags: tags
+  }
+}
+
 module registry 'modules/registry.bicep' = {
   scope: rg
   name: 'registry'
@@ -179,6 +210,7 @@ module registry 'modules/registry.bicep' = {
     location: location
     tags: tags
     appIdentityPrincipalId: identity.outputs.principalId
+    portalIdentityPrincipalId: portalIdentity.outputs.principalId
   }
 }
 
@@ -206,6 +238,7 @@ module storage 'modules/storage.bicep' = {
     dataProtectionContainer: dataProtectionContainer
     portalDataProtectionContainer: portalDataProtectionContainer
     appIdentityPrincipalId: identity.outputs.principalId
+    portalIdentityPrincipalId: portalIdentity.outputs.principalId
   }
 }
 
@@ -217,6 +250,7 @@ module keyvault 'modules/keyvault.bicep' = {
     location: location
     tags: tags
     appIdentityPrincipalId: identity.outputs.principalId
+    portalIdentityPrincipalId: portalIdentity.outputs.principalId
     pgFqdn: postgres.outputs.fqdn
     pgAdminLogin: pgAdminLogin
     pgAdminPassword: pgAdminPassword
@@ -242,6 +276,10 @@ module app 'modules/app.bicep' = {
     logAnalyticsName: monitoring.outputs.name
     appIdentityId: identity.outputs.id
     appIdentityClientId: identity.outputs.clientId
+    // The portal's OWN identity (issue #119 PR2): the portal container app + its KV secret refs + its ACR pull all run
+    // under this, not the API's shared identity. The API app + db-apply job keep appIdentity* above, untouched.
+    portalIdentityId: portalIdentity.outputs.id
+    portalIdentityClientId: portalIdentity.outputs.clientId
     image: serveImage
     portalImage: portalImage
     acrLoginServer: registry.outputs.loginServer
@@ -260,6 +298,11 @@ module app 'modules/app.bicep' = {
     portalPostmarkTokenSecretName: empty(postmarkServerToken) ? '' : 'portal-postmark-server-token'
     portalEmailFromAddress: portalEmailFromAddress
     portalEmailMessageStream: portalEmailMessageStream
+    // Console auth (issue #119 PR2): both non-empty ⇒ the API container gets Crawldad__ConsoleAuth__* env and registers
+    // the (still inert) ConsolePrincipal scheme; empty ⇒ no env, no scheme, deploy stays green.
+    consoleAuthTenantId: consoleAuthTenantId
+    consoleAuthAudience: consoleAuthAudience
+    consoleAuthRequiredRole: consoleAuthRequiredRole
     tenantId: tenantId
     tenantActor: tenantActor
     betaTenantId: betaTenantId
@@ -284,3 +327,7 @@ output portalAppName string = app.outputs.portalAppName
 output portalAppFqdn string = app.outputs.portalAppFqdn
 output postgresFqdn string = postgres.outputs.fqdn
 output appIdentityClientId string = identity.outputs.clientId
+// The portal identity's principal id (issue #119 PR2) — the object id the operator runbook assigns the Console.Access
+// AppRole to (Microsoft Graph, out of band). Surfaced so the runbook can read it from the deploy outputs.
+output portalIdentityClientId string = portalIdentity.outputs.clientId
+output portalIdentityPrincipalId string = portalIdentity.outputs.principalId

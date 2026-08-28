@@ -134,6 +134,11 @@ public static class HostConfiguration
             .AddScheme<ApiKeyOptions, ApiKeyAuthenticationHandler>(CrawldadAuthentication.Scheme, configureOptions: null);
         builder.Services.AddAuthorization();
 
+        // The config-gated console-principal scheme (issue #119 PR2). Registered ONLY when Crawldad:ConsoleAuth is set,
+        // and as a NON-default scheme no endpoint opts into yet — so when unconfigured (every host today) it adds nothing
+        // and ApiKey stays the sole/default scheme. Inert by construction: it changes zero runtime behaviour in this PR.
+        ConsoleAuthModule.AddConsolePrincipal(builder.Services, builder.Configuration);
+
         // Replace the plain CredentialScrubber registration (RunsModule) with one that also redacts the configured tenant
         // API keys everywhere — resolved from the same bound options, so the scrubber's always-on set is the live key set.
         // Keys shorter than the scrubber's exact-match floor are inert there (and the registry rejects them at boot anyway).

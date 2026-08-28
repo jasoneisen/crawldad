@@ -19,6 +19,10 @@
     <!-- The durable Azure Blob storage adapter. The filesystem adapter is the hermetic default;
          this is the Azure-native durable seam for the Azure deployment target, tested against Azurite. -->
     <PackageReference Include="Azure.Storage.Blobs" />
+    <!-- The config-gated ConsolePrincipal auth scheme (issue #119 PR2): a JwtBearer scheme that validates the portal
+         UAMI's first-party Entra v1.0 access token (AppRole-gated). Registered only when Crawldad:ConsoleAuth is set;
+         absent that config the scheme is never added and ApiKey remains the sole/default scheme. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <!-- Persist the Data Protection key ring to a blob wrapped by a Key Vault key (issue #65), authenticated with the
          app's managed identity. Wired only when Crawldad:DataProtection is configured; absent config keeps the default. -->
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" />

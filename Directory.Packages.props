@@ -42,6 +42,14 @@
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.21.2" />
   </ItemGroup>
 
+  <ItemGroup Label="Console auth (issue #119 PR2)">
+    <!-- The config-gated ConsolePrincipal JwtBearer scheme validates the portal UAMI's first-party Entra access token
+         (v1.0 shape, AppRole-gated). Registered ONLY when Crawldad:ConsoleAuth is configured; absent that config the
+         scheme is never added and ApiKey stays the sole/default scheme. Its Microsoft.IdentityModel.* closure
+         (Protocols.OpenIdConnect/Tokens/JsonWebTokens 8.0.1) is auto-pinned by transitive pinning above. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+  </ItemGroup>
+
   <ItemGroup Label="Data Protection key ring (Azure)">
     <!-- Persist the ASP.NET Data Protection key ring so registered browser credentials survive redeploys (issue #65):
          the ring is stored in a blob and each key wrapped by a Key Vault key, both reached with the app's managed

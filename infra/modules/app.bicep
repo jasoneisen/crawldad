@@ -37,6 +37,12 @@ param appIdentityId string
 @description('App identity client id — set as AZURE_CLIENT_ID so DefaultAzureCredential picks THIS user-assigned identity.')
 param appIdentityClientId string
 
+@description('Portal identity resource id (issue #119 PR2) — the portal container app runs under THIS least-privilege identity, not the shared app identity. Already granted AcrPull + secret-scoped Secrets User + portal-key Crypto User + portal-container Blob Contributor.')
+param portalIdentityId string
+
+@description('Portal identity client id (issue #119 PR2) — set as the portal container AZURE_CLIENT_ID so DefaultAzureCredential picks the portal-owned user-assigned identity for its Data-Protection blob + Key Vault access.')
+param portalIdentityClientId string
+
 @description('Container image for the app + job (pinned by digest by the deploy workflow).')
 param image string
 
@@ -94,6 +100,15 @@ param portalEmailFromAddress string = ''
 @description('Postmark message stream for portal OTP mail (issue #119). Wired only when portalPostmarkTokenSecretName is set.')
 param portalEmailMessageStream string = ''
 
+@description('Entra directory (tenant) GUID for the API ConsolePrincipal scheme (issue #119 PR2). Empty ⇒ the scheme stays inert and no Crawldad__ConsoleAuth__* env is set.')
+param consoleAuthTenantId string = ''
+
+@description('API App-ID-URI audience for the ConsolePrincipal scheme (issue #119 PR2). Empty ⇒ the scheme stays inert.')
+param consoleAuthAudience string = ''
+
+@description('AppRole the portal UAMI must carry for the ConsolePrincipal scheme (issue #119 PR2). Wired only when consoleAuthTenantId + consoleAuthAudience are both set.')
+param consoleAuthRequiredRole string = 'Console.Access'
+
 @description('Placeholder-tenant id (partition/billing subject; must not contain ":").')
 param tenantId string
 
@@ -137,6 +152,11 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
 
 // KV-backed secret refs, resolved passwordless via the app identity (Key Vault Secrets User).
 var hasBetaTenant = !empty(betaTenantApiKeySecretName)
+
+// Console auth (issue #119 PR2): both non-empty ⇒ wire the API's Crawldad__ConsoleAuth__* env so the (still inert)
+// ConsolePrincipal scheme is registered. An all-or-nothing gate mirroring the host's own boot validator (a half-set
+// pair fails boot), so the container never boots half-configured. Empty ⇒ no env, no scheme, deploy stays green.
+var hasConsoleAuth = !empty(consoleAuthTenantId) && !empty(consoleAuthAudience)
 var appSecrets = concat(
   [
     { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: appIdentityId }
@@ -176,6 +196,15 @@ var appEnv = concat(
         { name: 'Crawldad__Tenants__1__Id', value: betaTenantId }
         { name: 'Crawldad__Tenants__1__Actor', value: betaTenantActor }
         { name: 'Crawldad__Tenants__1__ApiKey', secretRef: 'beta-tenant-apikey' }
+      ]
+    : [],
+  hasConsoleAuth
+    ? [
+        // The inert ConsolePrincipal scheme's audience/issuer (issue #119 PR2). Non-secret (a directory GUID + a public
+        // App ID URI), so both are plain values — no KV secret ref. Signing keys come from Entra metadata at runtime.
+        { name: 'Crawldad__ConsoleAuth__TenantId', value: consoleAuthTenantId }
+        { name: 'Crawldad__ConsoleAuth__Audience', value: consoleAuthAudience }
+        { name: 'Crawldad__ConsoleAuth__RequiredRole', value: consoleAuthRequiredRole }
       ]
     : []
 )
@@ -258,14 +287,15 @@ resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
 }
 
 // ── Portal ────────────────────────────────────────────────────────────────────────────────────────────────
-// The customer-facing Blazor SSR portal, sharing this environment, identity, and registry with the API. It is a thin
-// auth+shell host with its OWN Marten document store on the SAME Postgres, isolated in the code-configured "portal"
-// schema — so it needs only the Marten connection to boot (the identical KV secret the API uses; same server, the
-// portal picks its schema in code). It carries NO storage/tenant config (those are API concerns), but it DOES persist
-// its OWN Data Protection key ring (issue #119): its own blob container + its own Key Vault key, reached passwordless
-// via the SHARED app identity (AZURE_CLIENT_ID → DefaultAzureCredential). Without it, every restart/replace would
-// rotate the ring — signing users out AND orphaning the Data-Protected tenant API keys it stores (the "relink needed"
-// path). The ring is isolated from the API's by a distinct application discriminator, purpose, blob, and wrapping key.
+// The customer-facing Blazor SSR portal, sharing this environment with the API but running under its OWN least-privilege
+// identity + registry pull (issue #119 PR2). It is a thin auth+shell host with its OWN Marten document store on the SAME
+// Postgres, isolated in the code-configured "portal" schema — so it needs only the Marten connection to boot (the
+// identical KV secret the API uses; same server, the portal picks its schema in code). It carries NO storage/tenant
+// config (those are API concerns), but it DOES persist its OWN Data Protection key ring (issue #119): its own blob
+// container + its own Key Vault key, reached passwordless via the PORTAL identity (AZURE_CLIENT_ID → DefaultAzureCredential)
+// which holds a Crypto User grant on that key + Blob Contributor on that container. Without it, every restart/replace
+// would rotate the ring — signing users out AND orphaning the Data-Protected tenant API keys it stores (the "relink
+// needed" path). The ring is isolated from the API's by a distinct application discriminator, purpose, blob, and key.
 //
 // Schema: the portal has no out-of-band db-apply command, and a normal start applies schema only in Development, so in
 // Staging/Production it relies on Marten's default runtime auto-create (AutoCreate.CreateOrUpdate) on first document
@@ -281,22 +311,29 @@ resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
 var hasPortalEmail = !empty(portalPostmarkTokenSecretName)
 
 // The portal reuses the API's marten-connection-string KV secret verbatim (same Postgres; "portal" schema selected in
-// code), plus — when email is configured — the Postmark token secret. All resolved passwordless via the app identity.
+// code), plus — when email is configured — the Postmark token secret. Since issue #119 PR2 these resolve passwordless via
+// the portal's OWN identity (secret-scoped Secrets User on exactly these two secrets), not the shared app identity.
 var portalSecrets = concat(
   [
-    { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: appIdentityId }
+    { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: portalIdentityId }
   ],
   hasPortalEmail
-    ? [{ name: 'portal-postmark-server-token', keyVaultUrl: '${keyVaultUri}secrets/${portalPostmarkTokenSecretName}', identity: appIdentityId }]
+    ? [{ name: 'portal-postmark-server-token', keyVaultUrl: '${keyVaultUri}secrets/${portalPostmarkTokenSecretName}', identity: portalIdentityId }]
     : []
 )
+
+// The portal pulls its image under its OWN identity (issue #119 PR2), so its registry entry names the portal identity
+// rather than the shared app identity's `registries` above.
+var portalRegistries = [
+  { server: acrLoginServer, identity: portalIdentityId }
+]
 
 var portalEnv = concat(
   [
     { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
-    // Point DefaultAzureCredential at the SHARED user-assigned identity (same one the API uses) for the portal's
-    // Data Protection blob + Key Vault access.
-    { name: 'AZURE_CLIENT_ID', value: appIdentityClientId }
+    // Point DefaultAzureCredential at the portal's OWN least-privilege user-assigned identity (issue #119 PR2) for the
+    // portal's Data Protection blob + Key Vault access — no longer the shared API identity.
+    { name: 'AZURE_CLIENT_ID', value: portalIdentityClientId }
     { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
     // The portal's OWN Data Protection key ring (issue #119): persisted to its own blob, wrapped by its own KV
     // key. BOTH set ⇒ durable + wrapped; the portal host fails fast if only one is set (its boot-time validator).
@@ -322,7 +359,8 @@ resource portal 'Microsoft.App/containerApps@2024-03-01' = {
   name: portalAppName
   location: location
   tags: tags
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${appIdentityId}': {} } }
+  // The portal's OWN least-privilege identity (issue #119 PR2), not the shared app identity the API + db-apply job use.
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${portalIdentityId}': {} } }
   properties: {
     managedEnvironmentId: cae.id
     configuration: {
@@ -333,7 +371,7 @@ resource portal 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         traffic: [ { weight: 100, latestRevision: true } ]
       }
-      registries: registries
+      registries: portalRegistries
       secrets: portalSecrets
     }
     template: {

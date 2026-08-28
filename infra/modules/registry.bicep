@@ -16,6 +16,9 @@ param tags object
 @description('Principal id of the app identity that pulls images (granted AcrPull on this registry).')
 param appIdentityPrincipalId string
 
+@description('Principal id of the portal identity that pulls the portal image (granted its own AcrPull on this registry). Issue #119 PR2.')
+param portalIdentityPrincipalId string
+
 // Built-in role: AcrPull.
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
@@ -35,6 +38,18 @@ resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
     principalId: appIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The portal's own AcrPull (issue #119 PR2): the portal container app pulls its image under its OWN identity, so that
+// identity needs its own pull grant — the API identity's grant above does not extend to it.
+resource portalAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(acr.id, portalIdentityPrincipalId, acrPullRoleId)
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
+    principalId: portalIdentityPrincipalId
     principalType: 'ServicePrincipal'
   }
 }

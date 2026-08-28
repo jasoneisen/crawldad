@@ -1,6 +1,8 @@
 // Key Vault (RBAC) holding the app's three secrets + the two Data Protection key-ring wrapping keys (the API host's,
-// issue #65, and the portal host's, issue #119), plus the app identity's read (Secrets User) and wrap/unwrap
-// (Crypto User) grants. The Crypto User grant is vault-scoped, so it covers both wrapping keys with no second grant.
+// issue #65, and the portal host's, issue #119). The API identity holds vault-scoped read (Secrets User) + wrap/unwrap
+// (Crypto User), covering every secret and both wrapping keys. Since issue #119 PR2 the PORTAL identity holds its OWN
+// least-privilege grants instead of sharing the API's: Secrets User scoped to ONLY the two secrets it reads (marten +
+// Postmark) and Crypto User scoped to ONLY its own wrapping key — so a portal compromise can't read the API's secrets.
 //
 // The two connection strings are COMPOSED here (not passed in) so the Postgres password and the storage account key
 // never become deployment outputs: the marten string is built from the secure password + the Postgres FQDN, and the
@@ -20,6 +22,9 @@ param tags object
 
 @description('Principal id of the app identity (granted Key Vault Secrets User).')
 param appIdentityPrincipalId string
+
+@description('Principal id of the portal identity (issue #119 PR2). Granted Key Vault Secrets User scoped to ONLY the two secrets the portal reads (marten connection string + Postmark token) and Crypto User scoped to ONLY the portal Data-Protection wrapping key — least privilege, so it can never read the API-only secrets in this vault.')
+param portalIdentityPrincipalId string
 
 @description('Postgres fully-qualified domain name (public endpoint).')
 param pgFqdn string
@@ -137,6 +142,32 @@ resource kvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+// The portal identity's SECRET-scoped Secrets User grants (issue #119 PR2). This RBAC vault supports per-secret scope, so
+// the portal is granted read on ONLY the marten connection string (always) and — when configured — the Postmark token.
+// It therefore cannot read the API-only secrets (blob connection string, tenant/beta API keys), unlike the vault-wide
+// grant it previously shared. The role-assignment name is scoped by the SECRET's id, so it is distinct per secret.
+resource portalMartenSecretUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(martenSecret.id, portalIdentityPrincipalId, kvSecretsUserRoleId)
+  scope: martenSecret
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRoleId)
+    principalId: portalIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Only when the Postmark token secret exists (the portal reads it for the OTP mailer). Empty ⇒ neither the secret nor
+// this grant is created, mirroring the secret's own conditional creation above.
+resource portalPostmarkSecretUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(postmarkServerToken)) {
+  name: guid(postmarkTokenSecret.id, portalIdentityPrincipalId, kvSecretsUserRoleId)
+  scope: postmarkTokenSecret
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRoleId)
+    principalId: portalIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // The key wrapping the API host's persisted Data Protection key ring (issue #65). RSA 2048; only wrap/unwrap are needed.
 // The app references it by its VERSIONLESS id so key rotation keeps decrypting existing keys (encrypt uses the latest version).
 resource dataProtectionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
@@ -150,8 +181,8 @@ resource dataProtectionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
 }
 
 // The key wrapping the PORTAL host's persisted Data Protection key ring (issue #119) — its own wrapping key, symmetric
-// with the API's above. Referenced versionless for the same rotation reason. The app identity already holds vault-wide
-// Crypto User (the grant below is vault-scoped), so wrapping with THIS key needs no additional role assignment.
+// with the API's above. Referenced versionless for the same rotation reason. The API identity's vault-wide Crypto User
+// covers it; the portal identity gets its OWN Crypto User scoped to JUST this key (issue #119 PR2, finding #6 — below).
 resource dataProtectionPortalKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
   parent: kv
   name: 'dataprotection-portal'
@@ -162,14 +193,27 @@ resource dataProtectionPortalKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
   }
 }
 
-// Crypto User (wrap/unwrap), vault-scoped like the Secrets User grant above — it covers every key in the vault (the
-// API's dataprotection key AND the portal's dataprotection-portal key), so a second key needs no second grant.
+// Crypto User (wrap/unwrap) for the API identity, vault-scoped like its Secrets User grant above — it covers every key in
+// the vault (the API's dataprotection key AND the portal's dataprotection-portal key). Untouched by issue #119 PR2.
 resource kvCryptoUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(kv.id, appIdentityPrincipalId, kvCryptoUserRoleId)
   scope: kv
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvCryptoUserRoleId)
     principalId: appIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The portal identity's KEY-scoped Crypto User grant (issue #119 PR2, the review's finding #6). Scoped to ONLY the portal
+// Data-Protection wrapping key, so the portal ring keeps unwrapping — the review's "the portal's ring MUST keep
+// decrypting or the stored-key path dies" — while the portal identity gains NO wrap/unwrap over the API's key.
+resource portalKeyCryptoUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(dataProtectionPortalKey.id, portalIdentityPrincipalId, kvCryptoUserRoleId)
+  scope: dataProtectionPortalKey
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvCryptoUserRoleId)
+    principalId: portalIdentityPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
