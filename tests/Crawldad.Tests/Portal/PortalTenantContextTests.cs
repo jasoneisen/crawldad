@@ -33,7 +33,7 @@ public class PortalTenantContextTests
     private static PortalTenantLink UndecryptableLinkFor(string email, string tenantId) =>
         new() { Email = email, TenantId = tenantId, ProtectedApiKey = "not-valid-dp-ciphertext" };
 
-    private static (PortalTenantContext Context, CapturingHandler Handler) ConsoleContextFor(IHttpContextAccessor accessor, FakeLinkStore store)
+    private static (PortalTenantContext Context, CapturingHandler Handler) ConsoleContextFor(IHttpContextAccessor accessor, FakeLinkStore store, FakeSelectionStore? selections = null)
     {
         var capture = new CapturingHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(3, 0, 0)));
         var config = new ConfigurationBuilder()
@@ -41,7 +41,7 @@ public class PortalTenantContextTests
             .Build();
         var consoleClients = new ConsoleClientFactory(new StubHandlerFactory(capture), new FakeTokenSource("entra-token"), config);
         var context = new PortalTenantContext(
-            accessor, store, _protection, new StubHttpClientFactory(capture, new Uri("https://api.crawldad.test/")), consoleClients);
+            accessor, store, selections ?? new FakeSelectionStore(), _protection, new StubHttpClientFactory(capture, new Uri("https://api.crawldad.test/")), consoleClients);
         return (context, capture);
     }
 
@@ -57,11 +57,11 @@ public class PortalTenantContextTests
 
     private static FakeHttpContextAccessor NoRequest() => new(httpContext: null);
 
-    private static (PortalTenantContext Context, StubHttpMessageHandler Handler) ContextFor(IHttpContextAccessor accessor, FakeLinkStore store)
+    private static (PortalTenantContext Context, StubHttpMessageHandler Handler) ContextFor(IHttpContextAccessor accessor, FakeLinkStore store, FakeSelectionStore? selections = null)
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(7, 0, 0)));
         var factory = new StubHttpClientFactory(handler, new Uri("https://api.crawldad.test/"));
-        return (new PortalTenantContext(accessor, store, _protection, factory), handler);
+        return (new PortalTenantContext(accessor, store, selections ?? new FakeSelectionStore(), _protection, factory), handler);
     }
 
     [Fact]
@@ -92,6 +92,35 @@ public class PortalTenantContextTests
         capture.Authorization.ShouldBe("Bearer entra-token");           // ...bearing the first-party token...
         capture.ConsoleUser.ShouldBe("user@example.com");               // ...and the normalized user selector...
         capture.Workspace.ShouldBe("tenant-42");                        // ...and the active-workspace selector.
+    }
+
+    [Fact]
+    public async Task Console_mode_scopes_to_the_active_workspace_selection()
+    {
+        // The account's link tenant is tenant-42, but it has switched its active workspace to tenant-99 (a different
+        // workspace it is a member of). Resolution must scope to tenant-99, and — since that is not the link tenant — carry
+        // no stored-key fallback (only the link tenant's key can back a fallback).
+        var store = new FakeLinkStore { Link = LinkFor("user@example.com", "tenant-42") };
+        var selections = new FakeSelectionStore { Selection = new PortalWorkspaceSelection { Email = "user@example.com", TenantId = "tenant-99" } };
+        var (context, capture) = ConsoleContextFor(AuthenticatedAs("user@example.com"), store, selections);
+
+        var tenant = await context.RequireAsync();
+
+        tenant.TenantId.ShouldBe("tenant-99");            // the active workspace, not the link tenant
+        tenant.StoredKeyRetained.ShouldBeFalse();          // a non-link workspace has no stored-key fallback
+        await tenant.Client.GetQueueStatsAsync();
+        capture.Workspace.ShouldBe("tenant-99");           // the selector names the active workspace
+    }
+
+    [Fact]
+    public async Task Stored_key_mode_ignores_a_stray_selection_and_uses_the_single_link()
+    {
+        // Stored-key mode is single-workspace: a selection left over from a console-mode session must not repoint it.
+        var store = new FakeLinkStore { Link = LinkFor("user@example.com", "tenant-42") };
+        var selections = new FakeSelectionStore { Selection = new PortalWorkspaceSelection { Email = "user@example.com", TenantId = "tenant-99" } };
+        var (context, _) = ContextFor(AuthenticatedAs("user@example.com"), store, selections);
+
+        (await context.RequireAsync()).TenantId.ShouldBe("tenant-42"); // the single stored link, not the stray selection
     }
 
     [Fact]
@@ -198,6 +227,19 @@ public class PortalTenantContextTests
 
         public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class FakeSelectionStore : IPortalWorkspaceSelectionStore
+    {
+        public PortalWorkspaceSelection? Selection { get; set; }
+
+        public Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default) => Task.FromResult(Selection);
+
+        public Task SetAsync(string email, string tenantId, CancellationToken cancellationToken = default)
+        {
+            Selection = new PortalWorkspaceSelection { Email = email, TenantId = tenantId };
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeHttpContextAccessor(HttpContext? httpContext) : IHttpContextAccessor

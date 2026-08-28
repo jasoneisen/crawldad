@@ -66,6 +66,7 @@ internal sealed class PortalTenantContext : IPortalTenantContext
 {
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IPortalTenantLinkStore _links;
+    private readonly IPortalWorkspaceSelectionStore _selections;
     private readonly IDataProtector _protector;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ConsoleClientFactory? _consoleClients;
@@ -76,12 +77,14 @@ internal sealed class PortalTenantContext : IPortalTenantContext
     public PortalTenantContext(
         IHttpContextAccessor httpContextAccessor,
         IPortalTenantLinkStore links,
+        IPortalWorkspaceSelectionStore selections,
         IDataProtectionProvider protection,
         IHttpClientFactory httpClientFactory,
         ConsoleClientFactory? consoleClients = null)
     {
         _httpContextAccessor = httpContextAccessor;
         _links = links;
+        _selections = selections;
         _protector = PortalTenancy.ApiKeyProtector(protection);
         _httpClientFactory = httpClientFactory;
         _consoleClients = consoleClients; // present only when Crawldad:ConsoleAuth is configured → console-mode
@@ -116,10 +119,14 @@ internal sealed class PortalTenantContext : IPortalTenantContext
             return null; // authenticated but not yet linked
         }
 
+        // The active workspace (issue #119 PR6): the account's stored selection, else its link tenant. Resolution honours it
+        // only in console-mode (stored-key mode is single-workspace); a stale selection is caught by the API's membership gate.
+        var active = (await _selections.GetAsync(email, cancellationToken))?.TenantId ?? link.TenantId;
+
         // The console-vs-key decision is shared with the circuit resolver so the two never drift (issue #119 PR5): console
         // -mode calls the API as the first-party console identity (reads console-first with the stored key as a transition
         // fallback, writes console-only); stored-key mode decrypts the key into the client exactly as today.
-        return PortalTenantResolution.Resolve(email, link, _protector, _httpClientFactory, _consoleClients);
+        return PortalTenantResolution.Resolve(email, link, active, _protector, _httpClientFactory, _consoleClients);
     }
 
     // The signed-in account's normalized email, or null when the request carries no authenticated portal principal.

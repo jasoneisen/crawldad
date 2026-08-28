@@ -113,6 +113,56 @@ public sealed class TenantMembershipStoreTests(ManagementFixture fixture) : IAsy
     }
 
     [Fact]
+    public async Task Create_records_the_requested_role_and_re_create_never_alters_it()
+    {
+        var tenant = NewTenant();
+        var member = await Store.CreateAsync(tenant, "m@x.test", MembershipRole.Member, DateTimeOffset.UnixEpoch, _ct);
+        member.Role.ShouldBe(MembershipRole.Member);
+
+        // A re-create returns the existing membership unchanged — its role is NOT silently promoted to the new argument.
+        var again = await Store.CreateAsync(tenant, "m@x.test", MembershipRole.Owner, DateTimeOffset.UnixEpoch, _ct);
+        again.Id.ShouldBe(member.Id);
+        again.Role.ShouldBe(MembershipRole.Member);
+    }
+
+    [Fact]
+    public async Task Change_role_promotes_demotes_and_no_ops_but_guards_the_last_owner()
+    {
+        var tenant = NewTenant();
+        var owner = await Store.CreateOwnerAsync(tenant, "o@x.test", DateTimeOffset.UnixEpoch, _ct);
+        var member = await Store.CreateAsync(tenant, "m@x.test", MembershipRole.Member, DateTimeOffset.UnixEpoch, _ct);
+
+        // Downgrading the ONLY owner is refused (would orphan the workspace) — nothing written.
+        (await Store.ChangeRoleAsync(tenant, owner.Id, MembershipRole.Member, DateTimeOffset.UnixEpoch, _ct)).ShouldBe(MembershipRoleChangeOutcome.LastOwner);
+        (await Store.FindActiveAsync(tenant, "o@x.test", _ct))!.Role.ShouldBe(MembershipRole.Owner);
+
+        // Promote the member → now there are two owners.
+        (await Store.ChangeRoleAsync(tenant, member.Id, MembershipRole.Owner, DateTimeOffset.UnixEpoch.AddMinutes(1), _ct)).ShouldBe(MembershipRoleChangeOutcome.Changed);
+        (await Store.FindActiveAsync(tenant, "m@x.test", _ct))!.Role.ShouldBe(MembershipRole.Owner);
+
+        // With two owners, downgrading one is now allowed.
+        (await Store.ChangeRoleAsync(tenant, owner.Id, MembershipRole.Member, DateTimeOffset.UnixEpoch.AddMinutes(2), _ct)).ShouldBe(MembershipRoleChangeOutcome.Changed);
+        (await Store.FindActiveAsync(tenant, "o@x.test", _ct))!.Role.ShouldBe(MembershipRole.Member);
+
+        // Setting a role a membership already has is a clean no-op.
+        (await Store.ChangeRoleAsync(tenant, member.Id, MembershipRole.Owner, DateTimeOffset.UnixEpoch.AddMinutes(3), _ct)).ShouldBe(MembershipRoleChangeOutcome.Changed);
+    }
+
+    [Fact]
+    public async Task Change_role_of_an_unknown_foreign_or_revoked_membership_is_not_found()
+    {
+        var tenant = NewTenant();
+        var owner = await Store.CreateOwnerAsync(tenant, "o@x.test", DateTimeOffset.UnixEpoch, _ct);
+        var member = await Store.CreateAsync(tenant, "m@x.test", MembershipRole.Member, DateTimeOffset.UnixEpoch, _ct);
+
+        (await Store.ChangeRoleAsync(tenant, Guid.NewGuid(), MembershipRole.Owner, DateTimeOffset.UnixEpoch, _ct)).ShouldBe(MembershipRoleChangeOutcome.NotFound); // unknown id
+        (await Store.ChangeRoleAsync("other-tenant", owner.Id, MembershipRole.Member, DateTimeOffset.UnixEpoch, _ct)).ShouldBe(MembershipRoleChangeOutcome.NotFound); // foreign
+
+        await Store.RevokeAsync(tenant, member.Id, DateTimeOffset.UnixEpoch, _ct); // revoke the member (owner keeps the workspace)
+        (await Store.ChangeRoleAsync(tenant, member.Id, MembershipRole.Owner, DateTimeOffset.UnixEpoch, _ct)).ShouldBe(MembershipRoleChangeOutcome.NotFound); // revoked
+    }
+
+    [Fact]
     public async Task Optimistic_concurrency_rejects_a_stale_membership_write()
     {
         var tenant = NewTenant();

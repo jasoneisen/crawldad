@@ -29,7 +29,9 @@ public static class ConsoleReadEndpoints
         "/tenant",                              // GET /tenant — the tenant profile
         "/usage",                               // GET /usage — capacity + consumption
         "/billing/config",                      // GET /billing/config — the tier/pricing config
-        "/tenant/keys",                         // GET /tenant/keys — the tenant's key list (its writes stay key-only)
+        "/tenant/keys",                         // GET /tenant/keys — the tenant's key list (its writes are Owner-only)
+        "/tenant/memberships",                  // GET /tenant/memberships — this workspace's members (Member-readable; mgmt is Owner-only)
+        "/workspaces",                          // GET /workspaces — the caller's own workspaces, for the switcher (issue #119 PR6)
     };
 
     /// <summary>True when an endpoint for HTTP <paramref name="methods"/> on <paramref name="route"/> is a console-read

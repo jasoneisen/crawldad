@@ -9,6 +9,7 @@
 @using Crawldad.Portal.Tenancy
 @inject IPortalTenantContext Tenants
 @inject IWorkspaceLinker Linker
+@inject IPortalWorkspaceSelectionStore Selections
 @inject NavigationManager Nav
 
 <PageTitle>Account &amp; usage · Crawldad</PageTitle>
@@ -118,15 +119,53 @@
     </div>
 </div>
 
-<!-- Workspace link -->
+<!-- Workspaces (multi-workspace switcher state, issue #119 PR6) -->
+<div class="card mt-3" id="workspaces">
+    <div class="card-header"><h3 class="card-title">Workspaces</h3></div>
+    <div class="card-body">
+        @if (!_linked)
+        {
+            <p class="text-secondary mb-0" data-testid="workspaces-unlinked">Attach a workspace below to get started.</p>
+        }
+        else
+        {
+            <p class="text-secondary">The workspaces you can act as. Switching changes the active workspace for every page.</p>
+            <div class="list-group" data-testid="workspaces-list">
+                @foreach (var ws in WorkspaceRows())
+                {
+                    <div class="list-group-item d-flex align-items-center justify-content-between" data-testid="workspace-row">
+                        <div>
+                            <span class="fw-semibold">@ws.Label</span>
+                            <span class="text-secondary ms-2 small">@ws.Role</span>
+                        </div>
+                        @if (ws.IsActive)
+                        {
+                            <span class="badge bg-primary" data-testid="workspace-active-badge">Active</span>
+                        }
+                        else
+                        {
+                            <form method="post" action="/app/workspace">
+                                <AntiforgeryToken />
+                                <input type="hidden" name="workspace" value="@ws.TenantId" />
+                                <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="workspace-switch">Switch</button>
+                            </form>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Workspace link / attach another -->
 <div class="card mt-3" id="workspace-link">
     <div class="card-header">
-        <h3 class="card-title">@(_linked ? "Update workspace link" : "Link your workspace")</h3>
+        <h3 class="card-title">@(_linked ? "Attach another workspace" : "Link your workspace")</h3>
     </div>
     <div class="card-body">
         <p class="text-secondary">
-            Paste your Crawldad workspace ID and a tenant API key. We verify the key against the API before saving it —
-            it is stored encrypted at rest and never shown again.
+            Paste a Crawldad workspace ID and a tenant API key. We verify the key against the API before saving it — it is
+            stored encrypted at rest and never shown again. Attaching switches you to that workspace; the others stay listed above.
         </p>
 
         @if (_error is not null)
@@ -531,6 +570,103 @@
     </div>
 </div>
 
+<!-- Members (issue #119 PR6): the workspace's members, and — for an Owner — add / change-role / remove controls. -->
+<div class="card mt-3 mb-3" id="members">
+    <div class="card-header"><h3 class="card-title">Members</h3></div>
+    <div class="card-body">
+        @if (!_linked || _relinkNeeded)
+        {
+            <div class="empty" data-testid="members-unlinked">
+                <p class="empty-title">Link your workspace to manage members</p>
+                <p class="empty-subtitle text-secondary">Once your workspace is linked, invite teammates and manage their roles here.</p>
+            </div>
+        }
+        else if (_membershipsUnavailable)
+        {
+            <div data-testid="members-operator-managed">
+                <p class="mb-0 text-secondary">This workspace is operator-managed; membership management isn't available here.</p>
+            </div>
+        }
+        else
+        {
+            @if (MemberError is not null)
+            {
+                <div class="alert alert-danger" role="alert" data-testid="members-action-error">@MemberError</div>
+            }
+
+            @if (ActiveMembers().Count == 0)
+            {
+                <p class="text-secondary" data-testid="members-empty">No members yet.</p>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-vcenter card-table">
+                        <thead>
+                            <tr><th>Member</th><th>Role</th><th class="w-1"></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in ActiveMembers())
+                            {
+                                <tr data-testid="member-row">
+                                    <td>@m.Email @(IsSelf(m) ? "(you)" : "")</td>
+                                    <td><span class="badge bg-secondary-lt" data-testid="member-role">@m.Role</span></td>
+                                    <td>
+                                        @if (_isOwner)
+                                        {
+                                            <form method="post" action="/app/members/role" class="d-inline">
+                                                <AntiforgeryToken />
+                                                <input type="hidden" name="membershipId" value="@m.MembershipId" />
+                                                <input type="hidden" name="role" value="@Other(m.Role)" />
+                                                <button type="submit" class="btn btn-sm btn-ghost-secondary" data-testid="member-role-toggle">Make @Other(m.Role)</button>
+                                            </form>
+                                            <form method="post" action="/app/members/remove" class="d-inline">
+                                                <AntiforgeryToken />
+                                                <input type="hidden" name="membershipId" value="@m.MembershipId" />
+                                                <button type="submit" class="btn btn-sm btn-ghost-danger" data-testid="member-remove">Remove</button>
+                                            </form>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            @if (_isOwner)
+            {
+                <hr class="my-3" />
+                <div class="fw-semibold mb-2">Add a member</div>
+                <p class="text-secondary small">They sign in with email OTP; their access is scoped to the role you pick. Only Owners can manage keys, members, and billing.</p>
+                <form method="post" action="/app/members/add" data-testid="add-member-form">
+                    <AntiforgeryToken />
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-6">
+                            <label class="form-label" for="member-email">Email</label>
+                            <input id="member-email" name="email" type="email" class="form-control" autocomplete="off" spellcheck="false" placeholder="teammate@example.com" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="member-role">Role</label>
+                            <select id="member-role" name="role" class="form-select">
+                                <option value="@MembershipRole.Member">Member</option>
+                                <option value="@MembershipRole.Owner">Owner</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" class="btn btn-primary w-100" data-testid="add-member-submit">Add member</button>
+                        </div>
+                    </div>
+                </form>
+            }
+            else
+            {
+                <p class="text-secondary small mt-2" data-testid="members-readonly">Only Owners can add or manage members.</p>
+            }
+        }
+    </div>
+</div>
+
 @code {
     [CascadingParameter]
     public HttpContext HttpContext { get; set; } = default!;
@@ -552,6 +688,10 @@
 
     [SupplyParameterFromForm(FormName = "revoke-key")]
     public KeyActionInput RevokeForm { get; set; } = default!;
+
+    // A member-management action's error, surfaced back on the PRG redirect from the member endpoints (issue #119 PR6).
+    [SupplyParameterFromQuery(Name = "memberError")]
+    public string? MemberError { get; set; }
 
     // Which key (if any) a confirm card is being shown for, from the row action link (?rotate=/?revoke=<keyId>).
     [SupplyParameterFromQuery(Name = "rotate")]
@@ -583,6 +723,12 @@
     // alongside the link + console-mode state. Env tenants have no membership surface (a 400 from GET /tenant/memberships).
     private TenantMembershipInfo? _myMembership;
     private bool _membershipsUnavailable;
+
+    // Multi-workspace + members state (issue #119 PR6). _workspaces is the signed-in user's own workspaces (the switcher's
+    // list, from GET /workspaces); _members is this workspace's members (from GET /tenant/memberships), managed by an Owner.
+    private IReadOnlyList<WorkspaceSummary> _workspaces = [];
+    private IReadOnlyList<TenantMembershipInfo> _members = [];
+    private bool _isOwner; // the signed-in user is an active Owner of this workspace → the member-management controls render
 
     private string? Email => HttpContext.User.FindFirstValue(ClaimTypes.Email);
 
@@ -619,6 +765,10 @@
         var result = await Linker.LinkAsync(email, Input.TenantId, Input.ApiKey, HttpContext.RequestAborted);
         if (result.Outcome == WorkspaceLinkOutcome.Linked)
         {
+            // Additive multi-workspace (issue #119 PR6): make the just-attached workspace the active one, so the switcher
+            // and every data page land on it. Any other workspaces stay reachable via their memberships (console mode).
+            await Selections.SetAsync(email, Input.TenantId.Trim(), HttpContext.RequestAborted);
+
             // Post/Redirect/Get: a fresh GET re-resolves the now-linked tenant and shows usage, and avoids a form
             // re-post. Static SSR issues the redirect by throwing NavigationException; control does not return past here.
             Nav.NavigateTo("/app/account?linked=true", forceLoad: true);
@@ -671,21 +821,25 @@
         // The tenant's own keys, for the API-keys section (independent of usage/billing state).
         await LoadKeysAsync(tenant);
 
-        // The signed-in user's console membership, for the console-access row (independent of everything above).
+        // The signed-in user's console membership + this workspace's members, for the console-access row and the members card.
         await LoadMembershipAsync(tenant);
+
+        // The signed-in user's own workspaces, for the workspaces card + switcher state (independent of everything above).
+        await LoadWorkspacesAsync(tenant);
     }
 
-    // The signed-in user's active membership for this tenant, or null. Never throws: an env tenant is a clean
-    // "operator-managed" state (400), and any other API hiccup simply leaves the row showing "no membership".
+    // The signed-in user's active membership for this tenant, plus this workspace's full member list. Never throws: an env
+    // tenant is a clean "operator-managed" state (400), and any other API hiccup simply leaves the rows empty.
     private async Task LoadMembershipAsync(PortalTenant tenant)
     {
         try
         {
             var normalized = Crawldad.Contracts.EmailAddress.Normalize(Email ?? "");
             var response = await tenant.Client.ListMembershipsAsync(HttpContext.RequestAborted);
-            var memberships = response.Memberships ?? []; // defensive: a malformed body never crashes the account page
-            _myMembership = memberships.FirstOrDefault(
+            _members = response.Memberships ?? []; // defensive: a malformed body never crashes the account page
+            _myMembership = _members.FirstOrDefault(
                 membership => membership.Active && string.Equals(membership.Email, normalized, StringComparison.Ordinal));
+            _isOwner = _myMembership is { Active: true, Role: MembershipRole.Owner }; // gates the member-management controls
         }
         catch (CrawldadApiException ex) when (ex.StatusCode == StatusCodes.Status400BadRequest)
         {
@@ -693,7 +847,26 @@
         }
         catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
         {
-            // Degrade cleanly — the row shows "no membership" rather than crashing the account page.
+            // Degrade cleanly — the rows stay empty rather than crashing the account page.
+        }
+    }
+
+    // The signed-in user's own workspaces (GET /workspaces) for the workspaces card + switcher state. Console-mode only —
+    // stored-key mode is single-workspace, so the card shows just the current linked workspace (WorkspaceRows' fallback).
+    private async Task LoadWorkspacesAsync(PortalTenant tenant)
+    {
+        if (tenant.AuthMode != PortalAuthMode.Console)
+        {
+            return;
+        }
+
+        try
+        {
+            _workspaces = (await tenant.Client.ListMyWorkspacesAsync(HttpContext.RequestAborted)).Workspaces;
+        }
+        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        {
+            // Best-effort — the workspaces card degrades to just the current workspace.
         }
     }
 
@@ -854,6 +1027,39 @@
     // A UTC timestamp as a compact, stable string for a key's created / last-used columns.
     private static string FormatUtc(DateTimeOffset when) =>
         when.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
+
+    // The workspace rows for the account card: the user's own workspaces (console mode), or the single current workspace
+    // (stored-key mode, where GET /workspaces comes back empty). The active one is flagged so its row shows the badge.
+    private IReadOnlyList<WorkspaceRow> WorkspaceRows()
+    {
+        if (_workspaces.Count > 0)
+        {
+            return [.. _workspaces.Select(w => new WorkspaceRow(
+                w.TenantId, w.DisplayName, w.Role.ToString(),
+                string.Equals(w.TenantId, _tenantId, StringComparison.Ordinal)))];
+        }
+
+        // Stored-key / single-workspace fallback: the current tenant (set whenever this card renders), labelled by its
+        // profile display name when the profile loaded, else its id.
+        var id = _tenantId!;
+        var label = string.IsNullOrEmpty(_profile?.DisplayName) ? id : _profile!.DisplayName;
+        var role = _myMembership is { } m ? m.Role.ToString() : "—";
+        return [new WorkspaceRow(id, label, role, true)];
+    }
+
+    // This workspace's active members (the listing already orders newest first).
+    private IReadOnlyList<TenantMembershipInfo> ActiveMembers() => [.. _members.Where(m => m.Active)];
+
+    // Whether a member row is the signed-in user (so it can be marked "you").
+    private bool IsSelf(TenantMembershipInfo member) =>
+        string.Equals(member.Email, Crawldad.Contracts.EmailAddress.Normalize(Email ?? ""), StringComparison.Ordinal);
+
+    // The role a "make X" toggle switches to — the opposite of the member's current role.
+    private static MembershipRole Other(MembershipRole role) =>
+        role == MembershipRole.Owner ? MembershipRole.Member : MembershipRole.Owner;
+
+    /// <summary>One workspace row in the account card — the tenant id a switch posts, its label, the user's role, and active.</summary>
+    private sealed record WorkspaceRow(string TenantId, string Label, string Role, bool IsActive);
 
     /// <summary>The optional label for a minted key.</summary>
     public sealed class MintKeyInput

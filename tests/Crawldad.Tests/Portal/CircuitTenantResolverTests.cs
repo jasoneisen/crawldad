@@ -34,11 +34,11 @@ public class CircuitTenantResolverTests
         new FakeAuthStateProvider(new ClaimsPrincipal(new ClaimsIdentity()));
 
     private static (CircuitTenantResolver Resolver, StubHttpMessageHandler Handler) ResolverFor(
-        AuthenticationStateProvider authState, FakeLinkStore store)
+        AuthenticationStateProvider authState, FakeLinkStore store, string? selection = null)
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(4, 0, 0)));
         var factory = new StubHttpClientFactory(handler, new Uri("https://api.crawldad.test/"));
-        return (new CircuitTenantResolver(authState, store, _protection, factory), handler);
+        return (new CircuitTenantResolver(authState, store, new FakeSelectionStore(selection), _protection, factory), handler);
     }
 
     [Fact]
@@ -69,6 +69,17 @@ public class CircuitTenantResolverTests
         // The store was queried with the OTP-normalized form — parity with PortalAuthService.NormalizeEmail, byte-for-byte.
         store.LastQueriedEmail.ShouldBe(StoredIdentity);
         store.LastQueriedEmail.ShouldBe(PortalAuthService.NormalizeEmail("  User@Example.COM  "));
+    }
+
+    [Fact]
+    public async Task A_stored_key_circuit_ignores_a_selection_and_resolves_the_single_link()
+    {
+        // A stray active-workspace selection (from a console session) must not repoint a stored-key circuit — it stays on the
+        // single link. This also exercises the selection lookup on the circuit path.
+        var store = new FakeLinkStore { Link = LinkFor("user@example.com", "tenant-77") };
+        var (resolver, _) = ResolverFor(AuthenticatedAs("user@example.com"), store, selection: "tenant-99");
+
+        (await resolver.TryResolveAsync())!.TenantId.ShouldBe("tenant-77");
     }
 
     [Fact]
@@ -128,5 +139,13 @@ public class CircuitTenantResolverTests
     private sealed class StubHttpClientFactory(HttpMessageHandler handler, Uri baseAddress) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false) { BaseAddress = baseAddress };
+    }
+
+    private sealed class FakeSelectionStore(string? tenantId) : IPortalWorkspaceSelectionStore
+    {
+        public Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default) =>
+            Task.FromResult(tenantId is null ? null : new PortalWorkspaceSelection { Email = email, TenantId = tenantId });
+
+        public Task SetAsync(string email, string tenantId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

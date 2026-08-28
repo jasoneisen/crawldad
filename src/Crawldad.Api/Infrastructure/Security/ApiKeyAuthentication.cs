@@ -28,6 +28,12 @@ internal static class CrawldadClaims
 
     /// <summary>The actor/display identity stamped on mutation events.</summary>
     public const string Actor = "crawldad:actor";
+
+    /// <summary>The console membership role (issue #119 PR6), stamped <b>only</b> on the console-principal identity — never
+    /// on the API-key identity, whose possession is full tenant authority. Read by the Owner-only authorization policy: a
+    /// console principal must carry an explicit <c>Owner</c> role to reach key/membership management; a key principal has no
+    /// role claim and is unrestricted.</summary>
+    public const string Role = "crawldad:role";
 }
 
 /// <summary>Options for the <see cref="ApiKeyAuthenticationHandler"/>. No settings today — the handler validates against the

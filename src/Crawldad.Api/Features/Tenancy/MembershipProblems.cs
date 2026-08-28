@@ -19,4 +19,20 @@ internal static class MembershipProblems
     /// through the SDK's <c>CrawldadValidationException</c> like any other field guard.</summary>
     public static IResult InvalidEmail(string message) =>
         Results.ValidationProblem(new Dictionary<string, string[]>(StringComparer.Ordinal) { ["email"] = [message] });
+
+    /// <summary>No such active membership for this tenant (remove/change-role) — unknown id, another tenant's (no existence
+    /// oracle), or already revoked. <c>404</c>.</summary>
+    public static IResult MembershipNotFound() =>
+        Results.Problem(
+            statusCode: StatusCodes.Status404NotFound,
+            title: "membership_not_found",
+            detail: "no such active membership for this workspace");
+
+    /// <summary>Removing or downgrading this membership would leave the workspace with no active Owner — refused (the
+    /// anti-orphan invariant). A workspace must always keep at least one Owner as its human recovery path. <c>409</c>.</summary>
+    public static IResult LastOwner() =>
+        Results.Problem(
+            statusCode: StatusCodes.Status409Conflict,
+            title: "last_owner",
+            detail: "cannot remove or downgrade the workspace's last Owner; promote another member to Owner first");
 }

@@ -16,11 +16,22 @@ public enum MembershipRole
     Member,
 }
 
-/// <summary>The <c>POST /tenant/memberships</c> request body: record (idempotently) an <see cref="MembershipRole.Owner"/>
-/// membership for <paramref name="Email"/> in the authenticated tenant. Called by the portal's attach flow after it has
-/// proved possession of the tenant key, so a subsequent console read for that verified email resolves to this tenant.</summary>
+/// <summary>The <c>POST /tenant/memberships</c> request body: record (idempotently) a membership for
+/// <paramref name="Email"/> in the authenticated tenant. Two callers: the portal's attach flow (after it has proved
+/// possession of the tenant key) records the signed-in user with the default <see cref="MembershipRole.Owner"/> role
+/// (<paramref name="Role"/> omitted); an Owner adding a teammate passes an explicit <paramref name="Role"/> (typically
+/// <see cref="MembershipRole.Member"/>). A re-record of an already-active <c>(tenant, email)</c> returns the existing
+/// membership unchanged — its role is not altered by a second record (use <see cref="ChangeMembershipRoleRequest"/>).</summary>
 /// <param name="Email">The verified portal email to grant the workspace to (normalized server-side).</param>
-public sealed record RecordMembershipRequest(string Email);
+/// <param name="Role">The role to record, or null to default to <see cref="MembershipRole.Owner"/> (the attach flow's
+/// self-owner). An explicit value is how an Owner adds a <see cref="MembershipRole.Member"/>.</param>
+public sealed record RecordMembershipRequest(string Email, MembershipRole? Role = null);
+
+/// <summary>The <c>POST /tenant/memberships/{id}/role</c> request body: set an existing membership's
+/// <paramref name="Role"/>. Owner-only. Downgrading the tenant's <b>last active <see cref="MembershipRole.Owner"/></b> is
+/// refused (the anti-orphan invariant) — a workspace must always keep at least one Owner.</summary>
+/// <param name="Role">The role to set the membership to.</param>
+public sealed record ChangeMembershipRoleRequest(MembershipRole Role);
 
 /// <summary>One of a tenant's memberships, as returned by <c>GET /tenant/memberships</c> and the record response —
 /// metadata only (the email is portal identity, never a credential).</summary>
