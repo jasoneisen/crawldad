@@ -31,6 +31,16 @@ public static class ManagementModule
         memberships.SingleTenanted();
         memberships.Index(x => x.Email);     // console lookup + a user's workspaces
         memberships.Index(x => x.TenantId);  // a tenant's members + the last-owner invariant
+        // Optimistic concurrency (issue #119 PR5, PR#153's forward-looking guard): a stale write to a membership loses, so a
+        // future member-management endpoint (PR6) is safe before it exists. The cross-row last-Owner count is covered by the
+        // tenant advisory lock in the store; the version covers a same-document race.
+        memberships.UseOptimisticConcurrency(true);
+
+        // The console-write audit documents (issue #119 PR5): single-tenanted (they record console authority decisions that
+        // resolve before any tenant scope), indexed by tenant for a tenant's console-activity view.
+        var audit = options.Schema.For<ConsoleAuditEntry>();
+        audit.SingleTenanted();
+        audit.Index(x => x.TenantId);
     }
 
     /// <summary>Maps the management endpoints under <c>/management</c>, guarded by the constant-time management-key filter

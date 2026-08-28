@@ -236,6 +236,33 @@ public sealed class TenantKeyEndpointTests(ManagementFixture fixture) : IAsyncLi
     }
 
     [Fact]
+    public async Task An_owner_membership_still_does_not_let_a_key_caller_revoke_its_own_last_key()
+    {
+        // Revoke-ALL exists for a tenant with a console recovery path — but the last key is the CURRENT key on a
+        // key-authenticated request, and refuse-current is unchanged: rotate it, or use the console (which presents no key).
+        var seed = await SeedTenantAsync();
+        await Host.Services.GetRequiredService<ITenantMembershipStore>().CreateOwnerAsync(seed.TenantId, "owner@x.test", DateTimeOffset.UnixEpoch, _ct);
+
+        var problem = (await DeleteKeyAsync(seed.Key, seed.KeyId, StatusCodes.Status409Conflict)).Value;
+        problem.GetProperty("title").GetString().ShouldBe("current_key"); // NOT last_active_key — the owner membership waived that
+
+        await AuthProbeAsync(seed.Key, StatusCodes.Status200OK); // still live
+    }
+
+    [Fact]
+    public async Task Revokes_a_non_current_key_even_when_it_is_not_the_last_and_an_owner_membership_exists()
+    {
+        // The revoke-ALL rule never blocks a normal revoke: with an Owner membership present, a non-current, non-last key
+        // revokes cleanly (this exercises the endpoint's allow-last path returning Revoked).
+        var seed = await SeedTenantAsync();
+        await Host.Services.GetRequiredService<ITenantMembershipStore>().CreateOwnerAsync(seed.TenantId, "owner@x.test", DateTimeOffset.UnixEpoch, _ct);
+        var second = await MintAsync(seed.Key, new { });
+        var secondId = second.GetProperty("keyId").GetGuid();
+
+        await DeleteKeyAsync(seed.Key, secondId, StatusCodes.Status204NoContent); // revoke the non-current key with the first
+    }
+
+    [Fact]
     public async Task Revoking_an_unknown_key_is_404()
     {
         var seed = await SeedTenantAsync();

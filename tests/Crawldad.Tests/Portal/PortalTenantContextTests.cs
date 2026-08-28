@@ -25,6 +25,26 @@ public class PortalTenantContextTests
         ProtectedApiKey = PortalTenancy.ApiKeyProtector(_protection).Protect(_apiKey),
     };
 
+    // A console-mode verify-then-discard link (no stored key) and a link whose ciphertext no longer decrypts (the DP ring
+    // rotated) — both console-mode shapes where the stored key is unavailable but the console credential still authenticates.
+    private static PortalTenantLink KeylessLinkFor(string email, string tenantId) =>
+        new() { Email = email, TenantId = tenantId, ProtectedApiKey = null };
+
+    private static PortalTenantLink UndecryptableLinkFor(string email, string tenantId) =>
+        new() { Email = email, TenantId = tenantId, ProtectedApiKey = "not-valid-dp-ciphertext" };
+
+    private static (PortalTenantContext Context, CapturingHandler Handler) ConsoleContextFor(IHttpContextAccessor accessor, FakeLinkStore store)
+    {
+        var capture = new CapturingHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(3, 0, 0)));
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>(StringComparer.Ordinal) { ["Crawldad:Api:BaseUrl"] = "https://api.crawldad.test/" })
+            .Build();
+        var consoleClients = new ConsoleClientFactory(new StubHandlerFactory(capture), new FakeTokenSource("entra-token"), config);
+        var context = new PortalTenantContext(
+            accessor, store, _protection, new StubHttpClientFactory(capture, new Uri("https://api.crawldad.test/")), consoleClients);
+        return (context, capture);
+    }
+
     private static FakeHttpContextAccessor AuthenticatedAs(string? email)
     {
         Claim[] claims = email is null ? [] : [new Claim(ClaimTypes.Email, email)];
@@ -62,21 +82,54 @@ public class PortalTenantContextTests
     public async Task Console_mode_resolves_a_console_client_bearing_the_token_and_selectors()
     {
         var store = new FakeLinkStore { Link = LinkFor("user@example.com", "tenant-42") };
-        var capture = new CapturingHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(3, 0, 0)));
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>(StringComparer.Ordinal) { ["Crawldad:Api:BaseUrl"] = "https://api.crawldad.test/" })
-            .Build();
-        var consoleClients = new ConsoleClientFactory(new StubHandlerFactory(capture), new FakeTokenSource("entra-token"), config);
-        var context = new PortalTenantContext(
-            AuthenticatedAs("User@Example.com"), store, _protection, new StubHttpClientFactory(capture, new Uri("https://api.crawldad.test/")), consoleClients);
+        var (context, capture) = ConsoleContextFor(AuthenticatedAs("User@Example.com"), store);
 
         var tenant = await context.RequireAsync();
 
         tenant.AuthMode.ShouldBe(PortalAuthMode.Console);
+        tenant.StoredKeyRetained.ShouldBeTrue();                        // a stored key remains → the transition read-fallback
         (await tenant.Client.GetQueueStatsAsync()).Queued.ShouldBe(3); // the console client calls the API...
         capture.Authorization.ShouldBe("Bearer entra-token");           // ...bearing the first-party token...
         capture.ConsoleUser.ShouldBe("user@example.com");               // ...and the normalized user selector...
         capture.Workspace.ShouldBe("tenant-42");                        // ...and the active-workspace selector.
+    }
+
+    [Fact]
+    public async Task Console_mode_with_a_keyless_link_is_pure_console_with_no_stored_key()
+    {
+        var store = new FakeLinkStore { Link = KeylessLinkFor("user@example.com", "tenant-42") };
+        var (context, capture) = ConsoleContextFor(AuthenticatedAs("user@example.com"), store);
+
+        var tenant = await context.RequireAsync();
+
+        tenant.AuthMode.ShouldBe(PortalAuthMode.Console);
+        tenant.StoredKeyRetained.ShouldBeFalse();                       // the key was discarded — no fallback
+        (await tenant.Client.GetQueueStatsAsync()).Queued.ShouldBe(3); // the console client still works with no stored key
+        capture.Authorization.ShouldBe("Bearer entra-token");
+    }
+
+    [Fact]
+    public async Task Console_mode_drops_an_undecryptable_fallback_key_and_still_works()
+    {
+        var store = new FakeLinkStore { Link = UndecryptableLinkFor("user@example.com", "tenant-42") };
+        var (context, _) = ConsoleContextFor(AuthenticatedAs("user@example.com"), store);
+
+        // Must NOT throw CryptographicException — a rotated/garbage ciphertext is just dropped as a fallback; console works.
+        var tenant = await context.RequireAsync();
+
+        tenant.AuthMode.ShouldBe(PortalAuthMode.Console);
+        tenant.StoredKeyRetained.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task A_keyless_link_outside_console_mode_is_not_linked()
+    {
+        // A console-mode link seen after console-mode was turned off has no key and no console — it cannot authenticate, so
+        // it resolves to a clean not-linked state (re-attach with a key).
+        var store = new FakeLinkStore { Link = KeylessLinkFor("user@example.com", "tenant-42") };
+        var (context, _) = ContextFor(AuthenticatedAs("user@example.com"), store);
+
+        (await context.TryResolveAsync()).ShouldBeNull();
     }
 
     [Fact]
@@ -141,6 +194,9 @@ public class PortalTenantContextTests
         }
 
         public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 

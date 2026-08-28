@@ -18,6 +18,26 @@ public readonly record struct RegistryTenantSnapshot(string Id, string Actor, Te
 [StructLayout(LayoutKind.Auto)]
 public readonly record struct ResolvedTenantKey(Guid KeyId, RegistryTenantSnapshot Tenant);
 
+/// <summary>The outcome of a guarded key revoke (issue #119 PR5) — modelled as a value so the last-active-key invariant is
+/// enforced <b>in the store</b>, under a tenant advisory lock, and the endpoint maps it to HTTP.</summary>
+public enum KeyRevokeOutcome
+{
+    /// <summary>The key was active and is now revoked.</summary>
+    Revoked,
+
+    /// <summary>No such active key for the tenant (unknown id, another tenant's, or already revoked) — a plain not-found.</summary>
+    NotFound,
+
+    /// <summary>Refused: revoking would leave the tenant with <b>no active key</b>, and no console recovery path exists (the
+    /// caller passed <c>allowLastActive: false</c>). The caller maps this to a <c>409</c>.</summary>
+    LastActive,
+
+    /// <summary>Refused: the key being revoked is the one authenticating <b>this</b> request; revoking it would break the
+    /// caller mid-session. Rotate it instead. The caller maps this to a <c>409</c>. (A console request presents no key, so
+    /// this never fires there — which is what lets a console owner revoke the tenant's last key.)</summary>
+    CurrentKey,
+}
+
 /// <summary>The persistence seam over the registry documents (<see cref="RegistryTenant"/> + <see cref="TenantApiKey"/>),
 /// stored single-tenanted so the auth boundary can resolve them before any tenant scope exists. Split out from Marten so
 /// the branchy directory/cache logic is unit-testable against a fake, and the Marten wiring is exercised end-to-end.</summary>
@@ -42,8 +62,21 @@ public interface ITenantRegistryStore
     Task AddKeyAsync(TenantApiKey key, CancellationToken ct);
 
     /// <summary>Revokes the tenant's active key <paramref name="keyId"/>, stamping <paramref name="now"/>; false when no
-    /// such active key belongs to the tenant (unknown, foreign, or already revoked) — so a repeat revoke is idempotent.</summary>
+    /// such active key belongs to the tenant (unknown, foreign, or already revoked) — so a repeat revoke is idempotent. No
+    /// last-active-key guard (the operator management surface may revoke any key); the self-service path uses
+    /// <see cref="RevokeKeyGuardedAsync"/>.</summary>
     Task<bool> RevokeKeyAsync(string tenantId, Guid keyId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Revokes the tenant's active key <paramref name="keyId"/> under a tenant advisory lock, enforcing the
+    /// last-active-key and current-key guards <b>atomically</b> (issue #119 PR5): it re-reads the active-key count under the
+    /// lock, so two concurrent revokes can never both empty the tenant's active set. Precedence: an unknown/foreign/already
+    /// -revoked id is <see cref="KeyRevokeOutcome.NotFound"/>; then, when <paramref name="allowLastActive"/> is false and this
+    /// is the tenant's only active key, <see cref="KeyRevokeOutcome.LastActive"/> (rotate/console instead); then, when
+    /// <paramref name="presentedKeyHash"/> matches the target (the key authenticating this request),
+    /// <see cref="KeyRevokeOutcome.CurrentKey"/> (rotate instead) — so a key-authenticated caller can never revoke its own
+    /// in-flight key even with a console recovery path, while a console caller (whose presented hash matches nothing) can
+    /// revoke the tenant's last key. Otherwise it revokes and returns <see cref="KeyRevokeOutcome.Revoked"/>.</summary>
+    Task<KeyRevokeOutcome> RevokeKeyGuardedAsync(string tenantId, Guid keyId, string presentedKeyHash, bool allowLastActive, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Atomically rotates a key: in one transaction, revokes the tenant's active key <paramref name="oldKeyId"/>
     /// (stamping <paramref name="now"/>) and persists <paramref name="replacement"/>, which inherits the rotated key's
@@ -143,6 +176,43 @@ internal sealed class MartenTenantRegistryStore(IDocumentStore store) : ITenantR
         session.Store(key);
         await session.SaveChangesAsync(ct);
         return true;
+    }
+
+    public async Task<KeyRevokeOutcome> RevokeKeyGuardedAsync(string tenantId, Guid keyId, string presentedKeyHash, bool allowLastActive, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var session = store.LightweightSession();
+
+        // Serialize this tenant's revokes so the count-then-revoke below is atomic: a concurrent revoke of a sibling key
+        // queues on the lock and re-reads the count only after this one commits — neither can empty the active set behind
+        // the other's back. The lock releases when SaveChangesAsync commits (or the session disposes without a save).
+        await TenantWriteLock.AcquireAsync(session, TenantWriteLock.KeyRevocationClass, tenantId, ct);
+
+        var key = await session.LoadAsync<TenantApiKey>(keyId, ct);
+        if (key is null || !string.Equals(key.TenantId, tenantId, StringComparison.Ordinal) || key.RevokedAt is not null)
+        {
+            return KeyRevokeOutcome.NotFound; // unknown, another tenant's, or already revoked — idempotent no-op
+        }
+
+        if (!allowLastActive)
+        {
+            // Under the lock, this count reflects every committed revoke — so the last-active guard cannot be raced. Checked
+            // before the current-key guard so a tenant with no console recovery keeps its last-key refusal even for its own key.
+            var active = await session.Query<TenantApiKey>().CountAsync(k => k.TenantId == tenantId && k.RevokedAt == null, ct);
+            if (active <= 1)
+            {
+                return KeyRevokeOutcome.LastActive; // the tenant's only live key, and no console recovery — refuse (409)
+            }
+        }
+
+        if (string.Equals(key.KeyHash, presentedKeyHash, StringComparison.Ordinal))
+        {
+            return KeyRevokeOutcome.CurrentKey; // revoking the in-flight key would break this very session — rotate instead
+        }
+
+        key.RevokedAt = now;
+        session.Store(key);
+        await session.SaveChangesAsync(ct);
+        return KeyRevokeOutcome.Revoked;
     }
 
     public async Task<TenantApiKey?> RotateKeyAsync(string tenantId, Guid oldKeyId, TenantApiKey replacement, DateTimeOffset now, CancellationToken ct)

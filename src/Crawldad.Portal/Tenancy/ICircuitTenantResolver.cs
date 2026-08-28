@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using Crawldad.Client;
 using Crawldad.Portal.Auth;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -30,17 +29,20 @@ internal sealed class CircuitTenantResolver : ICircuitTenantResolver
     private readonly IPortalTenantLinkStore _links;
     private readonly IDataProtector _protector;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ConsoleClientFactory? _consoleClients;
 
     public CircuitTenantResolver(
         AuthenticationStateProvider authState,
         IPortalTenantLinkStore links,
         IDataProtectionProvider protection,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        ConsoleClientFactory? consoleClients = null)
     {
         _authState = authState;
         _links = links;
         _protector = PortalTenancy.ApiKeyProtector(protection);
         _httpClientFactory = httpClientFactory;
+        _consoleClients = consoleClients; // present only when Crawldad:ConsoleAuth is configured → console-mode
     }
 
     public async Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default)
@@ -57,12 +59,10 @@ internal sealed class CircuitTenantResolver : ICircuitTenantResolver
             return null; // authenticated but not yet linked
         }
 
-        // Decrypt the tenant key into the client only — mirrors PortalTenantContext exactly. The plaintext lives on
-        // this server-side object and is never serialized to the circuit's browser.
-        var apiKey = _protector.Unprotect(link.ProtectedApiKey);
-        var http = _httpClientFactory.CreateClient(PortalTenancy.ApiHttpClientName); // base address preset at wiring
-        var client = new CrawldadClient(http, new CrawldadClientOptions { ApiKey = apiKey });
-        return new PortalTenant(link.TenantId, client);
+        // The same console-vs-key resolution the static-SSR PortalTenantContext uses (issue #119 PR5), shared so the two
+        // never drift. The plaintext key (stored-key mode, or a console transition fallback) lives on this server-side object
+        // and is never serialized to the circuit's browser.
+        return PortalTenantResolution.Resolve(email, link, _protector, _httpClientFactory, _consoleClients);
     }
 
     // The signed-in circuit account's normalized email, or null when the circuit carries no authenticated principal or

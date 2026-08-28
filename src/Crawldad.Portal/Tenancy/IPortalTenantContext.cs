@@ -37,11 +37,12 @@ public enum PortalAuthMode
 /// as that tenant. The underlying API key is consumed to build the client and never exposed.</summary>
 public sealed class PortalTenant
 {
-    internal PortalTenant(string tenantId, CrawldadClient client, PortalAuthMode authMode = PortalAuthMode.Key)
+    internal PortalTenant(string tenantId, CrawldadClient client, PortalAuthMode authMode = PortalAuthMode.Key, bool storedKeyRetained = true)
     {
         TenantId = tenantId;
         Client = client;
         AuthMode = authMode;
+        StoredKeyRetained = storedKeyRetained;
     }
 
     /// <summary>The Crawldad tenant this request acts as (for display; the API derives the tenant from the credential).</summary>
@@ -53,6 +54,11 @@ public sealed class PortalTenant
     /// <summary>How this request authenticates: the stored key, or the console credential (issue #119 PR4). The account
     /// area surfaces it as the workspace's console-access state.</summary>
     public PortalAuthMode AuthMode { get; }
+
+    /// <summary>Whether a stored tenant key still backs this link (issue #119 PR5). Always true on the stored-key path; in
+    /// console-mode it is true only while a transition key remains (the read-fallback) and false once the key is retired —
+    /// so the account area can reflect the retirement honestly.</summary>
+    public bool StoredKeyRetained { get; }
 }
 
 /// <inheritdoc cref="IPortalTenantContext"/>
@@ -110,20 +116,10 @@ internal sealed class PortalTenantContext : IPortalTenantContext
             return null; // authenticated but not yet linked
         }
 
-        var apiKey = _protector.Unprotect(link.ProtectedApiKey);
-
-        // Console-mode (Crawldad:ConsoleAuth configured): dashboard reads go through the portal's first-party console
-        // credential (bearer token + membership selectors), with the stored key as fallback for writes and for reads whose
-        // membership does not yet exist. Unconfigured (_consoleClients is null) is the byte-identical stored-key path.
-        if (_consoleClients is not null)
-        {
-            var consoleClient = _consoleClients.Build(email, link.TenantId, apiKey);
-            return new PortalTenant(link.TenantId, consoleClient, PortalAuthMode.Console);
-        }
-
-        var http = _httpClientFactory.CreateClient(PortalTenancy.ApiHttpClientName); // base address preset at wiring
-        var client = new CrawldadClient(http, new CrawldadClientOptions { ApiKey = apiKey });
-        return new PortalTenant(link.TenantId, client);
+        // The console-vs-key decision is shared with the circuit resolver so the two never drift (issue #119 PR5): console
+        // -mode calls the API as the first-party console identity (reads console-first with the stored key as a transition
+        // fallback, writes console-only); stored-key mode decrypts the key into the client exactly as today.
+        return PortalTenantResolution.Resolve(email, link, _protector, _httpClientFactory, _consoleClients);
     }
 
     // The signed-in account's normalized email, or null when the request carries no authenticated portal principal.

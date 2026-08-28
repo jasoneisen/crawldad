@@ -5,9 +5,10 @@ using Crawldad.Portal.Tenancy;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>The console-read → stored-key fallback (issue #119 PR4): a successful console request is passed straight
-/// through; a <c>401</c>/<c>403</c> retries ONCE with the tenant's stored key alone — no console token, no selectors (never
-/// both credentials in one request) — and a write body survives the retry. This is the dual-run safety net.</summary>
+/// <summary>The console-read → stored-key fallback (issue #119 PR4/PR5): a successful console READ is passed straight
+/// through; a rejected READ (<c>401</c>/<c>403</c>) retries ONCE with the tenant's stored key alone — no console token, no
+/// selectors (never both credentials in one request). A WRITE is console-only (PR5): its rejection surfaces as-is and is
+/// never retried with the key.</summary>
 public class ConsoleReadFallbackHandlerTests
 {
     private const string _key = "tenant-key-0123456789";
@@ -59,16 +60,21 @@ public class ConsoleReadFallbackHandlerTests
         inner.Seen[1].HasSelectors.ShouldBeFalse();     // ...and WITHOUT the console selectors (never both credentials)
     }
 
-    [Fact]
-    public async Task A_write_body_survives_the_key_retry()
+    [Theory]
+    [InlineData("POST")]
+    [InlineData("PUT")]
+    [InlineData("DELETE")]
+    public async Task A_rejected_console_write_is_console_only_and_never_retried_with_the_key(string method)
     {
+        // Writes are console-only (PR5): a rejected write surfaces as-is, never re-run on the stored key.
         var inner = new ScriptedHandler(HttpStatusCode.Unauthorized, HttpStatusCode.OK);
         using var client = ClientOver(inner);
 
-        await client.SendAsync(ConsoleRequest(HttpMethod.Post, "https://api.crawldad.test/payloads", "{\"name\":\"x\"}"));
+        var response = await client.SendAsync(ConsoleRequest(new HttpMethod(method), "https://api.crawldad.test/payloads", "{\"name\":\"x\"}"));
 
-        inner.Seen.Count.ShouldBe(2);
-        inner.Seen[1].Body.ShouldBe("{\"name\":\"x\"}"); // the buffered body is re-sent on the retry
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized); // the console rejection is returned, not a key-retry 200
+        inner.Seen.Count.ShouldBe(1);                              // the write went out ONCE, on the console credential only
+        inner.Seen[0].Auth.ShouldBe("Bearer console-token");
     }
 
     private sealed class ScriptedHandler(params HttpStatusCode[] statuses) : HttpMessageHandler

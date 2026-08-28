@@ -120,6 +120,9 @@ public class CircuitTenantResolverTests
 
         public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+
+        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class StubHttpClientFactory(HttpMessageHandler handler, Uri baseAddress) : IHttpClientFactory

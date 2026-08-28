@@ -128,7 +128,22 @@ public class AccountComponentTests : BunitContext
         var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
 
         cut.Find("[data-testid=console-mode]").TextContent.ShouldContain("Console");
+        cut.Find("[data-testid=console-key-state]").TextContent.ShouldContain("stored key retained"); // a transition key remains
         cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("Owner");
+    }
+
+    [Fact]
+    public void Console_mode_with_no_stored_key_shows_the_key_retired_state()
+    {
+        var memberships = new TenantMembershipList(
+            [new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
+        var handler = ApiReturning(_profile, _usage, memberships);
+        var cut = RenderPage(
+            new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console, storedKeyRetained: false)),
+            Authed("dana@meridiantitle.co"));
+
+        cut.Find("[data-testid=console-mode]").TextContent.ShouldContain("Console");
+        cut.Find("[data-testid=console-key-state]").TextContent.ShouldContain("no stored key"); // the key was retired
     }
 
     [Fact]
@@ -254,9 +269,9 @@ public class AccountComponentTests : BunitContext
         cut.Find("#link-form").Submit();
     }
 
-    private static PortalTenant Linked(string tenantId, HttpMessageHandler handler, PortalAuthMode authMode = PortalAuthMode.Key) =>
+    private static PortalTenant Linked(string tenantId, HttpMessageHandler handler, PortalAuthMode authMode = PortalAuthMode.Key, bool storedKeyRetained = true) =>
         new(tenantId, new CrawldadClient(new HttpClient(handler) { BaseAddress = ClientTestHarness.BaseUrl },
-            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), authMode);
+            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), authMode, storedKeyRetained);
 
     private static StubHttpMessageHandler ApiReturning(TenantProfileResponse profile, UsageResponse usage, TenantMembershipList? memberships = null) =>
         new(req =>

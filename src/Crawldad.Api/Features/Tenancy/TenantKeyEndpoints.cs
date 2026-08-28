@@ -119,14 +119,19 @@ public static class TenantKeyEndpoints
         return Results.Created($"/tenant/keys/{stored.Id}", new TenantApiKeyCreated(stored.Id, stored.Prefix, stored.Label, minted.Raw, now));
     }
 
-    /// <summary>Handles <c>DELETE /tenant/keys/{id}</c>: revoke one of the caller's keys. Refuses to revoke the last active
-    /// key or the key authenticating this request — rotate those instead (both <c>409</c>). <c>404</c> when <c>{id}</c> is
-    /// not one of the caller's active keys (unknown / foreign / already revoked).</summary>
+    /// <summary>Handles <c>DELETE /tenant/keys/{id}</c>: revoke one of the caller's keys. The tenant's <b>last active key</b>
+    /// may be revoked only when a console recovery path exists — a registry tenant with ≥1 active <see cref="MembershipRole.Owner"/>
+    /// membership (issue #119 PR5 revoke-ALL); a tenant with no membership (env/operator/API-only) keeps refuse-last-key
+    /// (<c>409 last_active_key</c>). The key authenticating <b>this</b> request is never revocable — rotate it instead
+    /// (<c>409 current_key</c>); a console caller presents no key, so it can revoke the last key. All guards are enforced
+    /// atomically in the store under a tenant advisory lock. <c>404</c> when <c>{id}</c> is not one of the caller's active
+    /// keys (unknown / foreign / already revoked).</summary>
     [WolverineDelete("/tenant/keys/{id}")]
     public static async Task<IResult> Revoke(
         Guid id,
         [FromServices] TenantContext tenant,
         [FromServices] ITenantRegistryStore store,
+        [FromServices] ITenantMembershipStore memberships,
         [FromServices] TenantDirectory directory,
         HttpContext http,
         TimeProvider clock,
@@ -137,26 +142,23 @@ public static class TenantKeyEndpoints
             return TenantKeyProblems.SelfServiceUnavailable();
         }
 
-        var keys = await store.ListKeysAsync(tenant.TenantId, ct);
-        var target = keys.FirstOrDefault(key => key.Id == id);
-        if (target is null || target.RevokedAt is not null)
+        // Revoke-ALL is allowed for a registry tenant with a console recovery path (≥1 active Owner membership → the workspace
+        // keeps a human OTP→console way back in); a tenant with no membership keeps refuse-last-key as its only anti-lockout.
+        var allowLast = await memberships.HasActiveOwnerAsync(tenant.TenantId, ct);
+        var presentedKeyHash = ApiKeyMint.Hash(PresentedApiKey.Read(http.Request));
+        var outcome = await store.RevokeKeyGuardedAsync(tenant.TenantId, id, presentedKeyHash, allowLast, clock.GetUtcNow(), ct);
+        switch (outcome)
         {
-            return TenantKeyProblems.KeyNotFound(); // unknown, another tenant's (absent from this tenant's list), or already revoked
+            case KeyRevokeOutcome.LastActive:
+                return TenantKeyProblems.LastActiveKey();
+            case KeyRevokeOutcome.CurrentKey:
+                return TenantKeyProblems.CurrentKey();
+            case KeyRevokeOutcome.NotFound:
+                return TenantKeyProblems.KeyNotFound();
+            default:
+                directory.InvalidateTenant(tenant.TenantId); // drop cached auth so the revoke takes effect immediately
+                return Results.NoContent();
         }
-
-        if (keys.Count(key => key.RevokedAt is null) <= 1)
-        {
-            return TenantKeyProblems.LastActiveKey(); // anti-lockout — the tenant's only live key
-        }
-
-        if (string.Equals(target.KeyHash, ApiKeyMint.Hash(PresentedApiKey.Read(http.Request)), StringComparison.Ordinal))
-        {
-            return TenantKeyProblems.CurrentKey(); // revoking the in-flight key would break this very session
-        }
-
-        await store.RevokeKeyAsync(tenant.TenantId, id, clock.GetUtcNow(), ct);
-        directory.InvalidateTenant(tenant.TenantId); // drop cached auth so the revoke takes effect immediately
-        return Results.NoContent();
     }
 
     // Projects a stored key to its secret-free listing row, flagging the one whose hash matches the request's presented

@@ -76,6 +76,14 @@
                         <span class="status status-green" data-testid="console-mode">
                             <span class="status-dot"></span>Console
                         </span>
+                        @if (_tenant.StoredKeyRetained)
+                        {
+                            <span class="text-secondary ms-2" data-testid="console-key-state">stored key retained (transition fallback)</span>
+                        }
+                        else
+                        {
+                            <span class="text-secondary ms-2" data-testid="console-key-state">no stored key</span>
+                        }
                     }
                     else
                     {
@@ -397,6 +405,23 @@
                     <div class="card-body">
                         <h3 class="mb-1">Revoke key @toRevoke.Prefix…?</h3>
                         <p class="text-secondary">Any client using this key stops working immediately. This can't be undone.</p>
+                        @if (IsLastActiveKey())
+                        {
+                            @if (HasConsoleRecovery())
+                            {
+                                <p class="text-secondary" data-testid="revoke-last-note">
+                                    This is your workspace's last API key. You'll still reach this workspace through the portal
+                                    (console access) — but any API or SDK client will need a newly minted key.
+                                </p>
+                            }
+                            else
+                            {
+                                <p class="text-warning" data-testid="revoke-last-note">
+                                    This is your workspace's last API key and there's no console recovery, so revoking it is
+                                    refused to avoid a lockout. Rotate it instead to replace it without a gap.
+                                </p>
+                            }
+                        }
                         <EditForm FormName="revoke-key" Model="RevokeForm" OnValidSubmit="RevokeKeyAsync" data-testid="revoke-form">
                             <input type="hidden" name="RevokeForm.KeyId" value="@toRevoke.KeyId" />
                             <button type="submit" class="btn btn-danger" data-testid="revoke-submit">Revoke key</button>
@@ -488,7 +513,8 @@
             <div class="fw-semibold mb-2">Mint a new key</div>
             <p class="text-secondary small">
                 Use keys to authenticate the API and the SDK. Rotating or revoking the key this session uses is guarded —
-                rotate replaces it without a gap.
+                rotate replaces it without a gap. Your workspace's last key can be revoked only when console access can get
+                you back in.
             </p>
             <EditForm FormName="mint-key" Model="Mint" OnValidSubmit="MintKeyAsync" data-testid="mint-form">
                 <div class="row g-2 align-items-end">
@@ -816,6 +842,14 @@
     // The key the ?rotate= row action points at (by id), or null.
     private TenantApiKeyInfo? RotateConfirmTarget() =>
         Guid.TryParse(RotateTarget, out var id) ? _keys.FirstOrDefault(key => key.KeyId == id) : null;
+
+    // Whether the workspace has exactly one active key left — revoking it engages the revoke-ALL / refuse-last rule.
+    private bool IsLastActiveKey() => _keys.Count(key => key.Active) <= 1;
+
+    // Whether this account has a console recovery path (an active Owner membership) — so revoking the last key is allowed and
+    // the workspace stays reachable through the portal. The API enforces the real rule (≥1 Owner membership on the tenant);
+    // this reflects the signed-in owner's own membership for the confirm copy.
+    private bool HasConsoleRecovery() => _myMembership is { Active: true, Role: MembershipRole.Owner };
 
     // A UTC timestamp as a compact, stable string for a key's created / last-used columns.
     private static string FormatUtc(DateTimeOffset when) =>

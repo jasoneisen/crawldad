@@ -300,6 +300,36 @@ public class AccountKeysComponentTests : BunitContext
         cut.FindAll("[data-testid=revoke-confirm]").ShouldBeEmpty();
     }
 
+    [Fact]
+    public void The_revoke_confirm_warns_when_revoking_the_last_key_without_console_recovery()
+    {
+        // One active key + no membership → revoking the last key is refused (no console recovery); the copy says so.
+        var last = Key(Guid.NewGuid(), "ck_test_LAST", null, active: true, current: false);
+        var cut = RenderLinked(KeysAndMemberships([last], new TenantMembershipList([])), query: $"?revoke={last.KeyId}");
+
+        cut.Find("[data-testid=revoke-last-note]").TextContent.ShouldContain("refused");
+    }
+
+    [Fact]
+    public void The_revoke_confirm_reassures_when_console_recovery_exists()
+    {
+        // One active key + an active Owner membership → revoking the last key is allowed; the copy points at console access.
+        var last = Key(Guid.NewGuid(), "ck_test_LAST", null, active: true, current: false);
+        var memberships = new TenantMembershipList(
+            [new(Guid.NewGuid(), "owner@example.com", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
+        var cut = RenderLinked(KeysAndMemberships([last], memberships), query: $"?revoke={last.KeyId}");
+
+        cut.Find("[data-testid=revoke-last-note]").TextContent.ShouldContain("console access");
+    }
+
+    // Serves the key list AND a membership list (so the revoke-confirm can reflect the console-recovery state).
+    private static StubHttpMessageHandler KeysAndMemberships(IReadOnlyList<TenantApiKeyInfo> keys, TenantMembershipList memberships) =>
+        new(req =>
+            req.Path.Contains("/tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([.. keys]))
+            : req.Path.EndsWith("/tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.Json(memberships)
+            : req.Path.EndsWith("/usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
+            : ClientTestHarness.Json(_profile));
+
     // ---- helpers -------------------------------------------------------------------------------------------------
 
     private IRenderedComponent<Account> RenderLinked(StubHttpMessageHandler handler, string? query = null, HttpContext? http = null, FakeLinker? linker = null) =>
