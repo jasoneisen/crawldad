@@ -24,14 +24,19 @@ public static class UsageEndpoint
         TenantContext tenant,
         IRunAdmissionGate gate,
         IQuerySession session,
+        ITenantRegistryStore registry,
         IOptions<TenantOptions> tenants,
         IOptions<RunLimitsOptions> limits,
         TimeProvider clock,
         CancellationToken ct)
     {
-        // The authenticated principal is always one of the configured tenants (see GET /tenant), so the descriptor is present.
-        var descriptor = tenants.Value.Tenants.First(t => string.Equals(t.Id, tenant.TenantId, StringComparison.Ordinal));
-        var slotAllowance = descriptor.MaxConcurrentRuns ?? limits.Value.MaxConcurrentRunsPerTenant;
+        // Slot allowance resolves registry-first, env-fallback (see GET /tenant): a registry tenant is absent from env
+        // config, so the old .First() over env options threw for it. Every other number below comes from tenant-scoped
+        // sources (the gate keyed by tenant id, and the request's tenant-scoped Marten session), so they are already
+        // correct for either tenant kind.
+        var registered = await registry.FindAsync(tenant.TenantId, ct);
+        var descriptor = tenants.Value.Tenants.FirstOrDefault(t => string.Equals(t.Id, tenant.TenantId, StringComparison.Ordinal));
+        var slotAllowance = TenantProfileResolution.SlotAllowance(registered, descriptor, limits.Value);
         var slots = new UsageSlots(gate.ActiveCount(tenant.TenantId), slotAllowance);
 
         // The queue snapshot: depth is the count of QueuedRun rows; p95 is the nearest-rank percentile of the recorded

@@ -7,23 +7,29 @@ using Wolverine.Http;
 
 namespace Crawldad.Api.Features.Tenancy;
 
-/// <summary><c>GET /tenant</c>: the authenticated tenant's own profile — its id, display (actor) identity, optional
-/// pricing-tier label, and slot/queue-depth allowances. The allowances resolve from the existing per-tenant override
-/// options (each override, or the global default when unset); no tenant-management surface is implied. If a tenant
-/// registry lands later it can back this same shape without changing the wire contract.</summary>
+/// <summary><c>GET /tenant</c>: the authenticated tenant's own profile — its id, display-name identity, optional
+/// pricing-tier label, and slot/queue-depth allowances. Resolved <b>registry-first, env-fallback</b>: a
+/// signup/management-created <see cref="RegistryTenant"/> is authoritative for its display name, tier, and slot allowance
+/// (queue depth defers to the global default, which the registry does not carry); an env-configured
+/// <see cref="TenantDescriptor"/> sources them from the bound options, each override falling back to the global default.
+/// No tenant-management surface is implied.</summary>
 public static class TenantEndpoint
 {
     /// <summary>Handles <c>GET /tenant</c>.</summary>
     [WolverineGet("/tenant")]
-    public static IResult Handle(TenantContext tenant, IOptions<TenantOptions> tenants, IOptions<RunLimitsOptions> limits)
+    public static async Task<IResult> Handle(
+        TenantContext tenant,
+        ITenantRegistryStore registry,
+        IOptions<TenantOptions> tenants,
+        IOptions<RunLimitsOptions> limits,
+        CancellationToken ct)
     {
-        // The authenticated principal is always one of the configured tenants (its id came from the registry built from
-        // these same options), so the descriptor is present — its actor is the display name, its (optional) overrides the
-        // allowances, each falling back to the global default.
-        var descriptor = tenants.Value.Tenants.First(t => string.Equals(t.Id, tenant.TenantId, StringComparison.Ordinal));
-        var slotAllowance = descriptor.MaxConcurrentRuns ?? limits.Value.MaxConcurrentRunsPerTenant;
-        var queueDepthAllowance = descriptor.MaxQueueDepth ?? limits.Value.MaxQueueDepthPerTenant;
+        // Registry-first, env-fallback (the same order the auth boundary resolves a key): a signup/management-created
+        // tenant lives in the registry, NOT env config, so resolving with .First() over env options threw for it — a 500
+        // that also broke the portal's link probe (GET /tenant). Resolve from whichever source owns the tenant.
+        var registered = await registry.FindAsync(tenant.TenantId, ct);
+        var descriptor = tenants.Value.Tenants.FirstOrDefault(t => string.Equals(t.Id, tenant.TenantId, StringComparison.Ordinal));
 
-        return Results.Ok(new TenantProfileResponse(tenant.TenantId, descriptor.Actor, descriptor.Tier, slotAllowance, queueDepthAllowance));
+        return Results.Ok(TenantProfileResolution.Resolve(tenant.TenantId, tenant.Actor, registered, descriptor, limits.Value));
     }
 }
