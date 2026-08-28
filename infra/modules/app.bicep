@@ -302,6 +302,10 @@ var portalEnv = concat(
     // key. BOTH set ⇒ durable + wrapped; the portal host fails fast if only one is set (its boot-time validator).
     { name: 'Crawldad__Portal__DataProtection__KeyRingBlobUri', value: portalKeyRingBlobUri }
     { name: 'Crawldad__Portal__DataProtection__KeyVaultKeyId', value: portalDataProtectionKeyId }
+    // The API base URL the portal's tenant-scoped Crawldad.Client calls (issue #119). Without this the container
+    // falls back to appsettings' localhost dev default and every workspace-link/dashboard read fails with
+    // "couldn't reach the Crawldad API". Same-environment hairpin through the API's public ingress FQDN.
+    { name: 'Crawldad__Api__BaseUrl', value: 'https://${app.properties.configuration.ingress.fqdn}/' }
   ],
   hasPortalEmail
     ? [
