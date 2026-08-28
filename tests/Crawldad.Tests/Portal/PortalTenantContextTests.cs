@@ -1,9 +1,12 @@
 using System.Security.Claims;
 using Crawldad.Contracts.Runs;
+using Crawldad.Contracts.Tenancy;
+using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Client;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 
 namespace Crawldad.Tests.Portal;
 
@@ -50,8 +53,30 @@ public class PortalTenantContextTests
         var tenant = await context.RequireAsync();
 
         tenant.TenantId.ShouldBe("tenant-42");
+        tenant.AuthMode.ShouldBe(PortalAuthMode.Key);                   // unconfigured (no console factory) → stored-key mode
         (await tenant.Client.GetQueueStatsAsync()).Queued.ShouldBe(7); // the client actually calls the API...
         handler.Last.Authorization.ShouldBe($"Bearer {_apiKey}");       // ...bearing the tenant's decrypted key
+    }
+
+    [Fact]
+    public async Task Console_mode_resolves_a_console_client_bearing_the_token_and_selectors()
+    {
+        var store = new FakeLinkStore { Link = LinkFor("user@example.com", "tenant-42") };
+        var capture = new CapturingHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(3, 0, 0)));
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>(StringComparer.Ordinal) { ["Crawldad:Api:BaseUrl"] = "https://api.crawldad.test/" })
+            .Build();
+        var consoleClients = new ConsoleClientFactory(new StubHandlerFactory(capture), new FakeTokenSource("entra-token"), config);
+        var context = new PortalTenantContext(
+            AuthenticatedAs("User@Example.com"), store, _protection, new StubHttpClientFactory(capture, new Uri("https://api.crawldad.test/")), consoleClients);
+
+        var tenant = await context.RequireAsync();
+
+        tenant.AuthMode.ShouldBe(PortalAuthMode.Console);
+        (await tenant.Client.GetQueueStatsAsync()).Queued.ShouldBe(3); // the console client calls the API...
+        capture.Authorization.ShouldBe("Bearer entra-token");           // ...bearing the first-party token...
+        capture.ConsoleUser.ShouldBe("user@example.com");               // ...and the normalized user selector...
+        capture.Workspace.ShouldBe("tenant-42");                        // ...and the active-workspace selector.
     }
 
     [Fact]
@@ -127,5 +152,31 @@ public class PortalTenantContextTests
     private sealed class StubHttpClientFactory(HttpMessageHandler handler, Uri baseAddress) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false) { BaseAddress = baseAddress };
+    }
+
+    private sealed class StubHandlerFactory(HttpMessageHandler handler) : IHttpMessageHandlerFactory
+    {
+        public HttpMessageHandler CreateHandler(string name) => handler;
+    }
+
+    private sealed class FakeTokenSource(string token) : IConsoleTokenSource
+    {
+        public ValueTask<string> GetTokenAsync(CancellationToken cancellationToken) => ValueTask.FromResult(token);
+    }
+
+    // Captures the exact credential headers the console client stamps on the outgoing request (Authorization + selectors).
+    private sealed class CapturingHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
+    {
+        public string? Authorization { get; private set; }
+        public string? ConsoleUser { get; private set; }
+        public string? Workspace { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Authorization = request.Headers.Authorization?.ToString();
+            ConsoleUser = request.Headers.TryGetValues(ConsoleAuthHeaders.ConsoleUser, out var user) ? user.Single() : null;
+            Workspace = request.Headers.TryGetValues(ConsoleAuthHeaders.Workspace, out var workspace) ? workspace.Single() : null;
+            return Task.FromResult(responder(request));
+        }
     }
 }

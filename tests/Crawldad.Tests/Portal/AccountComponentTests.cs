@@ -113,6 +113,63 @@ public class AccountComponentTests : BunitContext
         cut.Find("[data-testid=account-email]").TextContent.ShouldBe("dana@meridiantitle.co");
     }
 
+    // ---- console access + membership (issue #119 PR4) -------------------------------------------------------------
+
+    [Fact]
+    public void Console_mode_with_a_membership_shows_the_console_badge_and_the_owner_role()
+    {
+        // A prior revoked (inactive) membership for the same user is skipped; the active one is the current membership.
+        var memberships = new TenantMembershipList(
+        [
+            new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, false),
+            new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
+        ]);
+        var handler = ApiReturning(_profile, _usage, memberships);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+
+        cut.Find("[data-testid=console-mode]").TextContent.ShouldContain("Console");
+        cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("Owner");
+    }
+
+    [Fact]
+    public void Key_mode_with_no_membership_shows_the_stored_key_badge_and_no_membership()
+    {
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage))), Authed());
+
+        cut.Find("[data-testid=console-mode]").TextContent.ShouldContain("Stored key");
+        cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("No membership");
+    }
+
+    [Fact]
+    public void An_env_tenant_shows_the_operator_managed_membership_state()
+    {
+        // GET /tenant/memberships is a 400 self_service_unavailable for an env tenant — surfaced as a clean state, no crash.
+        var handler = new StubHttpMessageHandler(req =>
+            req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal)
+                ? ClientTestHarness.JsonRaw(System.Net.HttpStatusCode.BadRequest, "{\"title\":\"self_service_unavailable\"}")
+                : req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
+                : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
+                : ClientTestHarness.Json(_profile));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed());
+
+        cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("Operator-managed");
+    }
+
+    [Fact]
+    public void A_linked_account_with_no_email_and_a_malformed_membership_body_degrades_cleanly()
+    {
+        // Defensive edges: no email claim (still authorized to render), and a 2xx membership body missing its list — neither
+        // crashes the page; the console row simply shows "no membership".
+        var handler = new StubHttpMessageHandler(req =>
+            req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.JsonRaw(System.Net.HttpStatusCode.OK, "{}")
+            : req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
+            : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
+            : ClientTestHarness.Json(_profile));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed(email: null));
+
+        cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("No membership");
+    }
+
     // ---- workspace-link form --------------------------------------------------------------------------------------
 
     [Fact]
@@ -197,13 +254,14 @@ public class AccountComponentTests : BunitContext
         cut.Find("#link-form").Submit();
     }
 
-    private static PortalTenant Linked(string tenantId, HttpMessageHandler handler) =>
+    private static PortalTenant Linked(string tenantId, HttpMessageHandler handler, PortalAuthMode authMode = PortalAuthMode.Key) =>
         new(tenantId, new CrawldadClient(new HttpClient(handler) { BaseAddress = ClientTestHarness.BaseUrl },
-            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }));
+            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), authMode);
 
-    private static StubHttpMessageHandler ApiReturning(TenantProfileResponse profile, UsageResponse usage) =>
+    private static StubHttpMessageHandler ApiReturning(TenantProfileResponse profile, UsageResponse usage, TenantMembershipList? memberships = null) =>
         new(req =>
             req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
+            : req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.Json(memberships ?? new TenantMembershipList([]))
             : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(usage)
             : ClientTestHarness.Json(profile));
 

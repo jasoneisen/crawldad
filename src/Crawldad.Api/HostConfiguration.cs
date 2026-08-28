@@ -126,6 +126,7 @@ public static class HostConfiguration
         builder.Services.AddOptions<TenantRegistryOptions>().Bind(builder.Configuration.GetSection(TenantRegistryOptions.Section));
         builder.Services.AddOptions<ManagementOptions>().Bind(builder.Configuration.GetSection(ManagementOptions.Section));
         builder.Services.AddSingleton<ITenantRegistryStore, MartenTenantRegistryStore>();
+        builder.Services.AddSingleton<ITenantMembershipStore, MartenTenantMembershipStore>(); // console authorization authority (PR4)
         builder.Services.AddSingleton<TenantDirectory>();
         builder.Services.AddSingleton<ITenantAuthenticator>(static sp => sp.GetRequiredService<TenantDirectory>());
         builder.Services.AddSingleton<ITenantConcurrencyOverrides>(static sp => sp.GetRequiredService<TenantDirectory>());
@@ -195,6 +196,19 @@ public static class HostConfiguration
             // survives. /health opts out with [AllowAnonymous] (a liveness probe must answer an unauthenticated load
             // balancer); the endpoint-enumeration test asserts every other route rejects an unauthenticated request.
             options.RequireAuthorizeOnAll();
+
+            // The enumerated console-read scope (issue #119 PR4): exactly the ConsoleReadEndpoints GET routes ALSO accept a
+            // console principal, via the ConsoleOrKey policy layered on top of the blanket gate above. Every other endpoint
+            // keeps the default ApiKey-only policy. When Crawldad:ConsoleAuth is unconfigured the ConsoleOrKey policy is
+            // ApiKey-only, so a console-read endpoint is byte-for-byte as it is today. The enumeration test pins the live set.
+            options.ConfigureEndpoints(chain =>
+            {
+                // Every mapped HTTP chain carries a RoutePattern here; ConsoleReadEndpoints.Includes handles a null RawText.
+                if (ConsoleReadEndpoints.Includes(chain.HttpMethods, chain.RoutePattern!.RawText))
+                {
+                    chain.RequireAuthorization(ConsoleAuthModule.ConsoleOrKeyPolicy);
+                }
+            });
 
             // Scope each request's Marten session to the tenant on the authenticated principal. Wolverine opens the
             // injected IDocumentSession/IQuerySession for this tenant and stamps it onto messages the endpoint publishes,

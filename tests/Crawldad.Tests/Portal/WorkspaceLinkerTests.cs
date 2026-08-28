@@ -22,24 +22,67 @@ public class WorkspaceLinkerTests
         return (new WorkspaceLinker(factory, store), store);
     }
 
+    // A path-branching handler: GET /tenant returns the profile; POST /tenant/memberships records an owner membership.
+    private static StubHttpMessageHandler LinkedHandler(string tenantId = "tenant-alpha") =>
+        new(req => string.Equals(req.Path, "/tenant/memberships", StringComparison.Ordinal)
+            ? ClientTestHarness.Json(new TenantMembershipInfo(Guid.NewGuid(), _email, MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true))
+            : ClientTestHarness.Json(new TenantProfileResponse(tenantId, "alpha@crawldad.test", "pro", 5, 20)));
+
     [Fact]
-    public async Task Valid_key_whose_tenant_matches_is_linked_with_the_authoritative_id_and_the_submitted_key()
+    public async Task Valid_key_whose_tenant_matches_is_linked_and_records_the_owner_membership()
     {
-        var handler = new StubHttpMessageHandler(_ =>
-            ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "alpha@crawldad.test", "pro", 5, 20)));
+        var handler = LinkedHandler();
         var (linker, store) = LinkerFor(handler);
 
         // Enter the id in a different casing to prove the stored id is the profile's, not the raw entry.
         var result = await linker.LinkAsync(_email, "  Tenant-Alpha  ", _apiKey);
 
         result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
-        handler.Requests.ShouldHaveSingleItem();
-        handler.Last.Path.ShouldBe("/tenant");
-        handler.Last.Authorization.ShouldBe($"Bearer {_apiKey}"); // probed with the submitted key
+
+        // The key was probed (GET /tenant), then the owner membership was recorded (POST /tenant/memberships) with the key.
+        handler.Requests.Count.ShouldBe(2);
+        handler.Requests[0].Path.ShouldBe("/tenant");
+        handler.Requests[0].Authorization.ShouldBe($"Bearer {_apiKey}");
+        handler.Requests[1].Method.ShouldBe(HttpMethod.Post);
+        handler.Requests[1].Path.ShouldBe("/tenant/memberships");
+        handler.Requests[1].Authorization.ShouldBe($"Bearer {_apiKey}");
+        handler.Requests[1].Body.ShouldContain(_email);
+
         var upsert = store.Upserts.ShouldHaveSingleItem();
         upsert.Email.ShouldBe(_email);
         upsert.TenantId.ShouldBe("tenant-alpha"); // authoritative id from the profile, not the entered casing/padding
         upsert.ApiKey.ShouldBe(_apiKey);
+    }
+
+    [Fact]
+    public async Task An_env_tenant_membership_refusal_is_swallowed_and_the_link_still_succeeds()
+    {
+        // The membership surface is registry-only; an env tenant returns 400 self_service_unavailable — which must NOT
+        // block linking (the stored key still authenticates every call).
+        var handler = new StubHttpMessageHandler(req => string.Equals(req.Path, "/tenant/memberships", StringComparison.Ordinal)
+            ? ClientTestHarness.JsonRaw(HttpStatusCode.BadRequest, "{\"title\":\"self_service_unavailable\"}")
+            : ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "a@crawldad.test", null, 3, 10)));
+        var (linker, store) = LinkerFor(handler);
+
+        var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
+
+        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
+        store.Upserts.ShouldHaveSingleItem(); // the link was still persisted
+    }
+
+    [Fact]
+    public async Task A_membership_transport_failure_is_swallowed_and_the_link_still_succeeds()
+    {
+        // GET /tenant succeeds; the membership POST throws a transport fault — swallowed, the link persists.
+        var handler = new StubHttpMessageHandler(req => string.Equals(req.Path, "/tenant/memberships", StringComparison.Ordinal)
+            ? throw new HttpRequestException("connection reset")
+            : ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "a@crawldad.test", null, 3, 10)));
+        var (linker, store) = LinkerFor(handler);
+
+        var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
+
+        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
+        store.Upserts.ShouldHaveSingleItem();
     }
 
     [Fact]

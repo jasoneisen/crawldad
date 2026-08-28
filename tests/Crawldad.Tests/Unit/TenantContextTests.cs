@@ -44,4 +44,23 @@ public class TenantContextTests
 
         Should.Throw<InvalidOperationException>(() => tenant.Actor);
     }
+
+    [Fact]
+    public void Throws_on_two_distinct_tenant_claims_rather_than_picking_the_first()
+    {
+        // The finding #4 hazard: two schemes merged into one principal, each stamping a different tenant. Fail closed so an
+        // ambiguous request can never resolve to a tenant it only half-proved (the console path forbids the merge upstream).
+        var tenant = ContextWith(new Claim(CrawldadClaims.TenantId, "alpha"), new Claim(CrawldadClaims.TenantId, "beta"));
+
+        Should.Throw<InvalidOperationException>(() => tenant.TenantId);
+    }
+
+    [Fact]
+    public void Two_identical_tenant_claims_resolve_to_the_one_value()
+    {
+        // Distinct values, not distinct claim objects: the same tenant stamped twice is unambiguous, not a conflict.
+        var tenant = ContextWith(new Claim(CrawldadClaims.TenantId, "alpha"), new Claim(CrawldadClaims.TenantId, "alpha"));
+
+        tenant.TenantId.ShouldBe("alpha");
+    }
 }

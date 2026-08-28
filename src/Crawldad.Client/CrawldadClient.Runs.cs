@@ -181,7 +181,7 @@ public sealed partial class CrawldadClient
         // Escape the ref into its single path segment (as every other path-param method does): a stray '/' encodes to
         // %2F rather than adding a segment, so a traversal-shaped ref can't collapse the path — the no-traversal
         // guarantee is local here, not left to server-side URL normalization.
-        using var request = BuildRequest(HttpMethod.Get, $"runs/{runId}/screenshots/{Uri.EscapeDataString(bare)}");
+        using var request = await BuildRequestAsync(HttpMethod.Get, $"runs/{runId}/screenshots/{Uri.EscapeDataString(bare)}", ct);
         using var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
@@ -204,7 +204,7 @@ public sealed partial class CrawldadClient
     // POSTs a run-start/replay body and resolves the 200-terminal / 202-accepted dichotomy into a StartRunResult.
     private async Task<StartRunResult> StartRunCoreAsync(string relativePath, object body, CancellationToken ct)
     {
-        using var request = BuildRequest(HttpMethod.Post, relativePath, JsonBody(body));
+        using var request = await BuildRequestAsync(HttpMethod.Post, relativePath, ct, JsonBody(body));
         using var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {

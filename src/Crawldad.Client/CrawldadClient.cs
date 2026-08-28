@@ -16,33 +16,36 @@ namespace Crawldad.Client;
 public sealed partial class CrawldadClient
 {
     private readonly HttpClient _http;
-    private readonly string _apiKey;
+    private readonly ICrawldadCredential _credential;
 
     /// <summary>Creates a client over <paramref name="httpClient"/>. If the client has no
     /// <see cref="HttpClient.BaseAddress"/>, <see cref="CrawldadClientOptions.BaseUrl"/> is applied (normalized with a
     /// trailing slash); otherwise the existing base address is left untouched.</summary>
     /// <param name="httpClient">The transport. Owned by the caller / DI (the SDK never disposes it).</param>
-    /// <param name="options">The base URL and API key.</param>
+    /// <param name="options">The base URL and the credential (an <see cref="CrawldadClientOptions.ApiKey"/>, or an explicit
+    /// <see cref="CrawldadClientOptions.Credential"/>).</param>
     /// <exception cref="ArgumentNullException"><paramref name="httpClient"/> or <paramref name="options"/> is null.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="options"/> supplies neither an API key nor a credential.</exception>
     public CrawldadClient(HttpClient httpClient, CrawldadClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(options);
 
         _http = httpClient;
-        _apiKey = options.ApiKey;
+        _credential = options.ResolveCredential();
         if (httpClient.BaseAddress is null && options.BaseUrl is not null)
         {
             httpClient.BaseAddress = CrawldadClientOptions.NormalizeBaseUrl(options.BaseUrl);
         }
     }
 
-    // Builds an authenticated request for a path relative to the HttpClient's base address. The key goes on every
-    // request via TryAddWithoutValidation (no shared default-header mutation, so the client is concurrency-safe).
-    private HttpRequestMessage BuildRequest(HttpMethod method, string relativePath, HttpContent? content = null)
+    // Builds an authenticated request for a path relative to the HttpClient's base address. The credential stamps its
+    // headers per request via TryAddWithoutValidation (no shared default-header mutation, so the client is concurrency-safe);
+    // it is async so a console token can be acquired/refreshed per request.
+    private async ValueTask<HttpRequestMessage> BuildRequestAsync(HttpMethod method, string relativePath, CancellationToken ct, HttpContent? content = null)
     {
         var request = new HttpRequestMessage(method, new Uri(relativePath, UriKind.Relative)) { Content = content };
-        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {_apiKey}");
+        await _credential.ApplyAsync(request, ct).ConfigureAwait(false);
         return request;
     }
 
@@ -53,7 +56,7 @@ public sealed partial class CrawldadClient
     // GET returning a JSON DTO.
     private async Task<T> GetAsync<T>(string relativePath, CancellationToken ct)
     {
-        using var request = BuildRequest(HttpMethod.Get, relativePath);
+        using var request = await BuildRequestAsync(HttpMethod.Get, relativePath, ct);
         using var response = await _http.SendAsync(request, ct);
         return await ReadJsonAsync<T>(response, ct);
     }
@@ -61,7 +64,7 @@ public sealed partial class CrawldadClient
     // A body-carrying mutation (POST/PUT) returning a JSON DTO.
     private async Task<T> SendJsonAsync<T>(HttpMethod method, string relativePath, object body, CancellationToken ct)
     {
-        using var request = BuildRequest(method, relativePath, JsonBody(body));
+        using var request = await BuildRequestAsync(method, relativePath, ct, JsonBody(body));
         using var response = await _http.SendAsync(request, ct);
         return await ReadJsonAsync<T>(response, ct);
     }
@@ -69,7 +72,7 @@ public sealed partial class CrawldadClient
     // A bodyless mutation (POST with no body) returning a JSON DTO — e.g. archive/cancel.
     private async Task<T> PostAsync<T>(string relativePath, CancellationToken ct)
     {
-        using var request = BuildRequest(HttpMethod.Post, relativePath);
+        using var request = await BuildRequestAsync(HttpMethod.Post, relativePath, ct);
         using var response = await _http.SendAsync(request, ct);
         return await ReadJsonAsync<T>(response, ct);
     }
@@ -77,7 +80,7 @@ public sealed partial class CrawldadClient
     // A mutation that returns no content (204) — DELETE. Maps a non-success to the typed exception.
     private async Task SendNoContentAsync(HttpMethod method, string relativePath, CancellationToken ct)
     {
-        using var request = BuildRequest(method, relativePath);
+        using var request = await BuildRequestAsync(method, relativePath, ct);
         using var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
