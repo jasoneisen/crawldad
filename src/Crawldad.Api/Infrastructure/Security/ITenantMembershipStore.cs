@@ -20,6 +20,21 @@ public enum MembershipRevokeOutcome
     LastOwner,
 }
 
+/// <summary>The outcome of a membership role change (issue #119 PR6) — a value so the last-Owner invariant is enforced <b>in
+/// the store</b>, under the tenant advisory lock, and the endpoint maps it to HTTP.</summary>
+public enum MembershipRoleChangeOutcome
+{
+    /// <summary>The membership now carries the requested role (or already did — an idempotent no-op).</summary>
+    Changed,
+
+    /// <summary>No such active membership for the tenant (unknown id, another tenant's, or revoked) — a plain not-found.</summary>
+    NotFound,
+
+    /// <summary>Refused: the change would downgrade the tenant's <b>last active <see cref="MembershipRole.Owner"/></b> to a
+    /// <see cref="MembershipRole.Member"/>, orphaning the workspace. The caller maps this to a <c>409</c>.</summary>
+    LastOwner,
+}
+
 /// <summary>The persistence seam over the console <see cref="TenantMembership"/> documents, stored single-tenanted so the
 /// auth boundary can resolve them before any tenant scope exists. Split out from Marten (mirroring
 /// <see cref="ITenantRegistryStore"/>) so the invariant logic is unit-testable against the store and the Marten wiring is
@@ -32,9 +47,15 @@ public interface ITenantMembershipStore
     Task<TenantMembership?> FindActiveAsync(string tenantId, string email, CancellationToken ct);
 
     /// <summary>Records an active <see cref="MembershipRole.Owner"/> membership for <paramref name="email"/> in the tenant,
-    /// idempotently: if an active membership already exists it is returned unchanged (no duplicate), else a new Owner
-    /// membership is created. The self-service attach flow's write.</summary>
+    /// idempotently. Convenience over <see cref="CreateAsync"/> for the self-service attach flow's self-owner write.</summary>
     Task<TenantMembership> CreateOwnerAsync(string tenantId, string email, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Records an active membership for <paramref name="email"/> in the tenant with <paramref name="role"/>,
+    /// idempotently: if an active membership already exists it is returned unchanged — <b>no duplicate, and its role is not
+    /// altered</b> (a role change is <see cref="ChangeRoleAsync"/>); else a new membership is created. The active
+    /// <c>(tenant, email)</c> uniqueness is enforced atomically under the tenant advisory lock (issue #119 PR6), so two
+    /// concurrent attaches of the same pair can never both insert.</summary>
+    Task<TenantMembership> CreateAsync(string tenantId, string email, MembershipRole role, DateTimeOffset now, CancellationToken ct);
 
     /// <summary>Every membership for the tenant (active and revoked), newest first — for the member listing and the
     /// last-owner invariant.</summary>
@@ -50,8 +71,16 @@ public interface ITenantMembershipStore
 
     /// <summary>Revokes the tenant's active membership <paramref name="membershipId"/>, stamping <paramref name="now"/> —
     /// unless it is the tenant's last active Owner, which is refused (<see cref="MembershipRevokeOutcome.LastOwner"/>) so the
-    /// workspace is never orphaned. Idempotent: a repeat revoke is <see cref="MembershipRevokeOutcome.NotFound"/>.</summary>
+    /// workspace is never orphaned. Idempotent: a repeat revoke is <see cref="MembershipRevokeOutcome.NotFound"/>. The
+    /// remove-member write; self-removal is allowed (any non-last-Owner membership is removable).</summary>
     Task<MembershipRevokeOutcome> RevokeAsync(string tenantId, Guid membershipId, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>Sets the tenant's active membership <paramref name="membershipId"/> to <paramref name="newRole"/>, stamping
+    /// <paramref name="now"/> — unless it would downgrade the tenant's last active Owner to a Member, which is refused
+    /// (<see cref="MembershipRoleChangeOutcome.LastOwner"/>) so the workspace keeps an Owner. Setting the role a membership
+    /// already has is an idempotent <see cref="MembershipRoleChangeOutcome.Changed"/>. Enforced atomically under the tenant
+    /// advisory lock (the cross-row Owner count the document version cannot cover). Issue #119 PR6.</summary>
+    Task<MembershipRoleChangeOutcome> ChangeRoleAsync(string tenantId, Guid membershipId, MembershipRole newRole, DateTimeOffset now, CancellationToken ct);
 }
 
 /// <summary>The Marten-backed <see cref="ITenantMembershipStore"/>. The membership documents are single-tenanted (they
@@ -67,12 +96,22 @@ internal sealed class MartenTenantMembershipStore(IDocumentStore store) : ITenan
             .FirstOrDefaultAsync(ct);
     }
 
-    public async Task<TenantMembership> CreateOwnerAsync(string tenantId, string email, DateTimeOffset now, CancellationToken ct)
+    public Task<TenantMembership> CreateOwnerAsync(string tenantId, string email, DateTimeOffset now, CancellationToken ct) =>
+        CreateAsync(tenantId, email, MembershipRole.Owner, now, ct);
+
+    public async Task<TenantMembership> CreateAsync(string tenantId, string email, MembershipRole role, DateTimeOffset now, CancellationToken ct)
     {
         await using var session = store.LightweightSession();
 
-        // Active-uniqueness is enforced here (check-then-insert, the MartenTenantRegistryStore.CreateAsync shape): an
-        // existing active membership is returned unchanged so a re-attach is a clean no-op, never a duplicate.
+        // Serialize this tenant's membership writes so the check-then-insert is atomic (issue #119 PR6, PR#154 forward item):
+        // two concurrent attaches of the same (tenant, email) queue on the lock, and the second re-reads only after the first
+        // commits — so it sees the existing row and returns it, never a duplicate. The partial unique index on active
+        // (TenantId, Email) (ManagementModule) is the DB-level backstop. Same lock class as revoke/role-change: all of a
+        // tenant's membership mutations serialise, so a create racing a revoke-of-last-owner is well-ordered too.
+        await TenantWriteLock.AcquireAsync(session, TenantWriteLock.MembershipRevocationClass, tenantId, ct);
+
+        // An existing active membership is returned unchanged so a re-attach is a clean no-op — and its role is NOT altered
+        // here (a role change is ChangeRoleAsync), so a second record can never silently promote/demote a member.
         var existing = await session.Query<TenantMembership>()
             .Where(m => m.TenantId == tenantId && m.Email == email && m.RevokedAt == null)
             .FirstOrDefaultAsync(ct);
@@ -86,7 +125,7 @@ internal sealed class MartenTenantMembershipStore(IDocumentStore store) : ITenan
             Id = Guid.NewGuid(),
             TenantId = tenantId,
             Email = email,
-            Role = MembershipRole.Owner,
+            Role = role,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -156,5 +195,44 @@ internal sealed class MartenTenantMembershipStore(IDocumentStore store) : ITenan
         session.Store(membership);
         await session.SaveChangesAsync(ct);
         return MembershipRevokeOutcome.Revoked;
+    }
+
+    public async Task<MembershipRoleChangeOutcome> ChangeRoleAsync(string tenantId, Guid membershipId, MembershipRole newRole, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var session = store.LightweightSession();
+
+        // Same lock as revoke: the downgrade guard below re-reads the Owner count, which must be atomic against a concurrent
+        // revoke/downgrade of a sibling Owner — two races can never both strip the workspace of its last Owner.
+        await TenantWriteLock.AcquireAsync(session, TenantWriteLock.MembershipRevocationClass, tenantId, ct);
+
+        var membership = await session.LoadAsync<TenantMembership>(membershipId, ct);
+        if (membership is null || !string.Equals(membership.TenantId, tenantId, StringComparison.Ordinal) || membership.RevokedAt is not null)
+        {
+            return MembershipRoleChangeOutcome.NotFound; // unknown, another tenant's, or revoked — idempotent not-found
+        }
+
+        if (membership.Role == newRole)
+        {
+            return MembershipRoleChangeOutcome.Changed; // already at the requested role — idempotent no-op, no write
+        }
+
+        // Anti-orphan invariant: a downgrade from Owner to Member removes an active Owner — refuse if it is the last one.
+        // Count owners in memory (membership sets are small) so the guard never depends on enum-in-LINQ translation.
+        if (membership.Role == MembershipRole.Owner && newRole == MembershipRole.Member)
+        {
+            var activeOwners = await session.Query<TenantMembership>()
+                .Where(m => m.TenantId == tenantId && m.RevokedAt == null)
+                .ToListAsync(ct);
+            if (activeOwners.Count(m => m.Role == MembershipRole.Owner) <= 1)
+            {
+                return MembershipRoleChangeOutcome.LastOwner;
+            }
+        }
+
+        membership.Role = newRole;
+        membership.UpdatedAt = now;
+        session.Store(membership);
+        await session.SaveChangesAsync(ct);
+        return MembershipRoleChangeOutcome.Changed;
     }
 }

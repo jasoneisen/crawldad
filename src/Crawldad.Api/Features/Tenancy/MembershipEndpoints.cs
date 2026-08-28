@@ -2,6 +2,7 @@ using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Contracts;
 using Crawldad.Contracts.Tenancy;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Wolverine.Http;
 
 namespace Crawldad.Api.Features.Tenancy;
@@ -35,8 +36,10 @@ public static class MembershipEndpoints
         return Results.Ok(new TenantMembershipList([.. rows.Select(ToInfo)]));
     }
 
-    /// <summary>Handles <c>POST /tenant/memberships</c>: record (idempotently) an <see cref="MembershipRole.Owner"/>
-    /// membership for the request's verified email in the caller's tenant. Returns the membership.</summary>
+    /// <summary>Handles <c>POST /tenant/memberships</c>: record (idempotently) a membership for the request's verified
+    /// email in the caller's tenant. The role defaults to <see cref="MembershipRole.Owner"/> (the attach flow's self-owner);
+    /// an Owner adding a teammate passes an explicit role. Owner-only on the console channel (an API key is unrestricted).
+    /// A re-record of an already-active member returns it unchanged (its role is not altered here). Returns the membership.</summary>
     [WolverinePost("/tenant/memberships")]
     public static async Task<IResult> Record(
         RecordMembershipRequest request,
@@ -57,8 +60,69 @@ public static class MembershipEndpoints
         }
 
         var email = EmailAddress.Normalize(request.Email);
-        var membership = await memberships.CreateOwnerAsync(tenant.TenantId, email, clock.GetUtcNow(), ct);
+        var membership = await memberships.CreateAsync(tenant.TenantId, email, request.Role ?? MembershipRole.Owner, clock.GetUtcNow(), ct);
         return Results.Ok(ToInfo(membership));
+    }
+
+    /// <summary>Handles <c>DELETE /tenant/memberships/{id}</c>: remove (revoke) one of the caller's memberships. Owner-only
+    /// on the console channel. Self-removal is allowed — the only refusal is the tenant's <b>last active Owner</b>
+    /// (<c>409 last_owner</c>), so a workspace is never orphaned. <c>404</c> when the id is not one of the workspace's active
+    /// memberships (unknown / foreign / already revoked). Idempotent.</summary>
+    [WolverineDelete("/tenant/memberships/{id}")]
+    public static async Task<IResult> Remove(
+        Guid id,
+        [FromServices] TenantContext tenant,
+        [FromServices] ITenantRegistryStore registry,
+        [FromServices] ITenantMembershipStore memberships,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        if (await registry.FindAsync(tenant.TenantId, ct) is null)
+        {
+            return MembershipProblems.SelfServiceUnavailable();
+        }
+
+        var outcome = await memberships.RevokeAsync(tenant.TenantId, id, clock.GetUtcNow(), ct);
+        return outcome switch
+        {
+            MembershipRevokeOutcome.LastOwner => MembershipProblems.LastOwner(),
+            MembershipRevokeOutcome.NotFound => MembershipProblems.MembershipNotFound(),
+            _ => Results.NoContent(),
+        };
+    }
+
+    /// <summary>Handles <c>POST /tenant/memberships/{id}/role</c>: set one of the caller's memberships to a role. Owner-only
+    /// on the console channel. Downgrading the tenant's <b>last active Owner</b> to a Member is refused
+    /// (<c>409 last_owner</c>); setting a role a membership already has is a clean no-op. <c>404</c> when the id is not one of
+    /// the workspace's active memberships. Returns the updated membership.</summary>
+    [WolverinePost("/tenant/memberships/{id}/role")]
+    public static async Task<IResult> ChangeRole(
+        Guid id,
+        ChangeMembershipRoleRequest request,
+        TenantContext tenant,
+        ITenantRegistryStore registry,
+        ITenantMembershipStore memberships,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (await registry.FindAsync(tenant.TenantId, ct) is null)
+        {
+            return MembershipProblems.SelfServiceUnavailable();
+        }
+
+        var outcome = await memberships.ChangeRoleAsync(tenant.TenantId, id, request.Role, clock.GetUtcNow(), ct);
+        switch (outcome)
+        {
+            case MembershipRoleChangeOutcome.LastOwner:
+                return MembershipProblems.LastOwner();
+            case MembershipRoleChangeOutcome.NotFound:
+                return MembershipProblems.MembershipNotFound();
+            default:
+                var updated = await memberships.ListForTenantAsync(tenant.TenantId, ct);
+                var membership = updated.First(m => m.Id == id);
+                return Results.Ok(ToInfo(membership));
+        }
     }
 
     // Projects a stored membership to its metadata-only listing row.

@@ -31,6 +31,17 @@ public static class ManagementModule
         memberships.SingleTenanted();
         memberships.Index(x => x.Email);     // console lookup + a user's workspaces
         memberships.Index(x => x.TenantId);  // a tenant's members + the last-owner invariant
+        // Active-membership uniqueness (issue #119 PR6, PR#154 forward item): a partial UNIQUE index on (TenantId, Email)
+        // over ACTIVE rows only (RevokedAt is null) is the DB-level backstop to the store's advisory-lock guard — a revoked
+        // row and a re-created active row for the same pair coexist, but two active rows cannot. The store serialises creates
+        // under the tenant lock so this never fires in practice; it is defence-in-depth against any future non-store writer.
+        memberships.Index(
+            x => new { x.TenantId, x.Email },
+            x =>
+            {
+                x.IsUnique = true;
+                x.Predicate = "(data ->> 'RevokedAt') is null";
+            });
         // Optimistic concurrency (issue #119 PR5, PR#153's forward-looking guard): a stale write to a membership loses, so a
         // future member-management endpoint (PR6) is safe before it exists. The cross-row last-Owner count is covered by the
         // tenant advisory lock in the store; the version covers a same-document race.

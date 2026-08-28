@@ -58,4 +58,34 @@ public class ConsoleWriteRateLimiterTests
         limiter.TryAcquire("b@x.test", "t1").ShouldBeTrue();  // a different actor, same tenant → its own partition
         limiter.TryAcquire("a@x.test", "t2").ShouldBeTrue();  // the same actor, a different tenant → its own partition
     }
+
+    [Fact]
+    public void Idle_partitions_are_evicted_by_the_sweep_while_active_ones_survive()
+    {
+        var clock = new AdvanceableClock(DateTimeOffset.UnixEpoch);
+        var limiter = LimiterFor(5, 60, clock);
+
+        limiter.TryAcquire("a@x.test", "t1").ShouldBeTrue(); // t=0: the sweep schedules its next run at t=60
+        clock.Advance(TimeSpan.FromSeconds(30));
+        limiter.TryAcquire("b@x.test", "t1").ShouldBeTrue(); // t=30: no sweep yet (before t=60); two partitions now
+        limiter.PartitionCount.ShouldBe(2);
+
+        clock.Advance(TimeSpan.FromSeconds(40));             // t=70: past the next-sweep time and a's last write is > a window old
+        limiter.TryAcquire("b@x.test", "t1").ShouldBeTrue(); // triggers the sweep: a (idle since t=0) is dropped, b (t=30) is kept
+
+        limiter.PartitionCount.ShouldBe(1);                  // exactly the still-active partition remains — the map doesn't grow unbounded
+    }
+
+    [Fact]
+    public void An_evicted_partition_starts_fresh_when_seen_again()
+    {
+        var clock = new AdvanceableClock(DateTimeOffset.UnixEpoch);
+        var limiter = LimiterFor(1, 60, clock);
+
+        limiter.TryAcquire("a@x.test", "t1").ShouldBeTrue();
+        limiter.TryAcquire("a@x.test", "t1").ShouldBeFalse();  // at the limit
+        clock.Advance(TimeSpan.FromSeconds(120));              // idle a full window+ → the next call sweeps a away
+        limiter.TryAcquire("a@x.test", "t1").ShouldBeTrue();   // a fresh partition, admitted (equivalent to the window sliding)
+        limiter.PartitionCount.ShouldBe(1);
+    }
 }

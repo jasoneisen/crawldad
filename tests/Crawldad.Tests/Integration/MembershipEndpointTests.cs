@@ -68,12 +68,87 @@ public sealed class MembershipEndpointTests(ManagementFixture fixture) : IAsyncL
         });
     }
 
+    [Fact]
+    public async Task Owner_key_adds_a_member_changes_its_role_and_removes_it()
+    {
+        var seed = await SeedTenantAsync();
+        await RecordAsync(seed.Key, "owner@example.com", StatusCodes.Status200OK); // the workspace keeps an Owner throughout
+
+        // Add a member with an explicit role (key channel is unrestricted — no console Owner gate).
+        var added = await Host.Scenario(x =>
+        {
+            x.WithRequestHeader("Authorization", TestTenants.Bearer(seed.Key));
+            x.Post.Json(new { email = "Member@Example.com", role = "member" }).ToUrl("/tenant/memberships");
+            x.StatusCodeShouldBe(StatusCodes.Status200OK);
+        });
+        var member = await added.ReadAsJsonAsync<JsonElement>();
+        member.GetProperty("role").GetString().ShouldBe("member");
+        member.GetProperty("email").GetString().ShouldBe("member@example.com"); // normalized
+        var memberId = member.GetProperty("membershipId").GetGuid();
+
+        // Change its role to owner, then back to member.
+        var promoted = await ChangeRoleAsync(seed.Key, memberId, "owner", StatusCodes.Status200OK);
+        promoted.GetProperty("role").GetString().ShouldBe("owner");
+        await ChangeRoleAsync(seed.Key, memberId, "member", StatusCodes.Status200OK);
+
+        // Remove it (idempotent — a second remove is a 404).
+        await RemoveAsync(seed.Key, memberId, StatusCodes.Status204NoContent);
+        await RemoveAsync(seed.Key, memberId, StatusCodes.Status404NotFound);
+    }
+
+    [Fact]
+    public async Task The_last_owner_can_neither_be_removed_nor_downgraded()
+    {
+        var seed = await SeedTenantAsync();
+        var owner = await RecordAsync(seed.Key, "solo@example.com", StatusCodes.Status200OK);
+        var ownerId = owner.GetProperty("membershipId").GetGuid();
+
+        await RemoveAsync(seed.Key, ownerId, StatusCodes.Status409Conflict);              // last Owner — refused
+        await ChangeRoleAsync(seed.Key, ownerId, "member", StatusCodes.Status409Conflict); // downgrade of the last Owner — refused
+    }
+
+    [Fact]
+    public async Task Removing_or_changing_an_unknown_membership_is_a_404()
+    {
+        var seed = await SeedTenantAsync();
+        await RecordAsync(seed.Key, "owner@example.com", StatusCodes.Status200OK);
+
+        await RemoveAsync(seed.Key, Guid.NewGuid(), StatusCodes.Status404NotFound);
+        await ChangeRoleAsync(seed.Key, Guid.NewGuid(), "owner", StatusCodes.Status404NotFound);
+    }
+
+    [Fact]
+    public async Task An_env_tenant_cannot_use_the_management_endpoints()
+    {
+        await RemoveAsync(TestTenants.PrimaryKey, Guid.NewGuid(), StatusCodes.Status400BadRequest);
+        await ChangeRoleAsync(TestTenants.PrimaryKey, Guid.NewGuid(), "owner", StatusCodes.Status400BadRequest);
+    }
+
     private async Task<JsonElement> RecordAsync(string key, string email, int expected)
     {
         var result = await Host.Scenario(x =>
         {
             x.WithRequestHeader("Authorization", TestTenants.Bearer(key));
             x.Post.Json(new { email }).ToUrl("/tenant/memberships");
+            x.StatusCodeShouldBe(expected);
+        });
+        return await result.ReadAsJsonAsync<JsonElement>();
+    }
+
+    private async Task RemoveAsync(string key, Guid membershipId, int expected) =>
+        await Host.Scenario(x =>
+        {
+            x.WithRequestHeader("Authorization", TestTenants.Bearer(key));
+            x.Delete.Url($"/tenant/memberships/{membershipId}");
+            x.StatusCodeShouldBe(expected);
+        });
+
+    private async Task<JsonElement> ChangeRoleAsync(string key, Guid membershipId, string role, int expected)
+    {
+        var result = await Host.Scenario(x =>
+        {
+            x.WithRequestHeader("Authorization", TestTenants.Bearer(key));
+            x.Post.Json(new { role }).ToUrl($"/tenant/memberships/{membershipId}/role");
             x.StatusCodeShouldBe(expected);
         });
         return await result.ReadAsJsonAsync<JsonElement>();

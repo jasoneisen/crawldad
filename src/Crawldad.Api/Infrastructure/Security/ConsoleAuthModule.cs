@@ -53,6 +53,15 @@ public static class ConsoleAuthModule
     /// is <c>ApiKey</c>-only, so a console-read endpoint behaves byte-for-byte as it does today.</summary>
     public const string ConsoleOrKeyPolicy = "ConsoleOrKey";
 
+    /// <summary>The named authorization policy the <b>Owner-only</b> console endpoints opt into (issue #119 PR6):
+    /// key management (mint/rotate/revoke) and membership management (add/remove/change-role). Same base as
+    /// <see cref="ConsoleOrKeyPolicy"/> (accepts <c>ApiKey</c> and — when configured — <see cref="Scheme"/>, and requires a
+    /// tenant claim) plus a <see cref="ConsoleOwnerRequirement"/>: a request authenticated by the <b>console</b> scheme must
+    /// carry an explicit <c>Owner</c> role, while a request authenticated by an <b>API key</b> is unrestricted (key
+    /// possession is full tenant authority). So a console Member is a <c>403</c> here but reaches every
+    /// <see cref="ConsoleOrKeyPolicy"/> endpoint, and a programmatic key caller is unaffected.</summary>
+    public const string ConsoleOwnerOrKeyPolicy = "ConsoleOwnerOrKey";
+
     /// <summary>The raw v1.0 token version claim (read directly because <see cref="JwtBearerOptions.MapInboundClaims"/> is false).</summary>
     internal const string VersionClaim = "ver";
 
@@ -83,10 +92,14 @@ public static class ConsoleAuthModule
         // the same idiom DataProtectionModule uses to select its provider.
         var options = section.Get<ConsoleAuthOptions>() ?? new ConsoleAuthOptions();
 
-        // The ConsoleOrKey policy always exists (so the enumerated endpoints' [Authorize(Policy=…)] never references an
-        // unregistered policy), but only lists the ConsolePrincipal scheme when it is configured — unconfigured, it is
-        // ApiKey-only, identical to the default gate.
+        // The ConsoleOrKey / ConsoleOwnerOrKey policies always exist (so the enumerated endpoints' [Authorize(Policy=…)]
+        // never reference an unregistered policy), but only list the ConsolePrincipal scheme when it is configured —
+        // unconfigured, they are ApiKey-only, identical to the default gate. The Owner handler is registered always: it lets
+        // a key-authenticated Owner-endpoint request through unchanged (no role gate on the key channel) and gates the
+        // console channel on the Owner role.
         AddConsoleOrKeyPolicy(services, options.Enabled);
+        AddConsoleOwnerOrKeyPolicy(services, options.Enabled);
+        services.AddSingleton<IAuthorizationHandler, ConsoleOwnerAuthorizationHandler>();
 
         if (!options.Enabled)
         {
@@ -115,6 +128,26 @@ public static class ConsoleAuthModule
                 policy.AddAuthenticationSchemes(schemes);
                 policy.RequireAuthenticatedUser();
                 policy.RequireClaim(CrawldadClaims.TenantId); // no tenant claim (no membership) ⇒ 403, not access
+            }));
+    }
+
+    // Registers the ConsoleOwnerOrKey policy (issue #119 PR6): the ConsoleOrKey base (same schemes + authenticated + tenant
+    // claim) plus the ConsoleOwnerRequirement, which admits a key-authenticated principal unconditionally and a console
+    // principal only when it carries the Owner role. Layered as a separate policy so the enumerated Owner-only endpoints opt
+    // into it explicitly; every other console endpoint keeps ConsoleOrKey (Member-reachable).
+    private static void AddConsoleOwnerOrKeyPolicy(IServiceCollection services, bool consoleEnabled)
+    {
+        var schemes = consoleEnabled
+            ? new[] { CrawldadAuthentication.Scheme, Scheme }
+            : new[] { CrawldadAuthentication.Scheme };
+
+        services.Configure<AuthorizationOptions>(options =>
+            options.AddPolicy(ConsoleOwnerOrKeyPolicy, policy =>
+            {
+                policy.AddAuthenticationSchemes(schemes);
+                policy.RequireAuthenticatedUser();
+                policy.RequireClaim(CrawldadClaims.TenantId); // no tenant claim (no membership) ⇒ 403 before the role gate
+                policy.AddRequirements(new ConsoleOwnerRequirement());
             }));
     }
 
@@ -216,11 +249,18 @@ public static class ConsoleAuthModule
             return;
         }
 
-        // Stamp the SAME claims the ApiKey scheme issues, so Wolverine tenant detection (IsClaimTypeNamed) and TenantContext
-        // are unchanged. Exactly one crawldad:tenant_id claim exists (the validated JWT identity carries none), so nothing
-        // downstream has to disambiguate. The actor is the human email — console attribution (decision addendum #1).
+        // Stamp the SAME tenant/actor claims the ApiKey scheme issues, so Wolverine tenant detection (IsClaimTypeNamed) and
+        // TenantContext are unchanged. Exactly one crawldad:tenant_id claim exists (the validated JWT identity carries none),
+        // so nothing downstream has to disambiguate. The actor is the human email — console attribution (decision addendum #1).
+        // The role claim rides ALONGSIDE them on this console identity (issue #119 PR6): the Owner-only policy reads it to
+        // gate key/membership management, so a Member console principal can never act as an Owner. It is stamped ONLY here —
+        // a key principal never carries it, which is exactly how the policy tells the two channels apart.
         context.Principal!.AddIdentity(new ClaimsIdentity(
-            [new Claim(CrawldadClaims.TenantId, membership.TenantId), new Claim(CrawldadClaims.Actor, membership.Email)],
+            [
+                new Claim(CrawldadClaims.TenantId, membership.TenantId),
+                new Claim(CrawldadClaims.Actor, membership.Email),
+                new Claim(CrawldadClaims.Role, membership.Role.ToString()),
+            ],
             Scheme,
             nameType: CrawldadClaims.Actor,
             roleType: null));

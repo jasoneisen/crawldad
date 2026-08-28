@@ -216,15 +216,7 @@ public static class HostConfiguration
             // layered on top of the blanket gate above. Every other endpoint keeps the default ApiKey-only policy. When
             // Crawldad:ConsoleAuth is unconfigured the ConsoleOrKey policy is ApiKey-only, so these endpoints are byte-for-byte
             // as they are today. The enumeration test pins the live set (reads + writes, as separate lists).
-            options.ConfigureEndpoints(chain =>
-            {
-                // Every mapped HTTP chain carries a RoutePattern here; the Includes checks handle a null RawText.
-                if (ConsoleReadEndpoints.Includes(chain.HttpMethods, chain.RoutePattern!.RawText)
-                    || ConsoleWriteEndpoints.Includes(chain.HttpMethods, chain.RoutePattern!.RawText))
-                {
-                    chain.RequireAuthorization(ConsoleAuthModule.ConsoleOrKeyPolicy);
-                }
-            });
+            options.ConfigureEndpoints(ApplyConsoleScope);
 
             // Scope each request's Marten session to the tenant on the authenticated principal. Wolverine opens the
             // injected IDocumentSession/IQuerySession for this tenant and stamps it onto messages the endpoint publishes,
@@ -237,5 +229,24 @@ public static class HostConfiguration
         ManagementModule.MapManagementEndpoints(app);
 
         return app;
+    }
+
+    // Applies the console authorization scope to a single mapped endpoint (issue #119 PR4–PR6): an Owner-only console endpoint
+    // (key + membership management) gets ConsoleOwnerOrKey; a Member-reachable console read/write gets ConsoleOrKey; every
+    // other endpoint keeps the default ApiKey-only gate. Extracted from MapCrawldadPlatform to stay within the length budget.
+    private static void ApplyConsoleScope(HttpChain chain)
+    {
+        var route = chain.RoutePattern!.RawText; // every mapped HTTP chain carries a RoutePattern; Includes handles null RawText
+        if (ConsoleOwnerEndpoints.Includes(chain.HttpMethods, route))
+        {
+            // Owner-only: still a console write (audited, rate-limited), but the console channel additionally requires the
+            // Owner role; an API key is unrestricted. Checked first so an Owner route never falls to the Member-reachable policy.
+            chain.RequireAuthorization(ConsoleAuthModule.ConsoleOwnerOrKeyPolicy);
+        }
+        else if (ConsoleReadEndpoints.Includes(chain.HttpMethods, route)
+            || ConsoleWriteEndpoints.Includes(chain.HttpMethods, route))
+        {
+            chain.RequireAuthorization(ConsoleAuthModule.ConsoleOrKeyPolicy);
+        }
     }
 }

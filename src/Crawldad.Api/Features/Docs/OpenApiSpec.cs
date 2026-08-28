@@ -108,8 +108,11 @@ public static class OpenApiSpec
         new(nameof(TenantApiKeyList), typeof(TenantApiKeyList)),
         new(nameof(TenantApiKeyCreated), typeof(TenantApiKeyCreated)),
         new(nameof(RecordMembershipRequest), typeof(RecordMembershipRequest)),
+        new(nameof(ChangeMembershipRoleRequest), typeof(ChangeMembershipRoleRequest)),
         new(nameof(TenantMembershipInfo), typeof(TenantMembershipInfo)),
         new(nameof(TenantMembershipList), typeof(TenantMembershipList)),
+        new(nameof(WorkspaceSummary), typeof(WorkspaceSummary)),
+        new(nameof(WorkspaceList), typeof(WorkspaceList)),
         new(nameof(BillingConfigResponse), typeof(BillingConfigResponse)),
         new(nameof(CheckoutSessionRequest), typeof(CheckoutSessionRequest)),
         new(nameof(BillingSessionResponse), typeof(BillingSessionResponse)),
@@ -311,21 +314,44 @@ public static class OpenApiSpec
             ],
             Description: "Revokes one of the authenticated tenant's keys immediately. Refuses to revoke the tenant's LAST active key (last_active_key) or the key authenticating THIS request (current_key) — rotate those instead, since self-service auth needs a live key; both are a 409. An unknown, foreign, or already-revoked id is a 404 with no existence oracle (a repeated DELETE is 204 then 404). Registry tenants only."),
 
-        // Tenant self-service memberships (issue #119 PR4): the console authorization store, written by the portal's attach
-        // flow with the tenant's own key. Registry tenants only; NOT console-reachable (it bootstraps what console needs).
+        // Tenant self-service memberships (issue #119 PR4/PR6): the console authorization store. Reads are console-readable
+        // (a Member may list); writes are Owner-only on the console channel (an API key is unrestricted). Registry tenants only.
         new("get", "/tenant/memberships", "listTenantMemberships", "List the tenant's memberships.", _tenancy, Anonymous: false, [], null,
             [
                 new("200", "The tenant's memberships (email, role, timestamps, active), newest first.", Component: nameof(TenantMembershipList)),
                 new("400", "This is an env-configured tenant, not a registry tenant (self_service_unavailable)."),
             ],
             Description: "Lists the authenticated tenant's console memberships — each a verified email mapped to a role (owner/member) with its created/revoked timestamps and active flag. Metadata only (the email is portal identity, never a credential). Registry tenants only: an env-configured tenant is a 400 self_service_unavailable."),
-        new("post", "/tenant/memberships", "recordTenantMembership", "Record an owner membership.", _tenancy, Anonymous: false, [],
-            new(nameof(RecordMembershipRequest), "The verified portal email to grant this workspace to (normalized server-side)."),
+        new("post", "/tenant/memberships", "recordTenantMembership", "Add a member (or record the attach owner).", _tenancy, Anonymous: false, [],
+            new(nameof(RecordMembershipRequest), "The verified portal email to grant this workspace to (normalized server-side), and an optional role — omitted defaults to owner (the attach flow's self-owner); an explicit member is how an owner invites a teammate."),
             [
-                new("200", "The active owner membership for the email (idempotent — an existing active membership is returned unchanged).", Component: nameof(TenantMembershipInfo)),
+                new("200", "The active membership for the email (idempotent — an existing active membership is returned unchanged, its role not altered).", Component: nameof(TenantMembershipInfo)),
                 new("400", "The email was missing (RFC 7807 problem+json), or this is an env-configured tenant (self_service_unavailable)."),
             ],
-            Description: "Records (idempotently) an owner membership for the given verified email in the authenticated tenant — the console authority a subsequent console read for that email resolves against. Called by the portal's attach flow after it has proved possession of the tenant key; the key holder is authorizing an email it chose, so this grants no authority the key does not already hold. A re-record returns the existing active membership unchanged. Registry tenants only (env tenant → 400 self_service_unavailable)."),
+            Description: "Records (idempotently) a membership for the given verified email in the authenticated tenant — the console authority a subsequent console read for that email resolves against. The role defaults to owner (the portal's attach flow records the signed-in user as owner after proving key possession); an owner adding a teammate passes an explicit role. On the console channel this is Owner-only (a Member cannot add members); an API key is unrestricted. A re-record returns the existing active membership unchanged (use POST /tenant/memberships/{id}/role to change a role). Registry tenants only (env tenant → 400 self_service_unavailable)."),
+        new("delete", "/tenant/memberships/{id}", "removeTenantMembership", "Remove a member.", _tenancy, Anonymous: false, [Id], null,
+            [
+                new("204", "The membership was removed (revoked)."),
+                new("404", "No such active membership for this workspace (unknown / foreign / already revoked)."),
+                new("409", "The membership is the workspace's last active Owner and cannot be removed (last_owner)."),
+                new("400", "This is an env-configured tenant, not a registry tenant (self_service_unavailable)."),
+            ],
+            Description: "Removes (revokes) one of the workspace's memberships. Owner-only on the console channel; an API key is unrestricted. Self-removal is allowed — the only refusal is the workspace's last active Owner (409 last_owner), so a workspace is never left without an Owner. An unknown, foreign, or already-revoked id is a 404 with no existence oracle (idempotent). Registry tenants only."),
+        new("post", "/tenant/memberships/{id}/role", "changeTenantMembershipRole", "Change a member's role.", _tenancy, Anonymous: false, [Id],
+            new(nameof(ChangeMembershipRoleRequest), "The role to set the membership to (owner/member)."),
+            [
+                new("200", "The updated membership.", Component: nameof(TenantMembershipInfo)),
+                new("404", "No such active membership for this workspace (unknown / foreign / already revoked)."),
+                new("409", "The change would downgrade the workspace's last active Owner to a Member (last_owner)."),
+                new("400", "This is an env-configured tenant, not a registry tenant (self_service_unavailable)."),
+            ],
+            Description: "Sets one of the workspace's memberships to a role. Owner-only on the console channel; an API key is unrestricted. Downgrading the workspace's last active Owner to a Member is refused (409 last_owner); setting a role a membership already has is a clean no-op. An unknown or foreign id is a 404. Registry tenants only."),
+
+        // Cross-tenant workspace switcher read (issue #119 PR6): the authenticated user's own workspaces. A console read,
+        // authorized like any other (a valid console token + a workspace the caller is a member of), returning ALL of theirs.
+        new("get", "/workspaces", "listWorkspaces", "List the caller's workspaces.", _tenancy, Anonymous: false, [], null,
+            [new("200", "Every workspace the authenticated user is an active member of (tenant id, display name, role), newest membership first.", Component: nameof(WorkspaceList))],
+            Description: "Returns the workspaces the authenticated user can act as — every tenant they hold an active membership in, with the display name and their role — the console-mode source for the portal's workspace switcher (multi-workspace). The list is keyed on the AUTHENTICATED actor (the human email the console scheme stamps), never a request body, so it can only ever list the caller's own workspaces. On the API-key channel the actor is the key's tenant, so a key caller typically gets an empty list — the switcher is a portal/console feature. \"Workspace\" is the customer-facing term for a tenant."),
 
         // Billing (Stripe scaffolding, issue #119): tenant-authed config + checkout/portal session URLs, and the PUBLIC
         // signature-verified subscription webhook — the only path that changes a tenant's plan.

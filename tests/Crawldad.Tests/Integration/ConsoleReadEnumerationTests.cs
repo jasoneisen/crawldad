@@ -46,6 +46,8 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
         "GET /usage",
         "GET /billing/config",
         "GET /tenant/keys",
+        "GET /tenant/memberships",  // a workspace's members — Member-readable (management is Owner-only, below)
+        "GET /workspaces",          // the caller's own workspaces — the switcher (issue #119 PR6)
     };
 
     // The intended console-WRITE scope (PR5) — the writes the portal performs, and only those. Kept independent of
@@ -63,6 +65,21 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
         "POST /tenant/keys/{id}/rotate",
         "DELETE /tenant/keys/{id}",
         "POST /tenant/memberships",
+        "DELETE /tenant/memberships/{id}",       // remove a member — Owner-only (issue #119 PR6)
+        "POST /tenant/memberships/{id}/role",    // change a member's role — Owner-only (issue #119 PR6)
+    };
+
+    // The Owner-only console subset (issue #119 PR6): key + membership management. On the console channel these additionally
+    // require the Owner role (ConsoleOwnerOrKey policy); every other console write is Member-reachable (ConsoleOrKey). Kept
+    // independent of ConsoleOwnerEndpoints.Routes on purpose, so this is a real tripwire against the wiring.
+    private static readonly HashSet<string> _intendedConsoleOwnerScope = new(StringComparer.Ordinal)
+    {
+        "POST /tenant/keys",
+        "POST /tenant/keys/{id}/rotate",
+        "DELETE /tenant/keys/{id}",
+        "POST /tenant/memberships",
+        "DELETE /tenant/memberships/{id}",
+        "POST /tenant/memberships/{id}/role",
     };
 
     // The full console scope: reads + writes. A route accepts a console principal iff it is in one of these lists.
@@ -95,18 +112,39 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
     [Fact]
     public void The_live_console_admitting_set_equals_the_intended_enumeration()
     {
+        // A route admits a console principal under EITHER console policy (ConsoleOrKey for Member-reachable reads/writes,
+        // ConsoleOwnerOrKey for the Owner-only subset). The union must equal the whole intended console scope.
+        var admitting = RoutesCarryingPolicy(
+            ConsoleAuthModule.ConsoleOrKeyPolicy,
+            ConsoleAuthModule.ConsoleOwnerOrKeyPolicy);
+
+        admitting.ShouldBe(_intendedConsoleScope, ignoreOrder: true); // exactly the reads + writes, nothing more
+    }
+
+    [Fact]
+    public void The_live_owner_only_admitting_set_equals_the_intended_enumeration()
+    {
+        // Exactly the Owner-only subset carries the stricter ConsoleOwnerOrKey policy — a mis-scoped route (a Member-reachable
+        // write wrongly Owner-gated, or an Owner-only write left Member-reachable) fails CI here.
+        var ownerScope = RoutesCarryingPolicy(ConsoleAuthModule.ConsoleOwnerOrKeyPolicy);
+
+        ownerScope.ShouldBe(_intendedConsoleOwnerScope, ignoreOrder: true);
+    }
+
+    private HashSet<string> RoutesCarryingPolicy(params string[] policies)
+    {
         var admitting = new HashSet<string>(StringComparer.Ordinal);
         foreach (var endpoint in RoutableEndpoints())
         {
-            var carriesConsolePolicy = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>()
-                .Any(data => string.Equals(data.Policy, ConsoleAuthModule.ConsoleOrKeyPolicy, StringComparison.Ordinal));
-            if (carriesConsolePolicy)
+            var carries = endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>()
+                .Any(data => policies.Any(policy => string.Equals(data.Policy, policy, StringComparison.Ordinal)));
+            if (carries)
             {
                 admitting.Add($"{Method(endpoint)} {endpoint.RoutePattern.RawText}");
             }
         }
 
-        admitting.ShouldBe(_intendedConsoleScope, ignoreOrder: true); // exactly the reads + writes, nothing more
+        return admitting;
     }
 
     [Fact]

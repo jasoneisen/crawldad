@@ -24,10 +24,12 @@ public static class ConsoleWriteEndpoints
         ("POST", "/payloads/{id}/revise"),       // append a payload revision
         ("POST", "/billing/checkout-session"),   // mint a hosted-checkout redirect
         ("POST", "/billing/portal-session"),     // mint a billing-portal redirect
-        ("POST", "/tenant/keys"),                // mint a tenant API key
-        ("POST", "/tenant/keys/{id}/rotate"),    // rotate a tenant API key
-        ("DELETE", "/tenant/keys/{id}"),         // revoke a tenant API key
-        ("POST", "/tenant/memberships"),         // record a workspace membership (the attach flow)
+        ("POST", "/tenant/keys"),                    // mint a tenant API key (Owner-only on the console channel)
+        ("POST", "/tenant/keys/{id}/rotate"),        // rotate a tenant API key (Owner-only)
+        ("DELETE", "/tenant/keys/{id}"),             // revoke a tenant API key (Owner-only)
+        ("POST", "/tenant/memberships"),             // add a member / record the attach self-owner (Owner-only)
+        ("DELETE", "/tenant/memberships/{id}"),      // remove a member (Owner-only) — issue #119 PR6
+        ("POST", "/tenant/memberships/{id}/role"),   // change a member's role (Owner-only) — issue #119 PR6
     };
 
     /// <summary>True when an endpoint for HTTP <paramref name="methods"/> on <paramref name="route"/> is a console-write
