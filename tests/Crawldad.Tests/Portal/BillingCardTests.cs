@@ -104,6 +104,8 @@ public class BillingCardTests : BunitContext
         Services.AddSingleton(ctx);
         Services.AddSingleton<IWorkspaceLinker>(new NoopLinker());
         Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
+        Services.AddSingleton<Microsoft.Extensions.Options.IOptions<Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions>>(
+            Microsoft.Extensions.Options.Options.Create(new Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions())); // stored-key default; affordance not under test here
         var http = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Email, "owner@example.com")], "TestCookie")),

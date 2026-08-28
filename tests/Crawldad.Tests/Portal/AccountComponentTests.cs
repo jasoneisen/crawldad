@@ -4,12 +4,14 @@ using Bunit;
 using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
 using Crawldad.Portal.Components.Pages.App;
+using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Client;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Portal;
 
@@ -358,13 +360,61 @@ public class AccountComponentTests : BunitContext
         cut.Markup.ShouldContain("Enter your API key.");
     }
 
+    // ---- free-workspace provisioning affordance (issue #119 PR7) --------------------------------------------------
+
+    [Fact]
+    public void Console_mode_with_zero_workspaces_shows_the_create_free_workspace_affordance()
+    {
+        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), consoleMode: true);
+
+        var form = cut.Find("[data-testid=provision-form]");
+        form.GetAttribute("action").ShouldBe("/app/workspace/provision");
+        cut.Find("[data-testid=provision-submit]").ShouldNotBeNull();
+        cut.FindAll("[data-testid=workspaces-unlinked]").ShouldBeEmpty(); // the affordance replaces the bare "attach below" hint
+    }
+
+    [Fact]
+    public void Stored_key_mode_with_zero_workspaces_hides_the_affordance()
+    {
+        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), consoleMode: false);
+
+        cut.FindAll("[data-testid=provision-form]").ShouldBeEmpty();       // no console identity → no self-serve create (honest)
+        cut.Find("[data-testid=workspaces-unlinked]").ShouldNotBeNull();   // the plain attach hint instead
+    }
+
+    [Fact]
+    public void A_linked_console_account_does_not_show_the_affordance()
+    {
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage), PortalAuthMode.Console)), Authed(), consoleMode: true);
+
+        cut.FindAll("[data-testid=provision-form]").ShouldBeEmpty(); // already has a workspace
+    }
+
+    [Fact]
+    public void A_relink_needed_account_does_not_show_the_affordance()
+    {
+        // A linked-but-undecryptable-key account (re-link needed) is NOT a zero-workspace account — the affordance stays hidden.
+        var cut = RenderPage(new FakeTenantContext(tenant: null, fault: new CryptographicException("ring rotated")), Authed(), consoleMode: true);
+
+        cut.FindAll("[data-testid=provision-form]").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_provision_error_is_surfaced_from_the_redirect()
+    {
+        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), consoleMode: true, query: "?provisionError=We%20couldn%27t%20create%20your%20workspace");
+
+        cut.Find("[data-testid=provision-error]").TextContent.ShouldContain("couldn't create your workspace");
+    }
+
     // ---- helpers --------------------------------------------------------------------------------------------------
 
-    private IRenderedComponent<Account> RenderPage(IPortalTenantContext ctx, HttpContext http, IWorkspaceLinker? linker = null, string? query = null)
+    private IRenderedComponent<Account> RenderPage(IPortalTenantContext ctx, HttpContext http, IWorkspaceLinker? linker = null, string? query = null, bool consoleMode = false)
     {
         Services.AddSingleton(ctx);
         Services.AddSingleton(linker ?? new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok")));
         Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
+        Services.AddSingleton(ConsoleAuthOption(consoleMode));
         if (query is not null)
         {
             Services.GetRequiredService<NavigationManager>().NavigateTo($"/app/account{query}");
@@ -372,6 +422,12 @@ public class AccountComponentTests : BunitContext
 
         return Render<Account>(ps => ps.AddCascadingValue<HttpContext>(http));
     }
+
+    // The console-auth options the account page injects to decide whether the "create your free workspace" affordance shows.
+    // Console-mode = a configured (TenantId + Audience) pair; the default is stored-key mode (affordance hidden).
+    private static IOptions<PortalConsoleAuthOptions> ConsoleAuthOption(bool enabled) => Options.Create(enabled
+        ? new PortalConsoleAuthOptions { TenantId = Guid.NewGuid().ToString(), Audience = "api://crawldad-test" }
+        : new PortalConsoleAuthOptions());
 
     // The API key is a deliberately-unbound password input (it must never echo), so bUnit's interactive renderer has no
     // change handler to drive. Set the form model directly, then submit — the name→model POST binding itself is covered

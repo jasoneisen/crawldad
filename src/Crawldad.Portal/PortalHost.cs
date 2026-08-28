@@ -88,6 +88,7 @@ public static class PortalHost
         app.MapPortalRunScreenshots();
         app.MapBillingUi(); // the billing card's checkout / portal form handlers (POST → SDK → redirect)
         app.MapWorkspaceSwitch(); // the shell switcher's form handler (POST → persist active workspace → redirect)
+        app.MapWorkspaceProvision(); // the account "create your free workspace" affordance (POST → provision → link+select → redirect)
         app.MapPortalMembers(); // the account Members card's add / change-role / remove form handlers (Owner-only, PRG)
         app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode();
@@ -156,6 +157,11 @@ public static class PortalHost
         // The account area's real link-creation path: validates a submitted key against the live API before persisting,
         // so a wrong key is never stored. Stateless over the store + the same pooled API HttpClient.
         builder.Services.AddScoped<IWorkspaceLinker, WorkspaceLinker>();
+
+        // Self-serve free-workspace provisioning (issue #119 PR7): calls the API's console-only provisioning endpoint and,
+        // on success, links + selects the new workspace. Its ConsoleClientFactory dependency is present only in console-mode
+        // (optional ctor param → null in stored-key mode), which is exactly when the service reports "unavailable".
+        builder.Services.AddScoped<IPortalProvisioningService, PortalProvisioningService>();
 
         // One pooled HttpClient the SDK rides on, base address from config (validated at boot so a missing/malformed
         // URL fails loudly here, not on the first API call). The per-request API key is applied by the context — the

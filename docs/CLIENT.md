@@ -263,6 +263,31 @@ channel (the portal), the writes are **Owner-only** — a Member is a `403` — 
 never be removed or downgraded (`409 last_owner`, a `CrawldadApiException`). `ListMyWorkspacesAsync` on a key client
 reflects the key's own tenant, so it is typically empty — the switcher is a portal/console feature.
 
+## Provision a free workspace
+
+`ProvisionTenantAsync` creates the caller's **one** free-tier workspace — the self-serve on-ramp for a brand-new user who has
+no workspace yet. It is **console-credential only**: build the client with `ConsoleCredential.ForProvisioning(tokenSource,
+consoleUser)` — the token plus the verified user, but **no workspace selector** (there is none yet). An API-key client is
+rejected (`401`). See [docs/API.md §24](API.md#24-self-serve-free-tier-provisioning--provisioningtenants).
+
+```csharp
+var http = new HttpClient { BaseAddress = new Uri("https://api.crawldad.io/") };
+var options = new CrawldadClientOptions
+{
+    // The portal supplies its first-party token source + the verified user; no workspace selector.
+    Credential = ConsoleCredential.ForProvisioning(GetPortalTokenAsync, "new-user@example.com"),
+};
+var crawldad = new CrawldadClient(http, options);
+
+// POST /provisioning/tenants — creates the free workspace and records the caller as its Owner (no API key is minted).
+WorkspaceSummary workspace = await crawldad.ProvisionTenantAsync(displayName: "My workspace");
+// workspace.TenantId is a t-<guid>; select it, then act as it via a normal ConsoleCredential(token, user, workspace).
+```
+
+**One free workspace per email, EVER.** A second call is a `409 free_tenant_exists` (a `CrawldadApiException`) whose
+`ResponseBody` carries the existing workspace id (`tenantId`), so a caller can recover the link rather than being stranded.
+Additional workspaces are created on a paid plan, not through this call.
+
 ## Billing
 
 Three tenant-scoped calls back the portal's billing card. The SDK only ever receives a **URL to follow** — it never holds

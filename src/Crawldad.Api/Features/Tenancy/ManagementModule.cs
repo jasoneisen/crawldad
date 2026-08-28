@@ -52,6 +52,12 @@ public static class ManagementModule
         var audit = options.Schema.For<ConsoleAuditEntry>();
         audit.SingleTenanted();
         audit.Index(x => x.TenantId);
+
+        // The lifetime one-free-tenant-per-email marker (issue #119 PR7): single-tenanted like the registry (it gates who may
+        // create a free tenant scope), its id IS the normalized email — so the id is unique by construction (a second insert
+        // for the same email collides), the DB-level backstop to the store's per-email advisory lock. Never removed, so the
+        // entitlement survives leaving/revoking the created workspace's membership.
+        options.Schema.For<FreeTenantEntitlement>().SingleTenanted().Identity(x => x.Email);
     }
 
     /// <summary>Maps the management endpoints under <c>/management</c>, guarded by the constant-time management-key filter

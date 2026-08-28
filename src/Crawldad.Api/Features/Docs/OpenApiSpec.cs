@@ -113,6 +113,7 @@ public static class OpenApiSpec
         new(nameof(TenantMembershipList), typeof(TenantMembershipList)),
         new(nameof(WorkspaceSummary), typeof(WorkspaceSummary)),
         new(nameof(WorkspaceList), typeof(WorkspaceList)),
+        new(nameof(ProvisionTenantRequest), typeof(ProvisionTenantRequest)),
         new(nameof(BillingConfigResponse), typeof(BillingConfigResponse)),
         new(nameof(CheckoutSessionRequest), typeof(CheckoutSessionRequest)),
         new(nameof(BillingSessionResponse), typeof(BillingSessionResponse)),
@@ -352,6 +353,19 @@ public static class OpenApiSpec
         new("get", "/workspaces", "listWorkspaces", "List the caller's workspaces.", _tenancy, Anonymous: false, [], null,
             [new("200", "Every workspace the authenticated user is an active member of (tenant id, display name, role), newest membership first.", Component: nameof(WorkspaceList))],
             Description: "Returns the workspaces the authenticated user can act as — every tenant they hold an active membership in, with the display name and their role — the console-mode source for the portal's workspace switcher (multi-workspace). The list is keyed on the AUTHENTICATED actor (the human email the console scheme stamps), never a request body, so it can only ever list the caller's own workspaces. On the API-key channel the actor is the key's tenant, so a key caller typically gets an empty list — the switcher is a portal/console feature. \"Workspace\" is the customer-facing term for a tenant."),
+
+        // Self-serve free-tier provisioning (issue #119 PR7): the ONE console surface reachable with no membership (a new user
+        // has no workspace yet). Console identity ONLY (a key caller is a 401, unlike the ConsoleOrKey reads/writes); the acting
+        // user is the console-user selector; one free tenant per email, ever.
+        new("post", "/provisioning/tenants", "provisionFreeTenant", "Provision the caller's free workspace.", _tenancy, Anonymous: false, [],
+            new(nameof(ProvisionTenantRequest), "An optional display name for the new workspace; everything else is the free-tier default."),
+            [
+                new("201", "The free workspace was created — its tenant id, display name, and the creator's owner role (the same workspace shape GET /workspaces returns).", Component: nameof(WorkspaceSummary)),
+                new("409", "This account already has a free workspace (free_tenant_exists) — one free tenant per email, ever; additional workspaces are created on a paid plan. The existing workspace id rides as a tenantId problem-details extension."),
+                new("429", "Too many provision attempts for this account in a short window (provisioning_rate_limited) — abuse insurance."),
+                new("400", "No X-Crawldad-Console-User selector was presented (actor_required), or the supplied display name exceeds 200 characters."),
+            ],
+            Description: "Creates the authenticated console user's ONE free-tier workspace and records them as its Owner. This is the only console endpoint reachable WITHOUT a membership (a brand-new user has no workspace yet), so it is authenticated by the portal's first-party console identity ONLY — an API key is rejected (401), and it takes no workspace selector. The acting user is the verified X-Crawldad-Console-User header (never a body field), so a caller can only ever provision for its own identity. The new tenant gets an API-assigned GUID id, the free-tier defaults (2 concurrent slots, tier \"free\"; queue depth defers to the global default), and no API key (a console user mints keys from the keys UI when needed). Enforces one free tenant per email FOREVER — a lifetime marker that leaving or being removed from the workspace never resets — so a second attempt is 409 (with the existing workspace id). Runs/events fair-use guardrails are not yet per-tenant (a documented pre-launch item)."),
 
         // Billing (Stripe scaffolding, issue #119): tenant-authed config + checkout/portal session URLs, and the PUBLIC
         // signature-verified subscription webhook — the only path that changes a tenant's plan.

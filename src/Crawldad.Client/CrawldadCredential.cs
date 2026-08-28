@@ -50,9 +50,9 @@ public sealed class ConsoleCredential : ICrawldadCredential
 {
     private readonly Func<CancellationToken, ValueTask<string>> _tokenSource;
     private readonly string _consoleUser;
-    private readonly string _workspace;
+    private readonly string? _workspace;
 
-    /// <summary>Creates a console credential.</summary>
+    /// <summary>Creates a console credential for a specific workspace.</summary>
     /// <param name="tokenSource">Acquires the portal's first-party bearer token (refresh-aware; called per request).</param>
     /// <param name="consoleUser">The verified acting user (normalized email) — the <c>X-Crawldad-Console-User</c> selector.</param>
     /// <param name="workspace">The active workspace (tenant id) — the <c>X-Crawldad-Workspace</c> selector.</param>
@@ -68,6 +68,29 @@ public sealed class ConsoleCredential : ICrawldadCredential
         _workspace = workspace;
     }
 
+    // The workspace-less shape (issue #119 PR7): a console credential that stamps the token + user but NO workspace selector,
+    // for the one call made before the user has any workspace — POST /provisioning/tenants. Private so it is reached only via
+    // ForProvisioning, whose name makes the intent explicit; a workspace-less credential 403s every membership-scoped endpoint.
+    private ConsoleCredential(Func<CancellationToken, ValueTask<string>> tokenSource, string consoleUser)
+    {
+        ArgumentNullException.ThrowIfNull(tokenSource);
+        ArgumentException.ThrowIfNullOrWhiteSpace(consoleUser);
+        _tokenSource = tokenSource;
+        _consoleUser = consoleUser;
+        _workspace = null;
+    }
+
+    /// <summary>Creates a console credential for the pre-workspace provisioning call (issue #119 PR7): the token + the acting
+    /// user, but NO workspace selector (there is no workspace yet). Valid ONLY for <c>POST /provisioning/tenants</c> — every
+    /// membership-scoped console endpoint needs the workspace selector and 403s without it.</summary>
+    /// <param name="tokenSource">Acquires the portal's first-party bearer token (refresh-aware; called per request).</param>
+    /// <param name="consoleUser">The verified acting user (normalized email) — the <c>X-Crawldad-Console-User</c> selector.</param>
+    /// <returns>A workspace-less console credential.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="tokenSource"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="consoleUser"/> is blank.</exception>
+    public static ConsoleCredential ForProvisioning(Func<CancellationToken, ValueTask<string>> tokenSource, string consoleUser) =>
+        new(tokenSource, consoleUser);
+
     /// <inheritdoc />
     public async ValueTask ApplyAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -75,7 +98,10 @@ public sealed class ConsoleCredential : ICrawldadCredential
         var token = await _tokenSource(cancellationToken).ConfigureAwait(false);
         request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
         request.Headers.TryAddWithoutValidation(ConsoleAuthHeaders.ConsoleUser, _consoleUser);
-        request.Headers.TryAddWithoutValidation(ConsoleAuthHeaders.Workspace, _workspace);
+        if (_workspace is not null)
+        {
+            request.Headers.TryAddWithoutValidation(ConsoleAuthHeaders.Workspace, _workspace); // omitted for the provisioning credential
+        }
     }
 }
 

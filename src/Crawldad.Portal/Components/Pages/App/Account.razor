@@ -7,9 +7,12 @@
 @using Crawldad.Contracts.Billing
 @using Crawldad.Contracts.Tenancy
 @using Crawldad.Portal.Tenancy
+@using Crawldad.Portal.Infrastructure.Security
+@using Microsoft.Extensions.Options
 @inject IPortalTenantContext Tenants
 @inject IWorkspaceLinker Linker
 @inject IPortalWorkspaceSelectionStore Selections
+@inject IOptions<PortalConsoleAuthOptions> ConsoleAuth
 @inject NavigationManager Nav
 
 <PageTitle>Account &amp; usage · Crawldad</PageTitle>
@@ -125,7 +128,32 @@
     <div class="card-body">
         @if (!_linked)
         {
-            <p class="text-secondary mb-0" data-testid="workspaces-unlinked">Attach a workspace below to get started.</p>
+            @if (ShowProvisionAffordance)
+            {
+                @* Zero-workspace console user (the population signup creates): offer the one-click free workspace. Static SSR,
+                   antiforgery-protected POST → provision → link + select → redirect. Absent in stored-key mode (no console identity). *@
+                <p class="text-secondary">You don't have a workspace yet. Create your free workspace to get started — or attach an existing one below.</p>
+                @if (!string.IsNullOrEmpty(ProvisionError))
+                {
+                    <div class="alert alert-danger" role="alert" data-testid="provision-error">@ProvisionError</div>
+                }
+                <form method="post" action="/app/workspace/provision" data-testid="provision-form">
+                    <AntiforgeryToken />
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-7">
+                            <label class="form-label" for="provision-name">Workspace name</label>
+                            <input id="provision-name" name="displayName" class="form-control" autocomplete="off" spellcheck="false" placeholder="My workspace" maxlength="200" />
+                        </div>
+                        <div class="col-md-5">
+                            <button type="submit" class="btn btn-primary" data-testid="provision-submit">Create your free workspace</button>
+                        </div>
+                    </div>
+                </form>
+            }
+            else
+            {
+                <p class="text-secondary mb-0" data-testid="workspaces-unlinked">Attach a workspace below to get started.</p>
+            }
         }
         else
         {
@@ -693,6 +721,10 @@
     [SupplyParameterFromQuery(Name = "memberError")]
     public string? MemberError { get; set; }
 
+    // A free-workspace provision error, surfaced back on the PRG redirect from the provisioning endpoint (issue #119 PR7).
+    [SupplyParameterFromQuery(Name = "provisionError")]
+    public string? ProvisionError { get; set; }
+
     // Which key (if any) a confirm card is being shown for, from the row action link (?rotate=/?revoke=<keyId>).
     [SupplyParameterFromQuery(Name = "rotate")]
     public string? RotateTarget { get; set; }
@@ -731,6 +763,11 @@
     private bool _isOwner; // the signed-in user is an active Owner of this workspace → the member-management controls render
 
     private string? Email => HttpContext.User.FindFirstValue(ClaimTypes.Email);
+
+    // The "create your free workspace" affordance (issue #119 PR7): shown ONLY for a console-mode account with zero workspaces
+    // (no resolved link — the exact population signup creates) and never mid re-link. Absent in stored-key mode, where there is
+    // no console identity to provision with (honest: the endpoint would report "unavailable").
+    private bool ShowProvisionAffordance => !_linked && !_relinkNeeded && ConsoleAuth.Value.Enabled;
 
     // The tier label, or a friendly default when the tenant has no configured tier. Called only where the profile is
     // known non-null (the header guard + the loaded-usage panel), so it takes the profile rather than reading a nullable.
