@@ -19,21 +19,8 @@ public static class PortalHost
     {
         // The portal's OWN Marten store on the shared Postgres. Connection-string convention mirrors the API
         // ("marten"); DatabaseSchemaName "portal" keeps it fully isolated from the API's "crawldad" schema.
-        var marten = builder.Services.AddMarten(options =>
-        {
-            options.Connection(builder.Configuration.GetConnectionString("marten")!);
-            options.DatabaseSchemaName = "portal";
-
-            // Email is the account identity → unique by construction, and case-insensitive because we always
-            // store it lower-invariant.
-            options.Schema.For<PortalUser>().Identity(u => u.Email);
-            // The tenant link shares that identity (same normalized email), so a user and their link line up 1:1.
-            options.Schema.For<PortalTenantLink>().Identity(l => l.Email);
-
-            // Optimistic concurrency on the challenge: parallel verify attempts serialize on the document version,
-            // so the per-challenge attempt cap can't be beaten by racing guesses (see PortalAuthService.VerifyCodeAsync).
-            options.Schema.For<OtpChallenge>().UseOptimisticConcurrency(true);
-        });
+        var connection = builder.Configuration.GetConnectionString("marten")!;
+        var marten = builder.Services.AddMarten(options => ConfigurePortalMarten(options, connection));
 
         // Dev convenience only: diff/apply the schema on boot. Prod/CI would apply it out-of-band.
         if (builder.Environment.IsDevelopment())
@@ -100,10 +87,30 @@ public static class PortalHost
         // The cookie-gated screenshot proxy the run-detail page's <img> tags point at (the browser holds no API key).
         app.MapPortalRunScreenshots();
         app.MapBillingUi(); // the billing card's checkout / portal form handlers (POST → SDK → redirect)
+        app.MapWorkspaceSwitch(); // the shell switcher's form handler (POST → persist active workspace → redirect)
+        app.MapPortalMembers(); // the account Members card's add / change-role / remove form handlers (Owner-only, PRG)
         app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode();
 
         return app;
+    }
+
+    // The portal's Marten document model, in the isolated "portal" schema. Each identity is the normalized email, so a
+    // user, their tenant link, and their active-workspace selection (issue #119 PR6) all line up 1:1 per account.
+    private static void ConfigurePortalMarten(StoreOptions options, string connectionString)
+    {
+        options.Connection(connectionString);
+        options.DatabaseSchemaName = "portal";
+
+        // Email is the account identity → unique by construction, and case-insensitive because we always store it
+        // lower-invariant.
+        options.Schema.For<PortalUser>().Identity(u => u.Email);
+        options.Schema.For<PortalTenantLink>().Identity(l => l.Email);
+        options.Schema.For<PortalWorkspaceSelection>().Identity(s => s.Email);
+
+        // Optimistic concurrency on the challenge: parallel verify attempts serialize on the document version, so the
+        // per-challenge attempt cap can't be beaten by racing guesses (see PortalAuthService.VerifyCodeAsync).
+        options.Schema.For<OtpChallenge>().UseOptimisticConcurrency(true);
     }
 
     // Cookie authentication — the ASP.NET cookie handler directly, no ASP.NET Identity framework.
@@ -139,6 +146,7 @@ public static class PortalHost
         // ring by PortalTenancy.ApiKeyProtector on both the write and read sides.
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<IPortalTenantLinkStore, MartenPortalTenantLinkStore>();
+        builder.Services.AddSingleton<IPortalWorkspaceSelectionStore, MartenPortalWorkspaceSelectionStore>(); // active-workspace preference (PR6)
         builder.Services.AddScoped<IPortalTenantContext, PortalTenantContext>();
 
         // The circuit-safe resolver the interactive live-trace page uses: same link → same tenant client as the

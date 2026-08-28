@@ -1,7 +1,20 @@
 using Crawldad.Portal.Auth;
+using Crawldad.Portal.Tenancy;
 using Microsoft.AspNetCore.Components.Forms;
 
 namespace Crawldad.Tests.Portal;
+
+/// <summary>A no-op <see cref="IPortalWorkspaceSelectionStore"/> for rendering the account/shell components under bUnit
+/// (issue #119 PR6): the active-workspace preference is never set in these isolated renders, so reads return null and the
+/// resolution falls back to the link tenant. The switch/attach behaviour is covered by the endpoint tests + the integration
+/// test.</summary>
+internal sealed class StubWorkspaceSelectionStore : IPortalWorkspaceSelectionStore
+{
+    public Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default) =>
+        Task.FromResult<PortalWorkspaceSelection?>(null);
+
+    public Task SetAsync(string email, string tenantId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+}
 
 /// <summary>A programmable <see cref="IPortalAuthService"/> for rendering the login component in isolation.</summary>
 internal sealed class FakePortalAuthService : IPortalAuthService

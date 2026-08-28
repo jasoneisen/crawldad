@@ -185,6 +185,80 @@ public class AccountComponentTests : BunitContext
         cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("No membership");
     }
 
+    // ---- multi-workspace + members (issue #119 PR6) ---------------------------------------------------------------
+
+    [Fact]
+    public void Console_mode_lists_the_users_workspaces_and_offers_a_switch()
+    {
+        var memberships = new TenantMembershipList([new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
+        var workspaces = new WorkspaceList([new("tenant-alpha", "Alpha Co", MembershipRole.Owner), new("tenant-beta", "Beta Co", MembershipRole.Member)]);
+        var handler = ApiReturning(_profile, _usage, memberships, workspaces);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+
+        cut.FindAll("[data-testid=workspace-row]").Count.ShouldBe(2);
+        cut.Find("[data-testid=workspace-active-badge]").ShouldNotBeNull();           // the active workspace is badged
+        cut.Find("[data-testid=workspace-switch]").ShouldNotBeNull();                 // the other offers a switch
+        cut.Find("form[action=\"/app/workspace\"] input[name=workspace]").GetAttribute("value").ShouldBe("tenant-beta");
+    }
+
+    [Fact]
+    public void An_owner_sees_the_member_management_controls()
+    {
+        var memberships = new TenantMembershipList(
+        [
+            new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
+            new(Guid.NewGuid(), "teammate@meridiantitle.co", MembershipRole.Member, DateTimeOffset.UnixEpoch, null, true),
+        ]);
+        var handler = ApiReturning(_profile, _usage, memberships);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+
+        cut.FindAll("[data-testid=member-row]").Count.ShouldBe(2);
+        cut.Find("[data-testid=add-member-form]").ShouldNotBeNull();                  // an Owner can add members
+        cut.FindAll("[data-testid=member-remove]").Count.ShouldBe(2);                 // and remove / change role
+        cut.FindAll("[data-testid=member-role-toggle]").Count.ShouldBe(2);
+        cut.Find("form[action=\"/app/members/add\"]").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void A_member_sees_the_roster_read_only()
+    {
+        // The signed-in user is a Member, so the management controls are hidden and the read-only note shows instead.
+        var memberships = new TenantMembershipList(
+        [
+            new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Member, DateTimeOffset.UnixEpoch, null, true),
+            new(Guid.NewGuid(), "owner@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
+        ]);
+        var handler = ApiReturning(_profile, _usage, memberships);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+
+        cut.FindAll("[data-testid=member-row]").Count.ShouldBe(2);
+        cut.FindAll("[data-testid=add-member-form]").ShouldBeEmpty();                 // a Member cannot manage members
+        cut.FindAll("[data-testid=member-remove]").ShouldBeEmpty();
+        cut.Find("[data-testid=members-readonly]").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Stored_key_mode_shows_the_single_workspace_and_no_member_controls()
+    {
+        // Stored-key mode: the workspaces card shows just the current workspace (GET /workspaces is not consulted), and with
+        // no membership the member roster is empty and controls are hidden.
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage))), Authed());
+
+        cut.FindAll("[data-testid=workspace-row]").Count.ShouldBe(1);
+        cut.Find("[data-testid=workspace-active-badge]").ShouldNotBeNull(); // the sole workspace is the active one
+        cut.Find("[data-testid=members-empty]").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void A_member_action_error_is_surfaced_from_the_redirect()
+    {
+        var memberships = new TenantMembershipList([new(Guid.NewGuid(), "owner@example.com", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships), PortalAuthMode.Console)), Authed(),
+            query: "?memberError=A%20workspace%20must%20keep%20an%20Owner");
+
+        cut.Find("[data-testid=members-action-error]").TextContent.ShouldContain("must keep an Owner");
+    }
+
     // ---- workspace-link form --------------------------------------------------------------------------------------
 
     [Fact]
@@ -252,10 +326,16 @@ public class AccountComponentTests : BunitContext
 
     // ---- helpers --------------------------------------------------------------------------------------------------
 
-    private IRenderedComponent<Account> RenderPage(IPortalTenantContext ctx, HttpContext http, IWorkspaceLinker? linker = null)
+    private IRenderedComponent<Account> RenderPage(IPortalTenantContext ctx, HttpContext http, IWorkspaceLinker? linker = null, string? query = null)
     {
         Services.AddSingleton(ctx);
         Services.AddSingleton(linker ?? new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok")));
+        Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
+        if (query is not null)
+        {
+            Services.GetRequiredService<NavigationManager>().NavigateTo($"/app/account{query}");
+        }
+
         return Render<Account>(ps => ps.AddCascadingValue<HttpContext>(http));
     }
 
@@ -273,10 +353,11 @@ public class AccountComponentTests : BunitContext
         new(tenantId, new CrawldadClient(new HttpClient(handler) { BaseAddress = ClientTestHarness.BaseUrl },
             new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), authMode, storedKeyRetained);
 
-    private static StubHttpMessageHandler ApiReturning(TenantProfileResponse profile, UsageResponse usage, TenantMembershipList? memberships = null) =>
+    private static StubHttpMessageHandler ApiReturning(TenantProfileResponse profile, UsageResponse usage, TenantMembershipList? memberships = null, WorkspaceList? workspaces = null) =>
         new(req =>
             req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
             : req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.Json(memberships ?? new TenantMembershipList([]))
+            : req.Path.EndsWith("workspaces", StringComparison.Ordinal) ? ClientTestHarness.Json(workspaces ?? new WorkspaceList([]))
             : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(usage)
             : ClientTestHarness.Json(profile));
 

@@ -103,6 +103,7 @@ public class BillingCardTests : BunitContext
     {
         Services.AddSingleton(ctx);
         Services.AddSingleton<IWorkspaceLinker>(new NoopLinker());
+        Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
         var http = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Email, "owner@example.com")], "TestCookie")),

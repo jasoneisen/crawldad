@@ -38,7 +38,7 @@ public class CircuitTenantResolverTests
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(4, 0, 0)));
         var factory = new StubHttpClientFactory(handler, new Uri("https://api.crawldad.test/"));
-        return (new CircuitTenantResolver(authState, store, _protection, factory), handler);
+        return (new CircuitTenantResolver(authState, store, new FakeSelectionStore(), _protection, factory), handler);
     }
 
     [Fact]
@@ -128,5 +128,13 @@ public class CircuitTenantResolverTests
     private sealed class StubHttpClientFactory(HttpMessageHandler handler, Uri baseAddress) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false) { BaseAddress = baseAddress };
+    }
+
+    private sealed class FakeSelectionStore : IPortalWorkspaceSelectionStore
+    {
+        public Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default) =>
+            Task.FromResult<PortalWorkspaceSelection?>(null);
+
+        public Task SetAsync(string email, string tenantId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

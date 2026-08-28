@@ -1,5 +1,6 @@
 using System.Net;
 using Bunit;
+using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
 using Crawldad.Portal.Auth;
 using Crawldad.Portal.Components.Layout;
@@ -121,8 +122,51 @@ public class AppLayoutTests : BunitContext
         cut.Find("[data-testid=sign-out]").ShouldNotBeNull();
     }
 
+    // ---- workspace switcher (issue #119 PR6) ----------------------------------------------------------------------
+
+    [Fact]
+    public void The_switcher_shows_the_single_workspace_as_static_text_in_stored_key_mode()
+    {
+        // Stored-key mode is single-workspace: the switcher shows the workspace name as text, with no switch dropdown.
+        var handler = ApiReturning(new TenantProfileResponse("tenant-alpha", "Alpha Co", "Team", 5, 100),
+            new UsageResponse(new UsageSlots(0, 5), new UsageQueueStats(0, 0, 0), 0, new UsageEvents(0, 0, 0, 0)));
+        var cut = RenderShell(context: LinkedContext(handler));
+
+        cut.Find("[data-testid=workspace-current]").TextContent.ShouldContain("Alpha Co"); // the profile display name
+        cut.FindAll("[data-testid=workspace-menu]").ShouldBeEmpty();                        // no dropdown for one workspace
+    }
+
+    [Fact]
+    public void The_switcher_lists_workspaces_and_switch_forms_in_console_mode()
+    {
+        var handler = ApiReturningWorkspaces(
+            new TenantProfileResponse("tenant-alpha", "Alpha Co", "Team", 5, 100),
+            new UsageResponse(new UsageSlots(0, 5), new UsageQueueStats(0, 0, 0), 0, new UsageEvents(0, 0, 0, 0)),
+            new WorkspaceList([new("tenant-alpha", "Alpha Co", MembershipRole.Owner), new("tenant-beta", "Beta Co", MembershipRole.Member)]));
+        var cut = RenderShell(context: ConsoleContext("tenant-alpha", handler));
+
+        cut.Find("[data-testid=workspace-active]").TextContent.ShouldContain("Alpha Co"); // the active workspace label
+        cut.FindAll("[data-testid=workspace-option]").Count.ShouldBe(2);
+        // The non-active workspace is a switch form posting the tenant id to the switch endpoint.
+        var switchForm = cut.Find("form[action=\"/app/workspace\"]");
+        switchForm.GetAttribute("method").ShouldBe("post");
+        switchForm.QuerySelector("input[name=workspace]")!.GetAttribute("value").ShouldBe("tenant-beta");
+    }
+
     private static FakePortalTenantContext LinkedContext(StubHttpMessageHandler handler) =>
         new(PortalRunsTestSupport.TenantOver(handler));
+
+    private static FakePortalTenantContext ConsoleContext(string activeTenant, StubHttpMessageHandler handler) =>
+        new(new PortalTenant(activeTenant, new CrawldadClient(
+            new HttpClient(handler) { BaseAddress = ClientTestHarness.BaseUrl },
+            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), PortalAuthMode.Console));
+
+    // A console-mode stub answering the shell's three reads: GET /workspaces → the switcher list, GET /usage → usage, else profile.
+    private static StubHttpMessageHandler ApiReturningWorkspaces(TenantProfileResponse profile, UsageResponse usage, WorkspaceList workspaces) =>
+        new(req =>
+            req.Path.EndsWith("workspaces", StringComparison.Ordinal) ? ClientTestHarness.Json(workspaces)
+            : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(usage)
+            : ClientTestHarness.Json(profile));
 
     // A stub API that answers the widget's two reads: GET /usage → the usage snapshot, anything else (GET /tenant) → the
     // profile.

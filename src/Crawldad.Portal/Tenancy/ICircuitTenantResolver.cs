@@ -27,6 +27,7 @@ internal sealed class CircuitTenantResolver : ICircuitTenantResolver
 {
     private readonly AuthenticationStateProvider _authState;
     private readonly IPortalTenantLinkStore _links;
+    private readonly IPortalWorkspaceSelectionStore _selections;
     private readonly IDataProtector _protector;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ConsoleClientFactory? _consoleClients;
@@ -34,12 +35,14 @@ internal sealed class CircuitTenantResolver : ICircuitTenantResolver
     public CircuitTenantResolver(
         AuthenticationStateProvider authState,
         IPortalTenantLinkStore links,
+        IPortalWorkspaceSelectionStore selections,
         IDataProtectionProvider protection,
         IHttpClientFactory httpClientFactory,
         ConsoleClientFactory? consoleClients = null)
     {
         _authState = authState;
         _links = links;
+        _selections = selections;
         _protector = PortalTenancy.ApiKeyProtector(protection);
         _httpClientFactory = httpClientFactory;
         _consoleClients = consoleClients; // present only when Crawldad:ConsoleAuth is configured → console-mode
@@ -59,10 +62,11 @@ internal sealed class CircuitTenantResolver : ICircuitTenantResolver
             return null; // authenticated but not yet linked
         }
 
-        // The same console-vs-key resolution the static-SSR PortalTenantContext uses (issue #119 PR5), shared so the two
-        // never drift. The plaintext key (stored-key mode, or a console transition fallback) lives on this server-side object
-        // and is never serialized to the circuit's browser.
-        return PortalTenantResolution.Resolve(email, link, _protector, _httpClientFactory, _consoleClients);
+        // The same active-workspace + console-vs-key resolution the static-SSR PortalTenantContext uses (issue #119 PR5/PR6),
+        // shared so the two never drift. The plaintext key (stored-key mode, or a console transition fallback) lives on this
+        // server-side object and is never serialized to the circuit's browser.
+        var active = (await _selections.GetAsync(email, cancellationToken))?.TenantId ?? link.TenantId;
+        return PortalTenantResolution.Resolve(email, link, active, _protector, _httpClientFactory, _consoleClients);
     }
 
     // The signed-in circuit account's normalized email, or null when the circuit carries no authenticated principal or

@@ -339,6 +339,7 @@ public class AccountKeysComponentTests : BunitContext
     {
         Services.AddSingleton(ctx);
         Services.AddSingleton<IWorkspaceLinker>(linker ?? new FakeLinker());
+        Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
         if (query is not null)
         {
             Nav.NavigateTo($"/app/account{query}");
@@ -351,6 +352,7 @@ public class AccountKeysComponentTests : BunitContext
     private static StubHttpMessageHandler Api(Func<CapturedRequest, HttpResponseMessage> keys) =>
         new(req =>
             req.Path.Contains("/tenant/keys", StringComparison.Ordinal) ? keys(req)
+            : req.Path.EndsWith("/workspaces", StringComparison.Ordinal) ? ClientTestHarness.Json(new WorkspaceList([]))
             : req.Path.EndsWith("/usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
             : ClientTestHarness.Json(_profile)); // /tenant and /billing/config both tolerate the profile shape
 
