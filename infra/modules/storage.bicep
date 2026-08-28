@@ -7,10 +7,12 @@
 // stays enabled; blobs are never publicly readable (allowBlobPublicAccess=false, container publicAccess=None). LRS +
 // public endpoint is the staging floor; ZRS/GRS and a private endpoint are prod-only deltas, deferred.
 //
-// Each Data Protection key ring is read/written passwordless via the app's managed identity (DefaultAzureCredential),
-// so the app identity is granted Storage Blob Data Contributor scoped to JUST each key-ring container (least privilege;
-// the tenant-data container is untouched by these grants — the app already reaches it via the account-key secret). The
-// portal shares the API's identity, so both grants bind the same principal to different container scopes.
+// Each Data Protection key ring is read/written passwordless via a managed identity (DefaultAzureCredential), so the
+// identity is granted Storage Blob Data Contributor scoped to JUST each key-ring container (least privilege; the
+// tenant-data container is untouched by these grants — the app already reaches it via the account-key secret). Since
+// issue #119 PR2 the two rings bind DIFFERENT identities: the API key-ring container to the API identity, and the portal
+// key-ring container to the portal's OWN least-privilege identity (the shared-identity grant on the portal container is
+// retained so a cutover rollback needs no re-granting).
 
 @description('Storage account name (CAF: stcrawldad<env><uniq>; globally unique, lowercase alphanumeric, <=24).')
 param name string
@@ -32,6 +34,9 @@ param portalDataProtectionContainer string
 
 @description('Principal id of the app identity (granted Storage Blob Data Contributor on each key-ring container).')
 param appIdentityPrincipalId string
+
+@description('Principal id of the portal identity (granted Storage Blob Data Contributor on ONLY the portal key-ring container). Issue #119 PR2.')
+param portalIdentityPrincipalId string
 
 // Built-in role: Storage Blob Data Contributor (read/write/create blobs — the key-ring repo only uploads/downloads one blob).
 var blobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
@@ -91,14 +96,29 @@ resource portalDpContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
   properties: { publicAccess: 'None' }
 }
 
-// The SAME least-privilege pattern for the portal container: the shared app identity can read/write blobs in ONLY the
-// portal key-ring container. Distinct scope ⇒ a distinct role assignment on the existing identity (not a new identity).
+// The SAME least-privilege pattern for the portal container. The shared app identity keeps this grant (retained so a
+// cutover rollback that repoints the portal app back to the shared identity still works with no re-granting — issue #119
+// PR2). The portal's OWN identity gets its own grant below.
 resource portalDpBlobContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(portalDpContainer.id, appIdentityPrincipalId, blobDataContributorRoleId)
   scope: portalDpContainer
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobDataContributorRoleId)
     principalId: appIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The portal identity's own least-privilege grant (issue #119 PR2, the review's finding #6): the portal container app now
+// runs under its OWN identity and must keep reading/writing its Data-Protection key ring — the ring that encrypts the
+// stored tenant API keys AND the auth/OTP cookies. Scoped to ONLY the portal key-ring container; the API's key-ring
+// container and the tenant-data container are untouched by this grant.
+resource portalDpBlobContributorPortalIdentity 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(portalDpContainer.id, portalIdentityPrincipalId, blobDataContributorRoleId)
+  scope: portalDpContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobDataContributorRoleId)
+    principalId: portalIdentityPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
