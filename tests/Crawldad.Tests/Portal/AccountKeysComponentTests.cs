@@ -340,6 +340,8 @@ public class AccountKeysComponentTests : BunitContext
         Services.AddSingleton(ctx);
         Services.AddSingleton<IWorkspaceLinker>(linker ?? new FakeLinker());
         Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
+        Services.AddSingleton<Microsoft.Extensions.Options.IOptions<Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions>>(
+            Microsoft.Extensions.Options.Options.Create(new Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions())); // stored-key default; affordance not under test here
         if (query is not null)
         {
             Nav.NavigateTo($"/app/account{query}");

@@ -51,6 +51,27 @@ public class CrawldadCredentialTests
     }
 
     [Fact]
+    public async Task ForProvisioning_stamps_the_token_and_user_but_no_workspace_selector()
+    {
+        // The pre-workspace provisioning credential (issue #119 PR7): token + acting user, but NO X-Crawldad-Workspace
+        // (there is no workspace yet), so it is valid only for POST /provisioning/tenants.
+        var credential = ConsoleCredential.ForProvisioning(_ => ValueTask.FromResult("entra-token"), "user@x.test");
+
+        var request = await AppliedAsync(credential);
+
+        request.Headers.Authorization!.ToString().ShouldBe("Bearer entra-token");
+        request.Headers.GetValues(ConsoleAuthHeaders.ConsoleUser).ShouldBe(["user@x.test"]);
+        request.Headers.Contains(ConsoleAuthHeaders.Workspace).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ForProvisioning_rejects_bad_arguments()
+    {
+        Should.Throw<ArgumentNullException>(() => ConsoleCredential.ForProvisioning(null!, "u"));
+        Should.Throw<ArgumentException>(() => ConsoleCredential.ForProvisioning(_ => ValueTask.FromResult("t"), " "));
+    }
+
+    [Fact]
     public async Task DelegateCredential_defers_to_the_delegate()
     {
         var credential = new DelegateCredential((request, _) =>

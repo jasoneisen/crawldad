@@ -1478,3 +1478,43 @@ scheme stamps), never a request body — so it can only ever list the caller's o
 
 On the **API-key** channel the actor is the key's own tenant, so a key caller typically gets an empty list — the switcher
 is a portal/console feature. A membership whose workspace no longer exists is skipped, never surfaced as a dangling row.
+
+## 24. Self-serve free-tier provisioning — `/provisioning/tenants`
+
+The self-serve on-ramp: a signed-in portal user with **no workspace yet** creates their **one free-tier workspace**. It is
+the **only** console endpoint reachable **without a membership** — a brand-new user has none — so its auth model is unique:
+
+- **Console scheme only.** Authenticated by the portal's first-party `ConsolePrincipal` identity **alone** — an API key is
+  rejected (`401`). It is deliberately **not** part of the `ConsoleOrKey` read/write scope (which requires a membership, i.e. a
+  tenant claim, and also admits a key). No workspace selector is sent (there is no workspace).
+- **The acting user is the selector header**, never a body field: the verified `X-Crawldad-Console-User` (normalized) email.
+  So a caller can only ever provision for **its own** verified identity. (The portal OTP-verifies that email before sending it.)
+
+**Behavior.** It creates a registry tenant with an **API-assigned GUID id** (`t-<guid>`), the **free-tier defaults** — **2**
+concurrent slots and tier `free` (queue depth defers to the platform default; the registry carries no per-tenant queue field)
+— records the creator as the workspace **Owner**, and mints **no API key** (a console user needs none — mint from `/tenant/keys`
+when a programmatic key is wanted). The response is the **workspace shape** (`{ tenantId, displayName, role }`, same as
+`GET /workspaces`), so the portal can select the new workspace at once.
+
+**One free tenant per email, EVER.** The entitlement is a **lifetime** marker keyed by the normalized email — leaving or being
+removed from the created workspace **never** resets it (it is "has this email ever provisioned?", not "does it have an active
+membership?"). A second attempt is a `409 free_tenant_exists` carrying the existing workspace id (so the portal can recover the
+link). Additional workspaces are created on a **paid plan** (a later surface), not here. The create is atomic under a
+**per-email advisory lock**, so a concurrent double-submit yields exactly one workspace.
+
+| Method + route | Auth | Body | Success | Errors |
+|---|---|---|---|---|
+| `POST /provisioning/tenants` | **Console scheme only** (no key, no membership) | `{ displayName? }` | `201 { tenantId, displayName, role: "owner" }` | `409 free_tenant_exists` (+ `tenantId` extension), `429 provisioning_rate_limited`, `400 actor_required` / display-name too long, `401` (no valid console token / a key caller) |
+
+```jsonc
+// 201 — the created workspace (the workspace shape)
+{ "tenantId": "t-6f9c…", "displayName": "My workspace", "role": "owner" }
+
+// 409 free_tenant_exists — one free tenant per email, ever; the existing workspace rides as a problem-details extension
+{ "title": "free_tenant_exists", "status": 409, "detail": "this account already has a free workspace…", "tenantId": "t-6f9c…" }
+```
+
+Each attempt is **rate-limited** (per-account abuse insurance — a `429` before anything is created) and **audited** (a console
+audit row: the human email, the operation, the outcome status). **Guardrail note:** the free-tier **runs/events fair-use
+guardrails** (BUSINESS_MODEL.md) are **not yet per-tenant** — max steps/downloaded-bytes/events are deployment-wide today, so a
+provisioned free tenant currently inherits the global caps. Wiring per-tenant runs/events guardrails is a **pre-launch item**.

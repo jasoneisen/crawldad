@@ -21,11 +21,17 @@ internal static class TenantWriteLock
     /// <summary>The advisory-lock class for a tenant's membership revocations (the last-Owner guard).</summary>
     public const int MembershipRevocationClass = 0x0119_0502;
 
+    /// <summary>The advisory-lock class for a self-serve free-tenant provision (issue #119 PR7) — the one-free-tenant-per
+    /// -email-ever guard. Its partition key is a <b>normalized email</b>, not a tenant id (the tenant does not exist yet), so
+    /// it lives in its own class: an email-keyed provision never contends with a tenant-keyed key/membership guard.</summary>
+    public const int FreeProvisionClass = 0x0119_0701;
+
     /// <summary>Begins the session's transaction and takes the transaction-scoped advisory lock for
-    /// <paramref name="tenantId"/> under <paramref name="lockClass"/>, blocking until it is held. Every read and write the
+    /// <paramref name="partitionKey"/> under <paramref name="lockClass"/>, blocking until it is held. Every read and write the
     /// caller then performs on <paramref name="session"/> runs inside that transaction, and committing it (or disposing the
-    /// session) releases the lock.</summary>
-    public static async Task AcquireAsync(IDocumentSession session, int lockClass, string tenantId, CancellationToken ct)
+    /// session) releases the lock. The <paramref name="partitionKey"/> is the resource the invariant is scoped to — a tenant id
+    /// for the key/membership guards, or a normalized email for the free-provision guard (each in its own lock class).</summary>
+    public static async Task AcquireAsync(IDocumentSession session, int lockClass, string partitionKey, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(session);
 
@@ -35,21 +41,22 @@ internal static class TenantWriteLock
         await using var command = session.Connection.CreateCommand();
         command.CommandText = "select pg_advisory_xact_lock(@class, @key)";
         command.Parameters.AddWithValue("class", lockClass);
-        command.Parameters.AddWithValue("key", StableKey(tenantId));
+        command.Parameters.AddWithValue("key", StableKey(partitionKey));
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>A stable 32-bit advisory-lock key for a tenant id (FNV-1a over its UTF-8 bytes), so the same tenant maps to
-    /// the same lock slot across every process — unlike <see cref="string.GetHashCode()"/>, which is per-run randomized.</summary>
-    internal static int StableKey(string tenantId)
+    /// <summary>A stable 32-bit advisory-lock key for a partition key — a tenant id or a normalized email — (FNV-1a over its
+    /// UTF-8 bytes), so the same key maps to the same lock slot across every process — unlike <see cref="string.GetHashCode()"/>,
+    /// which is per-run randomized.</summary>
+    internal static int StableKey(string partitionKey)
     {
-        ArgumentNullException.ThrowIfNull(tenantId);
+        ArgumentNullException.ThrowIfNull(partitionKey);
         unchecked
         {
             const uint offsetBasis = 2166136261;
             const uint prime = 16777619;
             var hash = offsetBasis;
-            foreach (var b in Encoding.UTF8.GetBytes(tenantId))
+            foreach (var b in Encoding.UTF8.GetBytes(partitionKey))
             {
                 hash ^= b;
                 hash *= prime;

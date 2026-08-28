@@ -86,6 +86,14 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
     private static readonly HashSet<string> _intendedConsoleScope =
         new(_intendedConsoleReads.Concat(_intendedConsoleWrites), StringComparer.Ordinal);
 
+    // The self-serve provisioning scope (issue #119 PR7): the ONE route reachable by a console principal WITHOUT a membership
+    // (a new user has no workspace yet). It is deliberately NOT in _intendedConsoleScope — it carries its own console-only,
+    // membership-free ProvisioningPolicy, not ConsoleOrKey/ConsoleOwnerOrKey. Kept independent on purpose (a real tripwire).
+    private static readonly HashSet<string> _intendedConsoleProvisioning = new(StringComparer.Ordinal)
+    {
+        "POST /provisioning/tenants",
+    };
+
     // Anonymous, tenant-independent routes (identical to AuthenticationTests) — never console-reachable, never asserted.
     private static readonly HashSet<string> _anonymousRoutes = new(StringComparer.Ordinal)
     {
@@ -131,6 +139,20 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
         ownerScope.ShouldBe(_intendedConsoleOwnerScope, ignoreOrder: true);
     }
 
+    [Fact]
+    public void The_provisioning_route_carries_only_the_membership_free_provisioning_policy()
+    {
+        // Exactly the provisioning route carries ProvisioningPolicy — the console-only, membership-free gate (issue #119 PR7).
+        var provisioning = RoutesCarryingPolicy(ConsoleAuthModule.ProvisioningPolicy);
+        provisioning.ShouldBe(_intendedConsoleProvisioning, ignoreOrder: true);
+
+        // And it is NOT also gated by the membership-requiring console policies (which would demand a tenant claim / admit a key).
+        var membershipScoped = RoutesCarryingPolicy(
+            ConsoleAuthModule.ConsoleOrKeyPolicy,
+            ConsoleAuthModule.ConsoleOwnerOrKeyPolicy);
+        membershipScoped.ShouldNotContain("POST /provisioning/tenants");
+    }
+
     private HashSet<string> RoutesCarryingPolicy(params string[] policies)
     {
         var admitting = new HashSet<string>(StringComparer.Ordinal);
@@ -155,9 +177,11 @@ public sealed class ConsoleReadEnumerationTests(ConsoleAuthFixture fixture) : IA
         {
             var route = endpoint.RoutePattern.RawText!;
             var path = BuildProbePath(endpoint.RoutePattern);
-            if (_anonymousRoutes.Contains(path) || _intendedConsoleScope.Contains($"{Method(endpoint)} {route}"))
+            if (_anonymousRoutes.Contains(path)
+                || _intendedConsoleScope.Contains($"{Method(endpoint)} {route}")
+                || _intendedConsoleProvisioning.Contains($"{Method(endpoint)} {route}"))
             {
-                continue; // anonymous, or a curated console read/write route (asserted positively below)
+                continue; // anonymous, a curated console read/write route, or the membership-free provisioning route (asserted separately)
             }
 
             var status = await ConsoleTokenStatusAsync(Method(endpoint), path);

@@ -42,4 +42,18 @@ internal sealed class ConsoleClientFactory
         var credential = new ConsoleCredential(_tokenSource.GetTokenAsync, consoleUser, workspace);
         return new CrawldadClient(http, new CrawldadClientOptions { Credential = credential });
     }
+
+    /// <summary>Builds a console client for the pre-workspace provisioning call (issue #119 PR7): pure console (no fallback
+    /// key — there is no workspace to fall back to) and a workspace-less credential (<see cref="ConsoleCredential.ForProvisioning"/>),
+    /// so it authenticates as the portal acting for <paramref name="consoleUser"/> with no workspace selector. Valid only for
+    /// <c>ProvisionTenantAsync</c>.</summary>
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope",
+        Justification = "The HttpClient wraps a POOLED handler (disposeHandler:false) and is owned by the returned CrawldadClient for the whole call — disposing it here would break that call; the pooled inner handler is owned by IHttpMessageHandlerFactory, not this client.")]
+    public CrawldadClient BuildForProvisioning(string consoleUser)
+    {
+        var inner = _handlerFactory.CreateHandler(PortalTenancy.ApiHttpClientName);
+        var http = new HttpClient(inner, disposeHandler: false) { BaseAddress = _apiBaseUrl };
+        var credential = ConsoleCredential.ForProvisioning(_tokenSource.GetTokenAsync, consoleUser);
+        return new CrawldadClient(http, new CrawldadClientOptions { Credential = credential });
+    }
 }

@@ -128,6 +128,7 @@ public static class HostConfiguration
         builder.Services.AddSingleton<ITenantRegistryStore, MartenTenantRegistryStore>();
         builder.Services.AddSingleton<ITenantMembershipStore, MartenTenantMembershipStore>(); // console authorization authority (PR4)
         builder.Services.AddSingleton<IConsoleAuditStore, MartenConsoleAuditStore>();          // console-write audit trail (PR5)
+        builder.Services.AddSingleton<IFreeTenantProvisioningStore, MartenFreeTenantProvisioningStore>(); // self-serve free-tenant create (PR7)
 
         // The console-write guard's knobs + the per-(email,tenant) sliding-window limiter (issue #119 PR5). Always registered
         // (generous defaults; the section may be omitted); inert until a console-authenticated write actually occurs, which
@@ -231,13 +232,20 @@ public static class HostConfiguration
         return app;
     }
 
-    // Applies the console authorization scope to a single mapped endpoint (issue #119 PR4–PR6): an Owner-only console endpoint
-    // (key + membership management) gets ConsoleOwnerOrKey; a Member-reachable console read/write gets ConsoleOrKey; every
-    // other endpoint keeps the default ApiKey-only gate. Extracted from MapCrawldadPlatform to stay within the length budget.
+    // Applies the console authorization scope to a single mapped endpoint (issue #119 PR4–PR7): the self-serve provisioning
+    // endpoint gets ConsoleProvisioning (console scheme only, no membership); an Owner-only console endpoint (key + membership
+    // management) gets ConsoleOwnerOrKey; a Member-reachable console read/write gets ConsoleOrKey; every other endpoint keeps
+    // the default ApiKey-only gate. Extracted from MapCrawldadPlatform to stay within the length budget.
     private static void ApplyConsoleScope(HttpChain chain)
     {
         var route = chain.RoutePattern!.RawText; // every mapped HTTP chain carries a RoutePattern; Includes handles null RawText
-        if (ConsoleOwnerEndpoints.Includes(chain.HttpMethods, route))
+        if (ProvisioningEndpoints.Includes(chain.HttpMethods, route))
+        {
+            // Self-serve provisioning (issue #119 PR7): the console scheme ONLY, and NO membership required — the one console
+            // surface reachable before a tenant scope exists. Checked first so it never falls to a membership-requiring policy.
+            chain.RequireAuthorization(ConsoleAuthModule.ProvisioningPolicy);
+        }
+        else if (ConsoleOwnerEndpoints.Includes(chain.HttpMethods, route))
         {
             // Owner-only: still a console write (audited, rate-limited), but the console channel additionally requires the
             // Owner role; an API key is unrestricted. Checked first so an Owner route never falls to the Member-reachable policy.

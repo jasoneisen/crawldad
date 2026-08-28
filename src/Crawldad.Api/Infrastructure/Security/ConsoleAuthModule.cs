@@ -62,6 +62,14 @@ public static class ConsoleAuthModule
     /// <see cref="ConsoleOrKeyPolicy"/> endpoint, and a programmatic key caller is unaffected.</summary>
     public const string ConsoleOwnerOrKeyPolicy = "ConsoleOwnerOrKey";
 
+    /// <summary>The named authorization policy the self-serve <b>provisioning</b> endpoint opts into (issue #119 PR7). Unlike
+    /// <see cref="ConsoleOrKeyPolicy"/> it is the <see cref="Scheme">console scheme</see> ONLY (no <c>ApiKey</c> — a key caller
+    /// is a <c>401</c>) and it requires <b>no tenant claim</b>: provisioning is the one console surface reachable before any
+    /// membership exists (a new user has no workspace yet), so it authorizes on the validated portal identity alone and reads
+    /// the acting user from the console-user selector. When <c>Crawldad:ConsoleAuth</c> is unconfigured this policy denies every
+    /// request (the endpoint is still mapped, but console-mode is off), so the free-tier surface is inert on today's hosts.</summary>
+    public const string ProvisioningPolicy = "ConsoleProvisioning";
+
     /// <summary>The raw v1.0 token version claim (read directly because <see cref="JwtBearerOptions.MapInboundClaims"/> is false).</summary>
     internal const string VersionClaim = "ver";
 
@@ -99,6 +107,7 @@ public static class ConsoleAuthModule
         // console channel on the Owner role.
         AddConsoleOrKeyPolicy(services, options.Enabled);
         AddConsoleOwnerOrKeyPolicy(services, options.Enabled);
+        AddProvisioningPolicy(services, options.Enabled);
         services.AddSingleton<IAuthorizationHandler, ConsoleOwnerAuthorizationHandler>();
 
         if (!options.Enabled)
@@ -148,6 +157,27 @@ public static class ConsoleAuthModule
                 policy.RequireAuthenticatedUser();
                 policy.RequireClaim(CrawldadClaims.TenantId); // no tenant claim (no membership) ⇒ 403 before the role gate
                 policy.AddRequirements(new ConsoleOwnerRequirement());
+            }));
+    }
+
+    // Registers the ConsoleProvisioning policy (issue #119 PR7). Enabled: the ConsolePrincipal scheme ONLY (no ApiKey, so a key
+    // caller is a 401) and an authenticated user, but — unlike ConsoleOrKey — NO tenant claim, because provisioning runs before
+    // any membership exists. Disabled (every host today): a never-satisfiable assertion, so the still-mapped endpoint denies
+    // every request (an unauthenticated one challenges as 401; an authenticated key request is a 403) — the free-tier surface is
+    // inert until console-mode is configured. Never lists the console scheme when it is not registered.
+    private static void AddProvisioningPolicy(IServiceCollection services, bool consoleEnabled)
+    {
+        services.Configure<AuthorizationOptions>(options =>
+            options.AddPolicy(ProvisioningPolicy, policy =>
+            {
+                if (!consoleEnabled)
+                {
+                    policy.RequireAssertion(_ => false); // console-mode off → provisioning is unreachable (deny all)
+                    return;
+                }
+
+                policy.AddAuthenticationSchemes(Scheme); // console scheme ONLY — a key caller never authenticates here
+                policy.RequireAuthenticatedUser();       // the validated portal identity is the whole authority (no membership yet)
             }));
     }
 
