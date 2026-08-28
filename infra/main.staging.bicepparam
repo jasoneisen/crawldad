@@ -39,7 +39,7 @@ param betaTenantApiKey = readEnvironmentVariable('BETA_TENANT_API_KEY', '')
 // docs domain — CHANGE it once the production sending domain is finalized and its signature/domain is verified in
 // Postmark. The message stream keeps its 'outbound' default (set in main.bicep).
 param postmarkServerToken = readEnvironmentVariable('PORTAL_POSTMARK_SERVER_TOKEN', '')
-param portalEmailFromAddress = 'jason@eisenmenger.io' // staging: matches the verified-pending Postmark sender signature; switch to a crawldad.dev address once that domain is added+verified in Postmark
+param portalEmailFromAddress = 'noreply@crawldad.dev' // matches the Postmark-registered crawldad.dev domain (DKIM/Return-Path verification via Cloudflare DNS)
 
 param storageContainer = 'crawldad-blobs'
 
