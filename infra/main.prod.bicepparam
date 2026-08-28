@@ -27,6 +27,12 @@ param tenantId = 'crawldad'
 param tenantActor = 'crawldad-operator'
 param tenantApiKey = readEnvironmentVariable('PROD_TENANT_API_KEY', 'PLACEHOLDER-local-build-only-not-a-secret')
 
+// Portal sign-in email (issue #119): Postmark is wired only when the PROD_PORTAL_POSTMARK_SERVER_TOKEN environment
+// secret is set (empty ⇒ no provider, fail-closed, deploy still green). The from-address defaults to the docs domain —
+// CHANGE it once the production sending domain is finalized and verified in Postmark. Stream keeps 'outbound' (main.bicep).
+param postmarkServerToken = readEnvironmentVariable('PROD_PORTAL_POSTMARK_SERVER_TOKEN', '')
+param portalEmailFromAddress = 'noreply@crawldad.dev'
+
 param storageContainer = 'crawldad-blobs'
 
 // Production durability shape: keep at least one replica warm (Wolverine queue polling, RunDeadline scheduling,

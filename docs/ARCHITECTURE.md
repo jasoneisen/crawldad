@@ -182,7 +182,7 @@ The POC floor of B.3 is realized as code in [`infra/`](../infra) (subscription-s
 | db-apply job | `caj-crawldad-stg-dbapply` | runs `dotnet Crawldad.Api.dll db-apply` on demand (API schema only) |
 | Postgres Flexible | `psql-crawldad-stg-<uniq>` | Burstable **B1ms**, 32 GiB, PG16, no HA, public + firewalled to Azure services |
 | Storage account | `stcrawldadstg<uniq>` | LRS; blob container `crawldad-blobs` (tenant-partitioned) + `dataprotection` (the persisted key ring) |
-| Key Vault | `kv-crawldad-stg-<uniq>` | RBAC; marten + blob connection strings + placeholder tenant key + `dataprotection` key-ring wrapping key (RSA 2048) |
+| Key Vault | `kv-crawldad-stg-<uniq>` | RBAC; marten + blob connection strings + placeholder tenant key + `dataprotection`/`dataprotection-portal` key-ring wrapping keys (RSA 2048) + (when configured) the portal `portal-postmark-server-token` |
 | Container registry | `crcrawldadstg<uniq>` | ACR **Basic**, managed-identity pull (no long-lived creds) |
 | Log Analytics | `log-crawldad-stg` | PerGB2018, 1 GB/day cap (inside the 5 GB free grant) |
 | App identity | `id-crawldad-stg-app` | AcrPull + Key Vault Secrets User + Key Vault Crypto User + Storage Blob Data Contributor (key-ring container) |
@@ -192,7 +192,32 @@ Secrets are never committed: the Postgres password and a placeholder-tenant API 
 
 **Portal (`ca-crawldad-stg-portal`, issue #119).** The customer-facing Blazor SSR portal deploys as a second container app in the same environment, sharing the API's app identity (AcrPull + Key Vault Secrets User) and ACR. It is a thin auth+shell host with its **own** Marten document store on the **same** Postgres, isolated in the code-configured `portal` schema, so its only boot config is `ASPNETCORE_ENVIRONMENT` and the Marten connection string — it reuses the API's `marten-connection-string` Key Vault secret verbatim (the schema is selected in code, not in the connection string) and carries no storage/tenant/DataProtection config. The deploy gate is `GET /` (the anonymous marketing page renders with no database access), because the portal has no `/health` endpoint. Two known limitations are deliberate at this stage:
 
-- **Sign-in is not yet functional.** Outside Development the portal's email sender is **fail-closed** (`UnconfiguredEmailSender`): requesting a login OTP throws and surfaces a **500**. This is intentional — the shell is deployed ahead of an email-provider decision, and no provider is wired here. Sign-in begins working once a real `IEmailSender` (SMTP/SES/…) is configured; the smoke test covers only `GET /`, never the sign-in path.
+- **Sign-in email is provider-gated (Postmark).** The portal's OTP mailer is wired from `Crawldad:Portal:Email`: with a Postmark **server token** + verified **from-address** set, `PostmarkEmailSender` delivers codes (in any environment); unset, Staging/Production stay **fail-closed** (`UnconfiguredEmailSender` — a login OTP request throws and surfaces a **500**), exactly as before, so deploying the shell without a token is still green. See **Portal sign-in email** below for the config shape, per-environment behaviour, and the owner checklist. The staging smoke test covers only `GET /`, never the sign-in path.
 - **No out-of-band schema step.** Unlike the API, the portal has no `db-apply` command (its entry point only ever serves). In Staging/Production it relies on Marten's default runtime auto-create (`AutoCreate.CreateOrUpdate`) to materialize the `portal` schema on first document use, over the admin login that already backs the shared connection string. A dedicated portal schema-apply job can follow if/when the portal grows a startup that touches the database before its first request.
+
+**Portal sign-in email (Postmark, issue #119).** The portal delivers its 6-character sign-in codes through **Postmark's HTTP API** (`POST https://api.postmarkapp.com/email`, `X-Postmark-Server-Token` header, a JSON `From`/`To`/`Subject`/`TextBody`/`MessageStream` body) over an `IHttpClientFactory` client — no Postmark SDK, matching the repo's zero-dependency plain-HTTP style. It is configured by the portal-scoped `Crawldad:Portal:Email` section:
+
+| Key | Meaning | Infra source |
+| --- | --- | --- |
+| `ServerToken` | Postmark server token (secret) | Key Vault secret `portal-postmark-server-token`, by reference |
+| `FromAddress` | verified sender address (must parse as an email) | plain env, `portalEmailFromAddress` (default `noreply@crawldad.dev`) |
+| `MessageStream` | Postmark message stream (default `outbound`) | plain env, `portalEmailMessageStream` |
+
+Selection is **all-or-nothing**, mirroring the Data-Protection module (`EmailModule` picks the sender; a `ValidateOnStart` guard rejects a half-set pair at boot):
+
+| Environment | `Crawldad:Portal:Email` | `IEmailSender` |
+| --- | --- | --- |
+| any (Development included) | fully configured (token **and** from) | `PostmarkEmailSender` |
+| Development | unset | `LoggingEmailSender` (logs the code, dev only) |
+| Staging / Production | unset | `UnconfiguredEmailSender` (fail-closed) |
+| any | half-set (only one of token/from), or an unparseable from-address | **boot fails** (`ValidateOnStart`) |
+
+A non-2xx Postmark response or a transport failure **throws** (`EmailDeliveryException`) — never a silent success — so the OTP flow stays fail-closed and the send-before-persist rule leaves no orphan challenge row; the sender never branches on the recipient, so known and unknown addresses are indistinguishable. Failures log only the HTTP status + Postmark error code — never the recipient, the server token, or the code. The infra wires all three env vars **together**, gated on the token: with `postmarkServerToken` supplied (a deploy secret), the Key Vault secret is created and the three `Crawldad__Portal__Email__*` env vars are set on the portal container app; without it none are wired and the deploy stays green with the portal fail-closed.
+
+**Owner checklist — turn on staging sign-in:**
+1. Create a Postmark account and a **server** (transactional); copy its **Server API Token**.
+2. In Postmark, **verify the sender signature / domain** for the From address — `noreply@crawldad.dev`, or your chosen domain (update `portalEmailFromAddress` if different). Postmark refuses to send from an unverified sender.
+3. Provide the token to the deploy as the **`PORTAL_POSTMARK_SERVER_TOKEN`** GitHub Actions secret (staging; `PROD_PORTAL_POSTMARK_SERVER_TOKEN` for prod), then run the deploy. The bicep creates the `portal-postmark-server-token` Key Vault secret and wires the portal env. (Alternatively set the secret's value directly in the vault and restart the portal revision — but a later redeploy re-asserts the pipeline value, so the GitHub secret is the canonical source.)
+4. Request a code on `/login` in staging and confirm delivery.
 
 **Prod-only deltas, deliberately deferred** (each a B.2 line, added at the graduation trigger, not now): **Azure Front Door** + WAF, **NAT Gateway** (stable egress IP), **VNet + private endpoints** for Postgres/Key Vault/Blob, **zone redundancy + Postgres HA**, **min-replicas ≥ 1** (avoids the scale-to-zero trap — see B.3), a **Dedicated workload profile**, and the D-series SKUs. The one deliberate staging divergence from B.3's advice is **scale-to-zero** (B.3 recommends min-1): staging trades the "deadlines silently late" trap for the cost floor, and `minReplicas` is a one-line parameter flip when staging needs production durability shape. `infra/main.prod.bicepparam` carries the prod parameterization (inert until prod is bootstrapped).

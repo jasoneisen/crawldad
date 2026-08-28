@@ -34,6 +34,13 @@ param tenantApiKey = readEnvironmentVariable('STAGING_TENANT_API_KEY', 'PLACEHOL
 param betaTenantId = empty(readEnvironmentVariable('BETA_TENANT_API_KEY', '')) ? '' : 'beta'
 param betaTenantApiKey = readEnvironmentVariable('BETA_TENANT_API_KEY', '')
 
+// Portal sign-in email (issue #119): Postmark is wired only when the PORTAL_POSTMARK_SERVER_TOKEN environment secret is
+// set (empty ⇒ no provider, the portal stays fail-closed and the deploy stays green). The from-address defaults to the
+// docs domain — CHANGE it once the production sending domain is finalized and its signature/domain is verified in
+// Postmark. The message stream keeps its 'outbound' default (set in main.bicep).
+param postmarkServerToken = readEnvironmentVariable('PORTAL_POSTMARK_SERVER_TOKEN', '')
+param portalEmailFromAddress = 'noreply@crawldad.dev'
+
 param storageContainer = 'crawldad-blobs'
 
 // Scale-to-zero for cost (ARCHITECTURE.md B.3 trade-off documented in the PR). 0.5 vCPU / 1 GiB is a valid

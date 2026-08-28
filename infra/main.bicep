@@ -77,6 +77,17 @@ param betaTenantActor string = 'beta-operator'
 @description('Beta tenant API key (generated at bootstrap >=16 chars); empty ⇒ no beta tenant is provisioned.')
 param betaTenantApiKey string = ''
 
+// ── Portal email (issue #119) ─────────────────────────────────────────────────────────
+@secure()
+@description('Postmark server token for the portal sign-in OTP mailer; empty (default) ⇒ NO email provider is wired and the portal stays fail-closed (deploy still green). Supplied from a GitHub secret, never committed. Setting it wires PostmarkEmailSender and makes sign-in work end-to-end.')
+param postmarkServerToken string = ''
+
+@description('The verified sender address portal OTP emails are sent From. Default matches the docs domain; CHANGE this once the production sending domain is finalized (its signature/domain must be verified in Postmark). Ignored unless postmarkServerToken is set.')
+param portalEmailFromAddress string = 'noreply@crawldad.dev'
+
+@description('Postmark message stream for portal OTP mail. The Postmark built-in transactional stream is named outbound; only change it for a differently-named transactional stream. Ignored unless postmarkServerToken is set.')
+param portalEmailMessageStream string = 'outbound'
+
 // ── Storage ─────────────────────────────────────────────────────────────────────────
 @description('Blob container all tenants share (partitioned by a {tenant}/ prefix).')
 param storageContainer string = 'crawldad-blobs'
@@ -214,6 +225,7 @@ module keyvault 'modules/keyvault.bicep' = {
     storageAccountName: storage.outputs.name
     tenantApiKey: tenantApiKey
     betaTenantApiKey: empty(betaTenantId) ? '' : betaTenantApiKey
+    postmarkServerToken: postmarkServerToken
   }
 }
 
@@ -243,6 +255,11 @@ module app 'modules/app.bicep' = {
     dataProtectionKeyId: keyvault.outputs.dataProtectionKeyId
     portalKeyRingBlobUri: '${storage.outputs.blobEndpoint}${portalDataProtectionContainer}/${portalDataProtectionBlob}'
     portalDataProtectionKeyId: keyvault.outputs.dataProtectionPortalKeyId
+    // Portal email (issue #119): the KV secret name is passed only when a token is configured, which is what gates the
+    // whole email wiring on the portal container app (empty ⇒ no secret ref, no env, fail-closed — deploy stays green).
+    portalPostmarkTokenSecretName: empty(postmarkServerToken) ? '' : 'portal-postmark-server-token'
+    portalEmailFromAddress: portalEmailFromAddress
+    portalEmailMessageStream: portalEmailMessageStream
     tenantId: tenantId
     tenantActor: tenantActor
     betaTenantId: betaTenantId

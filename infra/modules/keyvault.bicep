@@ -48,6 +48,10 @@ param tenantApiKey string
 @description('Generated beta-tenant API key; empty ⇒ the beta-tenant secret is not created.')
 param betaTenantApiKey string = ''
 
+@secure()
+@description('Postmark server token for the portal OTP mailer (issue #119); empty ⇒ the secret is not created and the portal stays fail-closed (no email provider). Supplied from a GitHub secret, never committed.')
+param postmarkServerToken string = ''
+
 @description('Purge protection. Off in staging so a torn-down vault name can be purged + reused; irreversible once on.')
 param enablePurgeProtection bool = false
 
@@ -110,6 +114,17 @@ resource betaTenantKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if
   parent: kv
   name: 'beta-tenant-apikey'
   properties: { value: betaTenantApiKey }
+}
+
+// The portal OTP mailer's Postmark server token (issue #119). Created ONLY when the token is supplied — empty ⇒ no
+// secret, and the portal env below wires no email provider, so the portal stays fail-closed (deploy still green). The
+// value is the token itself; the app resolves it by reference via the SAME app identity (Key Vault Secrets User) that
+// reads the marten/blob/tenant secrets. Rotating: set the GitHub secret + redeploy (canonical), or update this secret's
+// value in the vault and restart the portal revision (picked up on the next secret refresh).
+resource postmarkTokenSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(postmarkServerToken)) {
+  parent: kv
+  name: 'portal-postmark-server-token'
+  properties: { value: postmarkServerToken }
 }
 
 resource kvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
