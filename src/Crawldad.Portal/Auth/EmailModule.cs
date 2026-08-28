@@ -39,10 +39,18 @@ internal static class EmailModule
 
         if (hasToken && hasFrom)
         {
-            // Fully configured ⇒ Postmark, in ANY environment. The named client presets Postmark's base address; the
-            // per-request server-token header + body are set by the sender. IEmailSender stays a singleton, like the
-            // other two senders — the sender resolves a pooled client from the factory per send (as WorkspaceLinker does).
-            services.AddHttpClient(PostmarkEmailSender.HttpClientName, client => client.BaseAddress = PostmarkEmailSender.ApiBaseAddress);
+            // Fully configured ⇒ Postmark, in ANY environment. The named client presets Postmark's base address and a
+            // tight timeout; the per-request server-token header + body are set by the sender. IEmailSender stays a
+            // singleton, like the other two senders — the sender resolves a pooled client from the factory per send (as
+            // WorkspaceLinker does).
+            services.AddHttpClient(PostmarkEmailSender.HttpClientName, client =>
+            {
+                client.BaseAddress = PostmarkEmailSender.ApiBaseAddress;
+                // A hung Postmark must not stall the login send path for HttpClient's 100s default — the OTP request is
+                // synchronous behind the user's click. On timeout the client throws, so the send still fails closed
+                // (surfaces an error) instead of blocking.
+                client.Timeout = PostmarkEmailSender.SendTimeout;
+            });
             services.AddSingleton<IEmailSender, PostmarkEmailSender>();
         }
         else if (environment.IsDevelopment())

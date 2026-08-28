@@ -61,13 +61,16 @@ public class EmailModuleTests
     }
 
     [Fact]
-    public void Configured_presets_the_postmark_base_address_on_the_named_client()
+    public void Configured_presets_the_postmark_base_address_and_a_tight_timeout_on_the_named_client()
     {
         using var sp = Build("Staging", _tokenSetting, _fromSetting);
 
         var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient(PostmarkEmailSender.HttpClientName);
 
         client.BaseAddress.ShouldBe(PostmarkEmailSender.ApiBaseAddress);
+        // A hung Postmark must not stall the synchronous login send for HttpClient's 100s default.
+        client.Timeout.ShouldBe(PostmarkEmailSender.SendTimeout);
+        PostmarkEmailSender.SendTimeout.ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(15));
     }
 
     [Fact]

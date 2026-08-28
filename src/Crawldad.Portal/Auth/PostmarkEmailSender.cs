@@ -29,6 +29,11 @@ internal sealed class PostmarkEmailSender(
     /// <summary>Postmark's email send endpoint base. The send uses the relative <c>email</c> path against it.</summary>
     internal static readonly Uri ApiBaseAddress = new("https://api.postmarkapp.com/");
 
+    /// <summary>The per-send HTTP timeout <see cref="EmailModule"/> presets on the named client. Tight on purpose: the
+    /// OTP send is synchronous behind the user's sign-in click, so a hung Postmark must fail fast (fail-closed) rather
+    /// than block for <see cref="HttpClient"/>'s 100-second default.</summary>
+    internal static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(15);
+
     /// <summary>The Postmark server-token header. A constant, so a typo can't silently unauthenticate the call.</summary>
     private const string _serverTokenHeader = "X-Postmark-Server-Token";
 
