@@ -117,8 +117,10 @@ public class BillingCardTests : BunitContext
 
     // Routes /billing/config → the config (or 503 when null, simulating a failed call), /usage → usage, else → profile.
     private static StubHttpMessageHandler Api(BillingConfigResponse? billing) =>
-        new(req => req.Path.EndsWith("billing/config", StringComparison.Ordinal)
-            ? (billing is null ? ClientTestHarness.Empty(HttpStatusCode.ServiceUnavailable) : ClientTestHarness.Json(billing))
+        new(req =>
+            req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
+            : req.Path.EndsWith("billing/config", StringComparison.Ordinal)
+                ? (billing is null ? ClientTestHarness.Empty(HttpStatusCode.ServiceUnavailable) : ClientTestHarness.Json(billing))
             : req.Path.EndsWith("usage", StringComparison.Ordinal)
                 ? ClientTestHarness.Json(_usage)
                 : ClientTestHarness.Json(_profile));

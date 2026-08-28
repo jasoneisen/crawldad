@@ -45,6 +45,13 @@ public interface ITenantRegistryStore
     /// such active key belongs to the tenant (unknown, foreign, or already revoked) — so a repeat revoke is idempotent.</summary>
     Task<bool> RevokeKeyAsync(string tenantId, Guid keyId, DateTimeOffset now, CancellationToken ct);
 
+    /// <summary>Atomically rotates a key: in one transaction, revokes the tenant's active key <paramref name="oldKeyId"/>
+    /// (stamping <paramref name="now"/>) and persists <paramref name="replacement"/>, which inherits the rotated key's
+    /// <see cref="TenantApiKey.Label"/>. Returns the stored replacement, or null when no such active key belongs to the
+    /// tenant (unknown, foreign, or already revoked) — in which case <b>nothing is written</b>, so a freshly-minted
+    /// replacement is discarded unused (its raw key never leaves the caller and was never persisted).</summary>
+    Task<TenantApiKey?> RotateKeyAsync(string tenantId, Guid oldKeyId, TenantApiKey replacement, DateTimeOffset now, CancellationToken ct);
+
     /// <summary>Every key for the tenant (active and revoked), newest first, for a prefix-only listing.</summary>
     Task<IReadOnlyList<TenantApiKey>> ListKeysAsync(string tenantId, CancellationToken ct);
 
@@ -136,6 +143,26 @@ internal sealed class MartenTenantRegistryStore(IDocumentStore store) : ITenantR
         session.Store(key);
         await session.SaveChangesAsync(ct);
         return true;
+    }
+
+    public async Task<TenantApiKey?> RotateKeyAsync(string tenantId, Guid oldKeyId, TenantApiKey replacement, DateTimeOffset now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        await using var session = store.LightweightSession();
+        var old = await session.LoadAsync<TenantApiKey>(oldKeyId, ct);
+        if (old is null || !string.Equals(old.TenantId, tenantId, StringComparison.Ordinal) || old.RevokedAt is not null)
+        {
+            return null; // unknown, belongs to another tenant, or already revoked — nothing minted is persisted
+        }
+
+        // One transaction: revoke the old key and store its replacement, so a reader never sees a gap where the tenant has
+        // no active key. The replacement inherits the rotated key's label (it is the same logical key, re-issued).
+        old.RevokedAt = now;
+        replacement.Label = old.Label;
+        session.Store(old);
+        session.Store(replacement);
+        await session.SaveChangesAsync(ct);
+        return replacement;
     }
 
     public async Task<IReadOnlyList<TenantApiKey>> ListKeysAsync(string tenantId, CancellationToken ct)

@@ -69,5 +69,7 @@ internal sealed class FakeTenantRegistryStore : ITenantRegistryStore
 
     public Task<bool> RevokeKeyAsync(string tenantId, Guid keyId, DateTimeOffset now, CancellationToken ct) => throw new NotSupportedException();
 
+    public Task<TenantApiKey?> RotateKeyAsync(string tenantId, Guid oldKeyId, TenantApiKey replacement, DateTimeOffset now, CancellationToken ct) => throw new NotSupportedException();
+
     public Task<IReadOnlyList<TenantApiKey>> ListKeysAsync(string tenantId, CancellationToken ct) => throw new NotSupportedException();
 }

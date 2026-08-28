@@ -39,6 +39,7 @@ contracts and endpoints, not from older design notes.
 19. [Endpoint quick reference](#19-endpoint-quick-reference)
 20. [Management API — tenants & API keys](#20-management-api--tenants--api-keys----management)
 21. [Dashboard read APIs — runs list, webhook deliveries, tenant & usage](#21-dashboard-read-apis--runs-list-webhook-deliveries-tenant--usage)
+22. [Tenant self-service API keys — `/tenant/keys`](#22-tenant-self-service-api-keys--tenantkeys)
 
 ---
 
@@ -1056,6 +1057,10 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `GET /runs` | ✔ | — (filters + `?page`/`?size`) | `200 RunListResponse` | `400 invalid_status` / `400 invalid_payload_id` |
 | `GET /tenant` | ✔ | — | `200 TenantProfileResponse` | — |
 | `GET /usage` | ✔ | — | `200 UsageResponse` | — |
+| `GET /tenant/keys` | ✔ | — | `200 TenantApiKeyList` | `400 self_service_unavailable` |
+| `POST /tenant/keys` | ✔ | `CreateTenantKeyRequest` | `201 TenantApiKeyCreated` | `400` (label / `self_service_unavailable`) |
+| `POST /tenant/keys/{id}/rotate` | ✔ | — | `201 TenantApiKeyCreated` | `404`, `400 self_service_unavailable` |
+| `DELETE /tenant/keys/{id}` | ✔ | — | `204` | `404`, `409 last_active_key` / `409 current_key`, `400 self_service_unavailable` |
 | `GET /health` | — | — | `200` | — |
 | `GET /schema/crawldad-1.schema.json` | — | — | `200 application/schema+json` | — |
 | `GET /llms.txt` | — | — | `200 text/plain` | — |
@@ -1230,8 +1235,10 @@ on each row — the endpoint's most recent attempt — omitted for an endpoint t
 }
 ```
 
-Read-only, resolved from the bound tenant options; there is deliberately no tenant-management endpoint. If a tenant
-registry lands later it can back this same shape without a wire change — this surface does **not** depend on one.
+Read-only, resolved **registry-first**: a signup/management-created `RegistryTenant` ([§20](#20-management-api--tenants--api-keys----management))
+is authoritative for its display name, tier, and slot allowance, with a fallback to the bound `Crawldad:Tenants` options for
+an env-configured tenant (queue depth always defers to the global default — the registry carries no depth field). There is
+no tenant-management surface here; self-service **key** management lives at [§22](#22-tenant-self-service-api-keys--tenantkeys).
 
 ### `GET /usage` — usage against guardrails
 
@@ -1335,3 +1342,65 @@ are updated via the registry (§20). Outcomes:
   invalidated in-process).
 
 No secret is ever logged, and neither the raw body nor the signature is logged.
+
+---
+
+## 22. Tenant self-service API keys — `/tenant/keys`
+
+A tenant manages its **own** API keys with its own key — no management credential. This is the customer-facing,
+documented counterpart to the operator [§20](#20-management-api--tenants--api-keys----management) surface: automation,
+an MCP server, or an agent can rotate its own keys, and the portal's account area drives the same calls. Authentication
+is the normal tenant key ([§1](#1-authentication)); the tenant is taken **only** from the authenticated principal, never
+a route or body, so a caller can only ever act on itself.
+
+**Registry tenants only.** These endpoints work for a DB-backed registry tenant (§20 — every signup/management-created
+tenant). An **env-configured** tenant (`Crawldad:Tenants`) gets a `400 self_service_unavailable`: its keys are operator
+config, and a registry-minted key for it would never authenticate (it has no backing registry document — the "dead key"
+trap). Env tenants keep operator-issued keys.
+
+**The key model** is the same as §20.2: a key is `ck_<env>_<random>` (256 bits of entropy); the **raw key is returned
+exactly once**, at mint/rotate, and never stored (only its SHA-256 and a short display `prefix`) or shown again. A key
+may carry an optional **label** (≤ 64 chars) to tell keys apart. Every mutation invalidates the tenant's auth cache, so a
+revoke or a rotate-out is honoured immediately on the serving instance and within the cache TTL fleet-wide.
+
+### Endpoints
+
+| Method + route | Body | Success | Errors |
+|---|---|---|---|
+| `GET /tenant/keys` | — | `200 { keys: [{ keyId, prefix, label?, createdAt, lastUsedAt, revokedAt, active, current }] }` | `400 self_service_unavailable` |
+| `POST /tenant/keys` | `{ label? }` | `201 { keyId, prefix, label?, apiKey, createdAt }` | `400` (invalid label, or `self_service_unavailable`) |
+| `POST /tenant/keys/{id}/rotate` | — | `201 { keyId, prefix, label?, apiKey, createdAt }` | `404 key_not_found`, `400 self_service_unavailable` |
+| `DELETE /tenant/keys/{id}` | — | `204` | `404 key_not_found`, `409 last_active_key` / `409 current_key`, `400 self_service_unavailable` |
+
+- **List** returns **prefixes and metadata only** — never a raw key or its hash. Exactly one active key is `current`:
+  the key that authenticated the request. It is the key a rotate replaces and a plain revoke refuses.
+- **Mint** (`POST /tenant/keys`) returns the raw `apiKey` in the `201` body and **nowhere else** — store it now. The
+  body is optional-ish: send `{ "label": "ci" }`, or `{}` for an unlabelled key.
+- **Rotate** (`POST /tenant/keys/{id}/rotate`) mints a replacement **and** revokes `{id}` in one transaction — the
+  anti-lockout way to replace a key. It is allowed even for the **last** key (a replacement is minted first, so there is
+  no gap) and even for the **current** key (swap to the returned key). The replacement inherits the rotated key's label.
+- **Revoke** (`DELETE /tenant/keys/{id}`) takes effect immediately. It **refuses**, with a `409`, to revoke the tenant's
+  **last active key** (`last_active_key`) or the key authenticating **this** request (`current_key`) — since
+  self-service auth needs a live key, rotate those instead. (This last-key guard is a deliberate stop-gap for the
+  key-authenticated surface; automation/MCP callers have no other recovery path.) An unknown, foreign, or already-revoked
+  id is a `404 key_not_found` with no existence oracle — so a repeat `DELETE` is `204` then `404`.
+
+### Mint → rotate → revoke
+
+```bash
+# Mint a labelled key — the raw key is in THIS response and nowhere else
+curl -sX POST https://api.example.com/tenant/keys \
+  -H "Authorization: Bearer $MY_KEY" -H 'Content-Type: application/json' \
+  -d '{"label":"ci"}'
+# → 201 { "keyId":"…", "prefix":"ck_prod_A1b2C3", "label":"ci", "apiKey":"ck_prod_A1b2C3…<secret>", "createdAt":"…" }
+
+# List — prefixes + metadata only; the key you're calling with is current:true
+curl -s https://api.example.com/tenant/keys -H "Authorization: Bearer $MY_KEY"
+
+# Rotate the CI key — mints a replacement and revokes the old one atomically
+curl -sX POST https://api.example.com/tenant/keys/<ciKeyId>/rotate -H "Authorization: Bearer $MY_KEY"
+# → 201 { …, "apiKey":"ck_prod_…<new secret>", … }   # swap CI to this key
+
+# Revoke a key you no longer need (not your last one, not the one you're calling with)
+curl -sX DELETE https://api.example.com/tenant/keys/<oldKeyId> -H "Authorization: Bearer $MY_KEY"   # → 204
+```

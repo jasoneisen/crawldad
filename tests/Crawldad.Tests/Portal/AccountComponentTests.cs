@@ -202,8 +202,9 @@ public class AccountComponentTests : BunitContext
             new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }));
 
     private static StubHttpMessageHandler ApiReturning(TenantProfileResponse profile, UsageResponse usage) =>
-        new(req => req.Path.EndsWith("usage", StringComparison.Ordinal)
-            ? ClientTestHarness.Json(usage)
+        new(req =>
+            req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
+            : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(usage)
             : ClientTestHarness.Json(profile));
 
     private static DefaultHttpContext Authed(string? email = "owner@example.com")

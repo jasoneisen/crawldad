@@ -103,6 +103,10 @@ public static class OpenApiSpec
         new(nameof(WebhookEventEnvelope), typeof(WebhookEventEnvelope)),
         new(nameof(TenantProfileResponse), typeof(TenantProfileResponse)),
         new(nameof(UsageResponse), typeof(UsageResponse)),
+        new(nameof(CreateTenantKeyRequest), typeof(CreateTenantKeyRequest)),
+        new(nameof(TenantApiKeyInfo), typeof(TenantApiKeyInfo)),
+        new(nameof(TenantApiKeyList), typeof(TenantApiKeyList)),
+        new(nameof(TenantApiKeyCreated), typeof(TenantApiKeyCreated)),
         new(nameof(BillingConfigResponse), typeof(BillingConfigResponse)),
         new(nameof(CheckoutSessionRequest), typeof(CheckoutSessionRequest)),
         new(nameof(BillingSessionResponse), typeof(BillingSessionResponse)),
@@ -268,10 +272,41 @@ public static class OpenApiSpec
         // Tenant self-service reads (the authenticated tenant's own profile + usage; no tenant-management surface).
         new("get", "/tenant", "getTenant", "The authenticated tenant's profile.", _tenancy, Anonymous: false, [], null,
             [new("200", "The tenant's id, display name, optional tier label, and slot/queue-depth allowances.", Component: nameof(TenantProfileResponse))],
-            Description: "Returns the authenticated tenant's own profile: its stable id, its configured actor/display identity, an optional pricing-tier label, and its slot (concurrent-run) and queue-depth allowances — each the per-tenant override when configured, else the global default. Read-only; resolved from the bound tenant options (a future tenant registry could back the same shape). There is deliberately no tenant-management endpoint."),
+            Description: "Returns the authenticated tenant's own profile: its stable id, its display identity, an optional pricing-tier label, and its slot (concurrent-run) and queue-depth allowances — each the per-tenant override when configured, else the global default. Read-only; resolved registry-first (a signup/management-created RegistryTenant is authoritative for its display name, tier, and slot allowance; queue depth defers to the global default, which the registry does not carry), falling back to the bound tenant options for an env-configured tenant. There is no tenant-management surface here — self-service key management lives at /tenant/keys."),
         new("get", "/usage", "getUsage", "The tenant's usage against its guardrails.", _tenancy, Anonymous: false, [], null,
             [new("200", "Slot occupancy now, queue depth + p95 wait, runs started this month, and events-per-run over a recent window vs the guardrail.", Component: nameof(UsageResponse))],
             Description: "The tenant's live capacity and consumption against its guardrails, computed on read from existing state: slot occupancy now (from the admission gate) against the slot allowance; admission-queue depth + p95 queue wait (the same reading as GET /runs/queue-stats); runs started this calendar month (UTC); and the avg/max events-per-run over a bounded recent window against the configured max-events-per-run guardrail. Pragmatic and approximate by design — a point-in-time occupancy count and a recent-window sample, not a billing ledger."),
+
+        // Tenant self-service API keys (issue #119): the authenticated tenant managing its OWN keys with its own key —
+        // no management credential, registry tenants only. The raw key is returned exactly once, on mint/rotate.
+        new("get", "/tenant/keys", "listTenantKeys", "List the tenant's API keys.", _tenancy, Anonymous: false, [], null,
+            [
+                new("200", "The tenant's keys (prefixes + metadata only, never a raw key or its hash), newest first; the key authenticating this request is flagged current.", Component: nameof(TenantApiKeyList)),
+                new("400", "This is an env-configured tenant, not a registry tenant — its keys are operator-managed, so self-service is unavailable (self_service_unavailable)."),
+            ],
+            Description: "Lists the authenticated tenant's own API keys as prefix-and-metadata rows (keyId, display prefix, optional label, createdAt, best-effort lastUsedAt, revokedAt, active, and current). The raw key and its hash are never returned. Exactly one active key is `current` — the key that authenticated this request — which a rotate replaces and a plain revoke refuses. Registry tenants only: an env-configured tenant is a 400 self_service_unavailable (its keys are operator config)."),
+        new("post", "/tenant/keys", "mintTenantKey", "Mint a new API key.", _tenancy, Anonymous: false, [],
+            new(nameof(CreateTenantKeyRequest), "An optional display label for the new key (`{}` to mint an unlabelled key)."),
+            [
+                new("201", "The minted key. The raw apiKey is in THIS body and nowhere else — store it now; only its hash is persisted.", Component: nameof(TenantApiKeyCreated)),
+                new("400", "The label failed validation (RFC 7807 problem+json), or this is an env-configured tenant (self_service_unavailable)."),
+            ],
+            Description: "Mints a new `ck_<env>_<random>` API key for the authenticated tenant, with an optional label to tell keys apart. The full raw key is returned exactly once in the 201 body and is never stored (only its SHA-256 hash and a short display prefix are) or retrievable again. Registry tenants only (env tenant → 400 self_service_unavailable)."),
+        new("post", "/tenant/keys/{id}/rotate", "rotateTenantKey", "Rotate an API key.", _tenancy, Anonymous: false, [Id], null,
+            [
+                new("201", "The replacement key (raw apiKey once); {id} is revoked in the same transaction. The replacement inherits the rotated key's label.", Component: nameof(TenantApiKeyCreated)),
+                NotFound("active key for this tenant"),
+                new("400", "This is an env-configured tenant, not a registry tenant (self_service_unavailable)."),
+            ],
+            Description: "Atomically mints a replacement key and revokes {id} in one transaction — the anti-lockout way to replace a key (including the last active key, or the key authenticating this request) with no gap. The replacement's raw key is returned once and inherits the rotated key's label. {id} not being one of the caller's active keys is a 404 (no existence oracle). Registry tenants only."),
+        new("delete", "/tenant/keys/{id}", "revokeTenantKey", "Revoke an API key.", _tenancy, Anonymous: false, [Id], null,
+            [
+                new("204", "The key was revoked; it stops authenticating immediately (auth cache invalidated in-process, within the TTL fleet-wide)."),
+                NotFound("active key for this tenant"),
+                new("409", "The key is the tenant's last active key (last_active_key) or the one authenticating this request (current_key) — rotate it instead."),
+                new("400", "This is an env-configured tenant, not a registry tenant (self_service_unavailable)."),
+            ],
+            Description: "Revokes one of the authenticated tenant's keys immediately. Refuses to revoke the tenant's LAST active key (last_active_key) or the key authenticating THIS request (current_key) — rotate those instead, since self-service auth needs a live key; both are a 409. An unknown, foreign, or already-revoked id is a 404 with no existence oracle (a repeated DELETE is 204 then 404). Registry tenants only."),
 
         // Billing (Stripe scaffolding, issue #119): tenant-authed config + checkout/portal session URLs, and the PUBLIC
         // signature-verified subscription webhook — the only path that changes a tenant's plan.

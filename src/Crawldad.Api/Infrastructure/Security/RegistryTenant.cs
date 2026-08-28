@@ -69,6 +69,12 @@ public sealed class TenantApiKey
     /// a listing without revealing it. Safe to log and to show in the portal.</summary>
     public string Prefix { get; set; } = "";
 
+    /// <summary>An optional human label set when a tenant mints the key via self-service (<c>POST /tenant/keys</c>), to
+    /// tell its keys apart in a listing (e.g. <c>ci</c>, <c>laptop</c>, <c>mcp-agent</c>). Metadata only — never
+    /// load-bearing for authentication; null for an operator-issued (management) key. A rotation carries the replaced
+    /// key's label onto its replacement.</summary>
+    public string? Label { get; set; }
+
     /// <summary>When the key was issued (UTC).</summary>
     public DateTimeOffset CreatedAt { get; set; }
 
