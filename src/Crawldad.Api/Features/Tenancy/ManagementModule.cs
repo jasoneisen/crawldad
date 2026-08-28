@@ -23,6 +23,14 @@ public static class ManagementModule
         keys.SingleTenanted();
         keys.Index(x => x.KeyHash);   // the auth hot-path lookup
         keys.Index(x => x.TenantId);  // list/revoke by tenant
+
+        // The console membership documents (issue #119 PR4): single-tenanted like the registry (they define who may become
+        // a tenant scope, so they cannot themselves be tenant-scoped), indexed for the two lookups — the console hot path
+        // "which tenant for this (email, workspace)" and "which workspaces for this user".
+        var memberships = options.Schema.For<TenantMembership>();
+        memberships.SingleTenanted();
+        memberships.Index(x => x.Email);     // console lookup + a user's workspaces
+        memberships.Index(x => x.TenantId);  // a tenant's members + the last-owner invariant
     }
 
     /// <summary>Maps the management endpoints under <c>/management</c>, guarded by the constant-time management-key filter

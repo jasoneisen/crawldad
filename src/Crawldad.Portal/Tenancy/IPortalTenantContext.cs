@@ -23,21 +23,36 @@ public interface IPortalTenantContext
     Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>How a resolved <see cref="PortalTenant"/> authenticates to the API (issue #119 PR4).</summary>
+public enum PortalAuthMode
+{
+    /// <summary>The stored tenant API key (the default, and the only mode when <c>Crawldad:ConsoleAuth</c> is unconfigured).</summary>
+    Key,
+
+    /// <summary>The portal's first-party console credential (bearer token + membership), with the stored key as fallback.</summary>
+    Console,
+}
+
 /// <summary>A resolved tenant for the current request: the tenant id and a <see cref="CrawldadClient"/> authenticated
 /// as that tenant. The underlying API key is consumed to build the client and never exposed.</summary>
 public sealed class PortalTenant
 {
-    internal PortalTenant(string tenantId, CrawldadClient client)
+    internal PortalTenant(string tenantId, CrawldadClient client, PortalAuthMode authMode = PortalAuthMode.Key)
     {
         TenantId = tenantId;
         Client = client;
+        AuthMode = authMode;
     }
 
-    /// <summary>The Crawldad tenant this request acts as (for display; the API derives the tenant from the key).</summary>
+    /// <summary>The Crawldad tenant this request acts as (for display; the API derives the tenant from the credential).</summary>
     public string TenantId { get; }
 
-    /// <summary>A Crawldad API client bound to this tenant's key — the one handle the data pages call the API through.</summary>
+    /// <summary>A Crawldad API client bound to this tenant — the one handle the data pages call the API through.</summary>
     public CrawldadClient Client { get; }
+
+    /// <summary>How this request authenticates: the stored key, or the console credential (issue #119 PR4). The account
+    /// area surfaces it as the workspace's console-access state.</summary>
+    public PortalAuthMode AuthMode { get; }
 }
 
 /// <inheritdoc cref="IPortalTenantContext"/>
@@ -47,6 +62,7 @@ internal sealed class PortalTenantContext : IPortalTenantContext
     private readonly IPortalTenantLinkStore _links;
     private readonly IDataProtector _protector;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ConsoleClientFactory? _consoleClients;
 
     private bool _resolved;
     private PortalTenant? _tenant;
@@ -55,12 +71,14 @@ internal sealed class PortalTenantContext : IPortalTenantContext
         IHttpContextAccessor httpContextAccessor,
         IPortalTenantLinkStore links,
         IDataProtectionProvider protection,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        ConsoleClientFactory? consoleClients = null)
     {
         _httpContextAccessor = httpContextAccessor;
         _links = links;
         _protector = PortalTenancy.ApiKeyProtector(protection);
         _httpClientFactory = httpClientFactory;
+        _consoleClients = consoleClients; // present only when Crawldad:ConsoleAuth is configured → console-mode
     }
 
     public async Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default)
@@ -93,6 +111,16 @@ internal sealed class PortalTenantContext : IPortalTenantContext
         }
 
         var apiKey = _protector.Unprotect(link.ProtectedApiKey);
+
+        // Console-mode (Crawldad:ConsoleAuth configured): dashboard reads go through the portal's first-party console
+        // credential (bearer token + membership selectors), with the stored key as fallback for writes and for reads whose
+        // membership does not yet exist. Unconfigured (_consoleClients is null) is the byte-identical stored-key path.
+        if (_consoleClients is not null)
+        {
+            var consoleClient = _consoleClients.Build(email, link.TenantId, apiKey);
+            return new PortalTenant(link.TenantId, consoleClient, PortalAuthMode.Console);
+        }
+
         var http = _httpClientFactory.CreateClient(PortalTenancy.ApiHttpClientName); // base address preset at wiring
         var client = new CrawldadClient(http, new CrawldadClientOptions { ApiKey = apiKey });
         return new PortalTenant(link.TenantId, client);

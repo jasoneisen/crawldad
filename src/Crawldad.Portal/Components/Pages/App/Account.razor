@@ -67,6 +67,37 @@
                 }
             </dd>
 
+            @if (_tenant is not null)
+            {
+                <dt>Console access</dt>
+                <dd>
+                    @if (_tenant.AuthMode == PortalAuthMode.Console)
+                    {
+                        <span class="status status-green" data-testid="console-mode">
+                            <span class="status-dot"></span>Console
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="status status-secondary" data-testid="console-mode">
+                            <span class="status-dot"></span>Stored key
+                        </span>
+                    }
+                    @if (_membershipsUnavailable)
+                    {
+                        <span class="text-secondary ms-2" data-testid="membership-status">Operator-managed workspace</span>
+                    }
+                    else if (_myMembership is not null)
+                    {
+                        <span class="ms-2" data-testid="membership-status">@_myMembership.Role.ToString() membership</span>
+                    }
+                    else
+                    {
+                        <span class="text-secondary ms-2" data-testid="membership-status">No membership</span>
+                    }
+                </dd>
+            }
+
             <dt>Session</dt>
             <dd>
                 @* Reuse the existing sign-out endpoint (same antiforgery-protected POST the shell header uses). *@
@@ -522,6 +553,11 @@
     private string? _keysActionError;  // a mint/rotate/revoke failure surfaced in-place (incl. the last/current-key refusal)
     private bool _keyListStale;        // set after rotating the session key: the old client can't re-list, so prompt a refresh
 
+    // Console membership section state (issue #119 PR4): the signed-in user's own membership for this tenant, shown
+    // alongside the link + console-mode state. Env tenants have no membership surface (a 400 from GET /tenant/memberships).
+    private TenantMembershipInfo? _myMembership;
+    private bool _membershipsUnavailable;
+
     private string? Email => HttpContext.User.FindFirstValue(ClaimTypes.Email);
 
     // The tier label, or a friendly default when the tenant has no configured tier. Called only where the profile is
@@ -608,6 +644,31 @@
 
         // The tenant's own keys, for the API-keys section (independent of usage/billing state).
         await LoadKeysAsync(tenant);
+
+        // The signed-in user's console membership, for the console-access row (independent of everything above).
+        await LoadMembershipAsync(tenant);
+    }
+
+    // The signed-in user's active membership for this tenant, or null. Never throws: an env tenant is a clean
+    // "operator-managed" state (400), and any other API hiccup simply leaves the row showing "no membership".
+    private async Task LoadMembershipAsync(PortalTenant tenant)
+    {
+        try
+        {
+            var normalized = Crawldad.Contracts.EmailAddress.Normalize(Email ?? "");
+            var response = await tenant.Client.ListMembershipsAsync(HttpContext.RequestAborted);
+            var memberships = response.Memberships ?? []; // defensive: a malformed body never crashes the account page
+            _myMembership = memberships.FirstOrDefault(
+                membership => membership.Active && string.Equals(membership.Email, normalized, StringComparison.Ordinal));
+        }
+        catch (CrawldadApiException ex) when (ex.StatusCode == StatusCodes.Status400BadRequest)
+        {
+            _membershipsUnavailable = true; // an env-configured tenant has no membership surface
+        }
+        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        {
+            // Degrade cleanly — the row shows "no membership" rather than crashing the account page.
+        }
     }
 
     // The tenant's billing config, or null when the provider call fails — which the billing card renders as the friendly

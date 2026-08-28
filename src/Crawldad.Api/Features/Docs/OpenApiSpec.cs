@@ -107,6 +107,9 @@ public static class OpenApiSpec
         new(nameof(TenantApiKeyInfo), typeof(TenantApiKeyInfo)),
         new(nameof(TenantApiKeyList), typeof(TenantApiKeyList)),
         new(nameof(TenantApiKeyCreated), typeof(TenantApiKeyCreated)),
+        new(nameof(RecordMembershipRequest), typeof(RecordMembershipRequest)),
+        new(nameof(TenantMembershipInfo), typeof(TenantMembershipInfo)),
+        new(nameof(TenantMembershipList), typeof(TenantMembershipList)),
         new(nameof(BillingConfigResponse), typeof(BillingConfigResponse)),
         new(nameof(CheckoutSessionRequest), typeof(CheckoutSessionRequest)),
         new(nameof(BillingSessionResponse), typeof(BillingSessionResponse)),
@@ -307,6 +310,22 @@ public static class OpenApiSpec
                 new("400", "This is an env-configured tenant, not a registry tenant (self_service_unavailable)."),
             ],
             Description: "Revokes one of the authenticated tenant's keys immediately. Refuses to revoke the tenant's LAST active key (last_active_key) or the key authenticating THIS request (current_key) — rotate those instead, since self-service auth needs a live key; both are a 409. An unknown, foreign, or already-revoked id is a 404 with no existence oracle (a repeated DELETE is 204 then 404). Registry tenants only."),
+
+        // Tenant self-service memberships (issue #119 PR4): the console authorization store, written by the portal's attach
+        // flow with the tenant's own key. Registry tenants only; NOT console-reachable (it bootstraps what console needs).
+        new("get", "/tenant/memberships", "listTenantMemberships", "List the tenant's memberships.", _tenancy, Anonymous: false, [], null,
+            [
+                new("200", "The tenant's memberships (email, role, timestamps, active), newest first.", Component: nameof(TenantMembershipList)),
+                new("400", "This is an env-configured tenant, not a registry tenant (self_service_unavailable)."),
+            ],
+            Description: "Lists the authenticated tenant's console memberships — each a verified email mapped to a role (owner/member) with its created/revoked timestamps and active flag. Metadata only (the email is portal identity, never a credential). Registry tenants only: an env-configured tenant is a 400 self_service_unavailable."),
+        new("post", "/tenant/memberships", "recordTenantMembership", "Record an owner membership.", _tenancy, Anonymous: false, [],
+            new(nameof(RecordMembershipRequest), "The verified portal email to grant this workspace to (normalized server-side)."),
+            [
+                new("200", "The active owner membership for the email (idempotent — an existing active membership is returned unchanged).", Component: nameof(TenantMembershipInfo)),
+                new("400", "The email was missing (RFC 7807 problem+json), or this is an env-configured tenant (self_service_unavailable)."),
+            ],
+            Description: "Records (idempotently) an owner membership for the given verified email in the authenticated tenant — the console authority a subsequent console read for that email resolves against. Called by the portal's attach flow after it has proved possession of the tenant key; the key holder is authorizing an email it chose, so this grants no authority the key does not already hold. A re-record returns the existing active membership unchanged. Registry tenants only (env tenant → 400 self_service_unavailable)."),
 
         // Billing (Stripe scaffolding, issue #119): tenant-authed config + checkout/portal session URLs, and the PUBLIC
         // signature-verified subscription webhook — the only path that changes a tenant's plan.

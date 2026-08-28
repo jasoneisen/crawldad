@@ -88,8 +88,21 @@ internal sealed class WorkspaceLinker : IWorkspaceLinker
                 $"That key is valid, but it authenticates workspace ‘{profile.TenantId}’ — not ‘{entered}’. Check the workspace ID.");
         }
 
-        // Validated: persist the link with the AUTHORITATIVE tenant id from the key (never the raw entered casing), and
-        // the store protects the key at rest.
+        // Validated: record the account's OWNER membership (the console authorization authority) using the same proven
+        // key, so a later console read for this email resolves to the tenant. Best-effort — an env-configured tenant has no
+        // membership surface (400 self_service_unavailable) and a transient API fault must not fail linking; the stored key
+        // (below) still authenticates every call until the console path lands.
+        try
+        {
+            await probe.RecordOwnerMembershipAsync(email, cancellationToken);
+        }
+        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        {
+            // Membership is additive to the key link; a failure here degrades to the stored-key path, never blocks the link.
+        }
+
+        // Persist the link with the AUTHORITATIVE tenant id from the key (never the raw entered casing); the store protects
+        // the key at rest. The key is retained even in console-mode — writes still ride it until PR5.
         await _links.UpsertAsync(email, profile.TenantId, apiKey, cancellationToken);
         return new WorkspaceLinkResult(
             WorkspaceLinkOutcome.Linked,

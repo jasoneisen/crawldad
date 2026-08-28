@@ -145,6 +145,12 @@ dotnet_diagnostic.RCS1194.severity = none
 dotnet_diagnostic.CA1032.severity = none
 dotnet_diagnostic.RCS1194.severity = none
 
+[src/Crawldad.Contracts/EmailAddress.cs]
+# The single shared email normalizer (issue #119 PR4): case-folds an email to its canonical lower-invariant identity/key,
+# byte-for-byte the historical PortalAuthService.NormalizeEmail behaviour. CA1308 prefers ToUpperInvariant, which is the
+# wrong casing for an email key (and would silently break existing PortalUser/PortalTenantLink ids). Off for this file only.
+dotnet_diagnostic.CA1308.severity = none
+
 [src/Crawldad.Portal/Auth/**.cs]
 # Email addresses are stored case-folded to their canonical lower-invariant form (the account identity/key).
 # CA1308 prefers ToUpperInvariant for normalization, which is the wrong casing for an email key. Off here only.

@@ -155,6 +155,12 @@ public static class PortalHost
         var apiBaseUrl = PortalTenancy.ResolveApiBaseUrl(builder.Configuration);
         builder.Services.AddHttpClient(PortalTenancy.ApiHttpClientName, client => client.BaseAddress = apiBaseUrl);
 
+        // Console-mode (issue #119 PR4): when Crawldad:ConsoleAuth is configured, register the managed-identity token
+        // source + console client factory so dashboard reads ride the portal's first-party console credential (with the
+        // stored key as fallback). Unconfigured (dev/tests/today) => nothing registered => the byte-identical stored-key
+        // path above. Registered after the pooled HttpClient it wraps.
+        PortalConsoleAuthModule.AddConsoleAuth(builder.Services, builder.Configuration);
+
         // Development-only: seed/refresh one tenant link from Portal:DevTenantLink at startup. Registered AFTER
         // Marten's schema-apply-on-startup, so the "portal" tables exist when it writes; a no-op when the section is
         // absent or partial (production boots with no link, exactly as here).

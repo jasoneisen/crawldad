@@ -151,8 +151,10 @@ internal sealed class PortalAuthService(
     /// <summary>Test-only seam — see <see cref="VerifyOnceAsync"/>. Null in production.</summary>
     internal Func<CancellationToken, Task>? ConcurrencyProbe { get; set; }
 
-    /// <summary>Case- and whitespace-normalize an email to its canonical stored form.</summary>
-    internal static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+    /// <summary>Case- and whitespace-normalize an email to its canonical stored form. Delegates to the single shared
+    /// normalizer (issue #119 PR4, finding #2) so the portal and the API's membership store fold identity byte-for-byte the
+    /// same way — the historical <c>Trim().ToLowerInvariant()</c> behaviour, unchanged.</summary>
+    internal static string NormalizeEmail(string email) => Crawldad.Contracts.EmailAddress.Normalize(email);
 
     /// <summary>Normalize a typed code to the generator's alphabet casing so lower-case entry still matches.</summary>
     internal static string NormalizeCode(string code) => code.Trim().ToUpperInvariant();

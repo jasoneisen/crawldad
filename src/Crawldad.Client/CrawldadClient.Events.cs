@@ -19,7 +19,7 @@ public sealed partial class CrawldadClient
     public async IAsyncEnumerable<RunEventFrame> StreamRunEventsAsync(
         Guid runId, long? lastEventId = null, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        using var request = BuildRequest(HttpMethod.Get, $"runs/{runId}/events");
+        using var request = await BuildRequestAsync(HttpMethod.Get, $"runs/{runId}/events", ct);
         request.Headers.TryAddWithoutValidation("Accept", "text/event-stream");
         if (lastEventId is not null)
         {
