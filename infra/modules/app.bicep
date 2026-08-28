@@ -85,6 +85,15 @@ param portalKeyRingBlobUri string
 @description('Key Vault key id that wraps the PORTAL Data Protection key ring (versionless).')
 param portalDataProtectionKeyId string
 
+@description('Postmark server-token KV secret name for the portal OTP mailer (issue #119); empty ⇒ no email provider is wired on the portal and it stays fail-closed (deploy still green).')
+param portalPostmarkTokenSecretName string = ''
+
+@description('Verified From address for portal OTP mail (issue #119). Wired only when portalPostmarkTokenSecretName is set.')
+param portalEmailFromAddress string = ''
+
+@description('Postmark message stream for portal OTP mail (issue #119). Wired only when portalPostmarkTokenSecretName is set.')
+param portalEmailMessageStream string = ''
+
 @description('Placeholder-tenant id (partition/billing subject; must not contain ":").')
 param tenantId string
 
@@ -263,9 +272,48 @@ resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
 // use. The anonymous marketing "/" route touches no database, so the app boots and serves before any schema exists —
 // which is what the ingress probes + the deploy smoke-test target.
 //
-// KNOWN LIMITATION (issue #119): outside Development the portal's email sender is fail-closed (UnconfiguredEmailSender),
-// so requesting a sign-in OTP surfaces a 500 until a real email provider is wired. Deploying the shell now is
-// deliberate; sign-in is not expected to work end-to-end yet.
+// Portal email (issue #119): the OTP mailer (Postmark) is wired ONLY when a server-token secret name is passed — all
+// three Crawldad__Portal__Email__* env vars appear together (ServerToken by KV reference, FromAddress + MessageStream
+// plain) so the portal host sees a fully-configured provider and selects PostmarkEmailSender. Empty ⇒ none are wired
+// and the portal stays fail-closed (UnconfiguredEmailSender): requesting an OTP surfaces a 500, but the deploy is still
+// green (the anonymous "/" probe never touches email). This all-or-nothing gate matches the host's own validator (a
+// half-set pair fails boot), so the container never boots half-configured.
+var hasPortalEmail = !empty(portalPostmarkTokenSecretName)
+
+// The portal reuses the API's marten-connection-string KV secret verbatim (same Postgres; "portal" schema selected in
+// code), plus — when email is configured — the Postmark token secret. All resolved passwordless via the app identity.
+var portalSecrets = concat(
+  [
+    { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: appIdentityId }
+  ],
+  hasPortalEmail
+    ? [{ name: 'portal-postmark-server-token', keyVaultUrl: '${keyVaultUri}secrets/${portalPostmarkTokenSecretName}', identity: appIdentityId }]
+    : []
+)
+
+var portalEnv = concat(
+  [
+    { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
+    // Point DefaultAzureCredential at the SHARED user-assigned identity (same one the API uses) for the portal's
+    // Data Protection blob + Key Vault access.
+    { name: 'AZURE_CLIENT_ID', value: appIdentityClientId }
+    { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
+    // The portal's OWN Data Protection key ring (issue #119): persisted to its own blob, wrapped by its own KV
+    // key. BOTH set ⇒ durable + wrapped; the portal host fails fast if only one is set (its boot-time validator).
+    { name: 'Crawldad__Portal__DataProtection__KeyRingBlobUri', value: portalKeyRingBlobUri }
+    { name: 'Crawldad__Portal__DataProtection__KeyVaultKeyId', value: portalDataProtectionKeyId }
+  ],
+  hasPortalEmail
+    ? [
+        // The Postmark OTP mailer (issue #119): token by KV reference, from-address + stream plain. All three present
+        // together ⇒ the host selects PostmarkEmailSender; the double-underscore keys bind Crawldad:Portal:Email.
+        { name: 'Crawldad__Portal__Email__ServerToken', secretRef: 'portal-postmark-server-token' }
+        { name: 'Crawldad__Portal__Email__FromAddress', value: portalEmailFromAddress }
+        { name: 'Crawldad__Portal__Email__MessageStream', value: portalEmailMessageStream }
+      ]
+    : []
+)
+
 resource portal 'Microsoft.App/containerApps@2024-03-01' = {
   name: portalAppName
   location: location
@@ -282,11 +330,7 @@ resource portal 'Microsoft.App/containerApps@2024-03-01' = {
         traffic: [ { weight: 100, latestRevision: true } ]
       }
       registries: registries
-      // The portal reuses the API's marten-connection-string KV secret verbatim (same Postgres; its "portal" schema is
-      // selected in code, not in the connection string), resolved passwordless via the app identity.
-      secrets: [
-        { name: 'marten-connection-string', keyVaultUrl: '${keyVaultUri}secrets/${martenSecretName}', identity: appIdentityId }
-      ]
+      secrets: portalSecrets
     }
     template: {
       containers: [
@@ -294,17 +338,7 @@ resource portal 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'portal'
           image: portalImage
           resources: { cpu: json(cpu), memory: memory }
-          env: [
-            { name: 'ASPNETCORE_ENVIRONMENT', value: aspNetCoreEnvironment }
-            // Point DefaultAzureCredential at the SHARED user-assigned identity (same one the API uses) for the portal's
-            // Data Protection blob + Key Vault access.
-            { name: 'AZURE_CLIENT_ID', value: appIdentityClientId }
-            { name: 'ConnectionStrings__marten', secretRef: 'marten-connection-string' }
-            // The portal's OWN Data Protection key ring (issue #119): persisted to its own blob, wrapped by its own KV
-            // key. BOTH set ⇒ durable + wrapped; the portal host fails fast if only one is set (its boot-time validator).
-            { name: 'Crawldad__Portal__DataProtection__KeyRingBlobUri', value: portalKeyRingBlobUri }
-            { name: 'Crawldad__Portal__DataProtection__KeyVaultKeyId', value: portalDataProtectionKeyId }
-          ]
+          env: portalEnv
           // The portal has no /health endpoint; probe the anonymous marketing "/" (a 200 proves Kestrel + the Blazor
           // SSR pipeline composed and started — it renders without any database access).
           probes: [

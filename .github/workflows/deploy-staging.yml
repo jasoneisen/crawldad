@@ -57,6 +57,10 @@ jobs:
       STAGING_TENANT_API_KEY: ${{ secrets.STAGING_TENANT_API_KEY }}
       # Optional: absent ⇒ empty ⇒ the .bicepparam wires no beta tenant.
       BETA_TENANT_API_KEY: ${{ secrets.BETA_TENANT_API_KEY }}
+      # Optional (issue #119): absent ⇒ empty ⇒ the .bicepparam wires no email provider and the portal stays
+      # fail-closed (deploy still green). Set it to turn on portal sign-in via Postmark. GitHub does not auto-expose
+      # secrets.* to readEnvironmentVariable, so this MUST be exported here for infra/main.staging.bicepparam to read it.
+      PORTAL_POSTMARK_SERVER_TOKEN: ${{ secrets.PORTAL_POSTMARK_SERVER_TOKEN }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -273,9 +277,10 @@ jobs:
 
       # Portal smoke test: the portal has no /health endpoint, so GET the anonymous marketing "/" and fail the run if
       # it is not 200. A 200 proves Kestrel + the Blazor SSR pipeline composed and started (the page renders with no
-      # database access). NOTE: this only proves the shell boots — portal sign-in is a KNOWN-BROKEN path until an email
-      # provider is wired (the fail-closed sender 500s on OTP send; issue #119), which this gate deliberately does NOT
-      # exercise. The retry window absorbs the scale-from-zero cold start (min-replicas 0).
+      # database access). NOTE: this only proves the shell boots — it deliberately does NOT exercise portal sign-in,
+      # which is provider-gated (issue #119): with PORTAL_POSTMARK_SERVER_TOKEN set the OTP send works via Postmark,
+      # and without it the fail-closed sender 500s on OTP send. The retry window absorbs the scale-from-zero cold start
+      # (min-replicas 0).
       - name: Smoke-test Portal / (must return 200)
         env:
           PORTAL_FQDN: ${{ steps.deploy.outputs.portal_fqdn }}

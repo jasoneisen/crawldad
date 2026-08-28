@@ -47,7 +47,7 @@ public static class PortalHost
         // Passwordless email-OTP services.
         builder.Services.AddSingleton<IOtpCodeGenerator, OtpCodeGenerator>();
         builder.Services.AddScoped<IPortalAuthService, PortalAuthService>();
-        AddEmailSender(builder);
+        EmailModule.AddEmailSending(builder.Services, builder.Configuration, builder.Environment);
 
         // The durable Data-Protection key ring underlies BOTH the auth cookie and the tenant API key protector below,
         // so register it once, up front. Configured (Azure) => persisted + Key-Vault-wrapped so it survives redeploys;
@@ -165,17 +165,4 @@ public static class PortalHost
         }
     }
 
-    // Development logs the code (LoggingEmailSender). Every other environment fails CLOSED with a sender that
-    // refuses to send — it must never silently succeed nor log a real code. A real provider replaces this later.
-    private static void AddEmailSender(WebApplicationBuilder builder)
-    {
-        if (builder.Environment.IsDevelopment())
-        {
-            builder.Services.AddSingleton<IEmailSender, LoggingEmailSender>();
-        }
-        else
-        {
-            builder.Services.AddSingleton<IEmailSender, UnconfiguredEmailSender>();
-        }
-    }
 }

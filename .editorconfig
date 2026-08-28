@@ -137,6 +137,14 @@ dotnet_diagnostic.RCS1194.severity = none
 dotnet_diagnostic.CA1032.severity = none
 dotnet_diagnostic.RCS1194.severity = none
 
+[src/Crawldad.Portal/Auth/EmailDeliveryException.cs]
+# EmailDeliveryException carries only a delivery-failure message (and, for a transport fault, the inner
+# HttpRequestException) — the two constructors PostmarkEmailSender actually throws. The parameterless constructor
+# CA1032 wants would only build a semantically-invalid instance, so turn those two "standard exception constructor"
+# rules off for this file only (mirrors NotLinkedException.cs / CrawldadExceptions.cs).
+dotnet_diagnostic.CA1032.severity = none
+dotnet_diagnostic.RCS1194.severity = none
+
 [src/Crawldad.Portal/Auth/**.cs]
 # Email addresses are stored case-folded to their canonical lower-invariant form (the account identity/key).
 # CA1308 prefers ToUpperInvariant for normalization, which is the wrong casing for an email key. Off here only.
