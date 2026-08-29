@@ -62,6 +62,45 @@ public class PortalConsoleAuthModuleTests
         provider.GetRequiredService<IConsoleTokenSource>().ShouldBeOfType<ManagedIdentityConsoleTokenSource>();
     }
 
+    // The container runs under a USER-ASSIGNED identity only; a parameterless ManagedIdentityCredential targets the
+    // system-assigned identity and ignores AZURE_CLIENT_ID, so the module must pass the client id explicitly when the
+    // env var is present. Both branches are pinned here (the suite runs serialized, so env-var toggling is safe).
+    [Fact]
+    public void With_azure_client_id_present_the_user_assigned_credential_branch_is_taken()
+    {
+        var previous = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        try
+        {
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", "99999999-8888-7777-6666-555555555555");
+            var services = Wire("11111111-2222-3333-4444-555555555555", "api://crawldad-api-stg");
+
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IConsoleTokenSource>().ShouldBeOfType<ManagedIdentityConsoleTokenSource>();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", previous);
+        }
+    }
+
+    [Fact]
+    public void Without_azure_client_id_the_parameterless_credential_branch_is_taken()
+    {
+        var previous = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        try
+        {
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", null);
+            var services = Wire("11111111-2222-3333-4444-555555555555", "api://crawldad-api-stg");
+
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IConsoleTokenSource>().ShouldBeOfType<ManagedIdentityConsoleTokenSource>();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", previous);
+        }
+    }
+
     [Fact]
     public void AddConsoleAuth_rejects_null_arguments()
     {

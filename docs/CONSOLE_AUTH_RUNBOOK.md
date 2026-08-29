@@ -29,10 +29,13 @@ until both values are set, the API's `ConsolePrincipal` scheme simply isn't regi
 ENV=stg                                   # stg | prod
 RG="rg-crawldad-${ENV}-cus"               # resource group (CAF: rg-crawldad-<env>-<regioncode>)
 APP_NAME="crawldad-api-${ENV}"            # the API App Registration display name
-APP_URI="api://crawldad-api-${ENV}"       # the App ID URI == the ConsolePrincipal token audience
 ROLE_VALUE="Console.Access"               # the AppRole value the portal UAMI must carry
 
 TENANT_ID="$(az account show --query tenantId -o tsv)"
+
+# Default tenant policy requires identifier URIs to embed a verified domain, the tenant ID, or the app ID
+# (bare api://<name> is rejected on newer tenants) — the tenant-ID form satisfies it and stays stable.
+APP_URI="api://${TENANT_ID}/crawldad-api-${ENV}"   # the App ID URI == the ConsolePrincipal token audience
 
 # The portal UAMI's service-principal (object) id — the principal that receives the AppRole. Read it straight from the
 # managed identity (or from the deploy outputs: properties.outputs.portalIdentityPrincipalId.value).
@@ -47,7 +50,9 @@ The AppRole needs a **stable GUID**. Generate it **once** and keep it (store it 
 re-runs must reuse the same GUID so the role identity is stable.
 
 ```bash
-ROLE_ID="$(uuidgen)"     # GENERATE ONCE per environment, then hard-code it for all future re-runs
+ROLE_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"   # GENERATE ONCE per environment (uuidgen also fine if installed)
+# Record it durably for re-runs — this repo's convention: gh variable set CONSOLE_AUTH_ROLE_ID --body "$ROLE_ID"
+# (staging's role id lives in the CONSOLE_AUTH_ROLE_ID repository variable.)
 
 cat > /tmp/console-approle.json <<JSON
 [
@@ -80,8 +85,9 @@ fi
 ```
 
 `allowedMemberTypes: ["Application"]` means only applications/managed identities — never users — can hold the role, so
-`roles: ["Console.Access"]` in a token is proof the caller is the portal UAMI. `api://…` identifier URIs need no domain
-verification (unlike `https://` URIs), so `api://crawldad-api-<env>` is accepted as-is.
+`roles: ["Console.Access"]` in a token is proof the caller is the portal UAMI. `api://…` identifier URIs need no DNS
+domain verification (unlike `https://` URIs), but the default tenant policy still requires them to embed the tenant ID
+or app ID — which is why `APP_URI` above uses the `api://<tenantId>/crawldad-api-<env>` form.
 
 ## Step 2 — Ensure the API's resource service principal exists, and require role assignment
 
@@ -130,7 +136,7 @@ Set these two as GitHub **environment variables** (repository → Settings → E
 **not** secrets: a directory GUID and a public App ID URI):
 
 - `CONSOLE_AUTH_TENANT_ID` = the tenant GUID above
-- `CONSOLE_AUTH_AUDIENCE` = `api://crawldad-api-<env>`
+- `CONSOLE_AUTH_AUDIENCE` = the `APP_URI` above (`api://<tenantId>/crawldad-api-<env>`)
 
 The deploy workflow exports them (`.github/workflows/deploy-staging.yml`), `infra/main.<env>.bicepparam` reads them with
 `readEnvironmentVariable`, and `app.bicep` wires the API container's `Crawldad__ConsoleAuth__*` env — at which point the
