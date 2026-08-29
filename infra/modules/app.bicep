@@ -352,6 +352,16 @@ var portalEnv = concat(
         { name: 'Crawldad__Portal__Email__FromAddress', value: portalEmailFromAddress }
         { name: 'Crawldad__Portal__Email__MessageStream', value: portalEmailMessageStream }
       ]
+    : [],
+  hasConsoleAuth
+    ? [
+        // Portal console-mode (issue #119 PR4): the SAME Crawldad:ConsoleAuth section the API's scheme binds —
+        // the portal acquires its Entra token (ManagedIdentityCredential via AZURE_CLIENT_ID above) for this
+        // audience and switches dashboard traffic to the console path. Without these the portal stays in
+        // stored-key mode even when the API scheme is registered.
+        { name: 'Crawldad__ConsoleAuth__TenantId', value: consoleAuthTenantId }
+        { name: 'Crawldad__ConsoleAuth__Audience', value: consoleAuthAudience }
+      ]
     : []
 )
 
