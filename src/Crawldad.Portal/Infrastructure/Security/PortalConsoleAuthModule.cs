@@ -37,9 +37,15 @@ public static class PortalConsoleAuthModule
         }
 
         // The portal's own managed identity mints the console token — no static secret. Construction is I/O-free (the token
-        // is acquired only on the first console request); the operator runbook binds AZURE_CLIENT_ID to the portal identity
-        // at activation. Tests replace this singleton with a fake token source.
-        services.AddSingleton<IConsoleTokenSource>(new ManagedIdentityConsoleTokenSource(new ManagedIdentityCredential(), audience));
+        // is acquired only on the first console request). The container runs under a USER-ASSIGNED identity only, and a
+        // parameterless ManagedIdentityCredential targets the system-assigned identity (it does not read AZURE_CLIENT_ID —
+        // only DefaultAzureCredential does), so the client id must be passed explicitly or acquisition fails at runtime.
+        // Tests replace this singleton with a fake token source.
+        var clientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        var credential = string.IsNullOrWhiteSpace(clientId)
+            ? new ManagedIdentityCredential()
+            : new ManagedIdentityCredential(clientId);
+        services.AddSingleton<IConsoleTokenSource>(new ManagedIdentityConsoleTokenSource(credential, audience));
         services.AddSingleton<ConsoleClientFactory>();
     }
 }

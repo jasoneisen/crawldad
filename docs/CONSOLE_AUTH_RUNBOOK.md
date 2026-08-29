@@ -85,8 +85,9 @@ fi
 ```
 
 `allowedMemberTypes: ["Application"]` means only applications/managed identities — never users — can hold the role, so
-`roles: ["Console.Access"]` in a token is proof the caller is the portal UAMI. `api://…` identifier URIs need no domain
-verification (unlike `https://` URIs), so `api://crawldad-api-<env>` is accepted as-is.
+`roles: ["Console.Access"]` in a token is proof the caller is the portal UAMI. `api://…` identifier URIs need no DNS
+domain verification (unlike `https://` URIs), but the default tenant policy still requires them to embed the tenant ID
+or app ID — which is why `APP_URI` above uses the `api://<tenantId>/crawldad-api-<env>` form.
 
 ## Step 2 — Ensure the API's resource service principal exists, and require role assignment
 
