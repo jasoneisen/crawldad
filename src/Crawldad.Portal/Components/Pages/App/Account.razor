@@ -710,15 +710,15 @@ else
     // field). Falls back to a generic label if the profile read hasn't landed, so the id is never leaked as a heading.
     private string WorkspaceName => string.IsNullOrEmpty(_profile?.DisplayName) ? "Your workspace" : _profile!.DisplayName;
 
-    // The number of workspaces the account can act as — the multi-workspace signal. Falls back to 1 when the list read
-    // failed but a workspace is resolved (single-workspace-first: default to hiding the switcher/team chrome).
-    private int WorkspaceCount => _workspaces.Count > 0 ? _workspaces.Count : (_hasWorkspace ? 1 : 0);
-
-    // Single-workspace-first gates. The switch list + the full member-management section appear only when there is more than
-    // one workspace / member; a solo Owner instead gets the understated invite entry (ShowSoloInvite).
+    // Single-workspace-first gates — all evaluated only in the resolved-workspace, membership-available markup branch, so
+    // they don't re-check _hasWorkspace / _membershipsUnavailable (the markup already guards those). WorkspaceCount is the
+    // multi-workspace signal; it falls back to 1 when the list read failed but a workspace is resolved (default to hiding the
+    // switcher/team chrome). The switch list + the full member-management section appear only when there is more than one
+    // workspace / member; a solo Owner instead gets the understated invite entry (ShowSoloInvite).
+    private int WorkspaceCount => _workspaces.Count > 0 ? _workspaces.Count : 1;
     private bool IsMultiWorkspace => WorkspaceCount > 1;
-    private bool ShowMembersSection => _hasWorkspace && !_membershipsUnavailable && (IsMultiWorkspace || ActiveMembers().Count > 1);
-    private bool ShowSoloInvite => _hasWorkspace && !_membershipsUnavailable && _isOwner && !ShowMembersSection;
+    private bool ShowMembersSection => IsMultiWorkspace || ActiveMembers().Count > 1;
+    private bool ShowSoloInvite => _isOwner && !ShowMembersSection;
 
     // The tier label, or a friendly default when the tenant has no configured tier. Called only where the profile is known
     // non-null (the header guard + the loaded-usage panel), so it takes the profile rather than reading a nullable.
