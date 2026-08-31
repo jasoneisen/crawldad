@@ -54,6 +54,20 @@ public class WorkspaceSwitchEndpointsTests
     }
 
     [Fact]
+    public async Task A_malformed_workspaces_body_is_treated_as_no_membership()
+    {
+        // A 2xx body missing its workspaces list (null Workspaces) must not crash — it is treated as "no membership", so the
+        // switch is silently ignored (nothing persisted).
+        var selections = new RecordingSelectionStore();
+        var tenant = Linked(new StubHttpMessageHandler(_ => ClientTestHarness.JsonRaw(HttpStatusCode.OK, "{}")));
+
+        var result = await WorkspaceSwitchEndpoints.SwitchAsync(Http(), Context(tenant), selections, "tenant-b");
+
+        (await RunAsync(result)).Location.ShouldBe(WorkspaceSwitchEndpoints.DashboardPath);
+        selections.Last.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task No_email_or_no_workspace_redirects_to_the_account_without_persisting()
     {
         var selections = new RecordingSelectionStore();

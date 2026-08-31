@@ -295,8 +295,7 @@ else
         var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
-            // unlinked, or an undecryptable key (rotated ring) => _timeline stays null and the not-linked empty state
-            // renders (the user re-links from Account).
+            // no active workspace / console unconfigured => _timeline stays null and the empty state renders (via Account).
             return;
         }
 

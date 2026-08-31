@@ -205,7 +205,7 @@ else
         var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
-            return; // unlinked, or an undecryptable key (rotated ring) => not-linked empty state (re-link from Account)
+            return; // no active workspace / console unconfigured => the empty state (points at Account)
         }
 
         var page = RunView.ParsePage(Page);

@@ -195,6 +195,23 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
+    public void A_malformed_workspaces_body_hides_the_switch_list_without_crashing()
+    {
+        // GET /workspaces returns a 2xx body missing its list (null Workspaces): it degrades to an empty list (no switcher),
+        // never a crash.
+        var handler = new StubHttpMessageHandler(req =>
+            req.Path.EndsWith("workspaces", StringComparison.Ordinal) ? ClientTestHarness.JsonRaw(System.Net.HttpStatusCode.OK, "{}")
+            : req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
+            : req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantMembershipList([]))
+            : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
+            : ClientTestHarness.Json(_profile));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed());
+
+        cut.FindAll("[data-testid=workspaces-list]").ShouldBeEmpty();
+        cut.Find("[data-testid=workspace-heading]").TextContent.ShouldContain("Alpha Co"); // the page still renders
+    }
+
+    [Fact]
     public void An_owner_of_a_team_sees_the_member_management_controls()
     {
         var memberships = new TenantMembershipList(
@@ -258,13 +275,29 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
-    public void A_member_action_error_is_surfaced_from_the_redirect()
+    public void A_member_action_error_is_surfaced_in_the_solo_invite_state()
     {
+        // A solo Owner (one member) — the understated invite card surfaces the redirect error.
         var memberships = new TenantMembershipList([new(Guid.NewGuid(), "owner@example.com", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
         var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships))), Authed(),
             query: "?memberError=A%20workspace%20must%20keep%20an%20Owner");
 
         cut.Find("[data-testid=members-action-error]").TextContent.ShouldContain("must keep an Owner");
+    }
+
+    [Fact]
+    public void A_member_action_error_is_surfaced_in_the_full_members_section()
+    {
+        // A team (more than one member) — the full member-management section surfaces the redirect error.
+        var memberships = new TenantMembershipList(
+        [
+            new(Guid.NewGuid(), "owner@example.com", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
+            new(Guid.NewGuid(), "teammate@example.com", MembershipRole.Member, DateTimeOffset.UnixEpoch, null, true),
+        ]);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships))), Authed(),
+            query: "?memberError=That%20didn%27t%20work");
+
+        cut.Find("[data-testid=members-action-error]").TextContent.ShouldContain("didn't work");
     }
 
     // ---- claim-an-existing-workspace form -------------------------------------------------------------------------

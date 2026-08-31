@@ -397,7 +397,7 @@ else if (_loaded)
         var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
-            _notLinked = true; // unlinked, or an undecryptable key (rotated ring) — re-link from Account
+            _notLinked = true; // no active workspace / console unconfigured — the empty state points at Account
             return;
         }
 
