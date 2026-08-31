@@ -58,8 +58,8 @@ public class ProvisioningEndpointTests
 
         status.ShouldBe(StatusCodes.Status201Created);
         var created = store.LastTenant.ShouldNotBeNull();
-        created.Id.ShouldStartWith("t-");
-        Guid.TryParse(created.Id["t-".Length..], out _).ShouldBeTrue();   // API-assigned GUID id
+        created.Id.ShouldNotStartWith("t-");
+        Guid.TryParse(created.Id, out _).ShouldBeTrue();                  // API-assigned BARE GUID id (opaque, no prefix)
         created.Tier.ShouldBe(ProvisioningEndpoint.FreeTier);
         created.SlotAllowance.ShouldBe(ProvisioningEndpoint.FreeSlotAllowance);
         created.Actor.ShouldBe(_email);

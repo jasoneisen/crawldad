@@ -11,7 +11,28 @@ public class TenantRulesTests
     [InlineData("acme-corp")]
     [InlineData("t1")]
     [InlineData("a0b1c2")]
+    [InlineData("t-11111111-2222-3333-4444-555555555555")] // a legacy 't-'-prefixed provisioned id stays valid (opaque, no migration)
+    [InlineData("6f9c1e2a-3b4d-4e6f-8a8b-9c0d1e2f3a4b")]   // a BARE-GUID provisioned id (issue #119 simplification) is a valid slug
     public void Accepts_a_valid_id_slug(string id) => TenantRules.IsValidId(id).ShouldBeTrue();
+
+    // Reverse-parse safety (issue #119): the provisioning endpoint now assigns BARE GUIDs (no 't-' prefix). A freshly
+    // minted bare GUID is always a valid tenant id — it is a lowercase-hex-plus-hyphen string within the slug bound — so it
+    // flows through the same slug-validated surface (Marten partition key, Secrets:{tenant}:{ref} namespace, workspace
+    // selector) as an operator-chosen id. Nothing anywhere branches on a GUID SHAPE; the id is opaque either way.
+    [Fact]
+    public void Accepts_a_freshly_minted_bare_guid_as_a_tenant_id()
+    {
+        for (var i = 0; i < 64; i++)
+        {
+            TenantRules.IsValidId(Guid.NewGuid().ToString()).ShouldBeTrue();
+        }
+    }
+
+    // The free-provision rate-limit sentinel starts with '~', which the slug rejects — so it can never collide with a real
+    // (bare-GUID or 't-') tenant id's console-write partition for the same email.
+    [Fact]
+    public void Rejects_the_free_provision_rate_limit_sentinel() =>
+        TenantRules.IsValidId("~free-provision").ShouldBeFalse();
 
     [Theory]
     [InlineData(null)]
