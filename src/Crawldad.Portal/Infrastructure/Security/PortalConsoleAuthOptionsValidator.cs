@@ -15,7 +15,7 @@ public sealed class PortalConsoleAuthOptionsValidator : IValidateOptions<PortalC
         var hasTenant = !string.IsNullOrWhiteSpace(options.TenantId);
         var hasAudience = !string.IsNullOrWhiteSpace(options.Audience);
 
-        // Disabled (neither set) is valid — console-mode is never wired and the stored-key path is unchanged.
+        // Disabled (neither set) is valid — console-mode is never wired and data pages show "console access not configured".
         if (!hasTenant && !hasAudience)
         {
             return ValidateOptionsResult.Success;

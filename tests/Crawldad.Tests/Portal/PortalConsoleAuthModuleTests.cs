@@ -6,10 +6,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>The portal's console-mode wiring (issue #119 PR4): with no <c>Crawldad:ConsoleAuth</c> config nothing but the
-/// options + guard is registered (the byte-identical stored-key path stands); with both knobs set the managed-identity
-/// token source and the console client factory are registered. The token-source construction is I/O-free, so the Azure
-/// branch is covered hermetically (no live identity), exactly like the Data-Protection module.</summary>
+/// <summary>The portal's console-mode wiring (issue #119): with no <c>Crawldad:ConsoleAuth</c> config nothing but the
+/// options + guard is registered (data pages then show "console access not configured"); with both knobs set the
+/// managed-identity token source and the console client factory are registered. The token-source construction is I/O-free, so
+/// the Azure branch is covered hermetically (no live identity), exactly like the Data-Protection module.</summary>
 public class PortalConsoleAuthModuleTests
 {
     private static ServiceCollection Wire(string? tenantId, string? audience)

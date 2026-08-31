@@ -50,6 +50,19 @@ public class WebhooksPageTests : BunitContext
     }
 
     [Fact]
+    public void A_forbidden_read_shows_the_workspace_unavailable_state_not_a_500()
+    {
+        // A stale/suspended active-workspace selection: the console gate 403s the list read. Degrade to the honest
+        // "unavailable" state pointing at Account — never a 500.
+        Use(PayloadsWebhooksTenantContext.LinkedTo(new StubHttpMessageHandler(_ => ClientTestHarness.Empty(System.Net.HttpStatusCode.Forbidden))));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-testid=workspace-unavailable]").ShouldNotBeNull();
+        cut.Find("a[href=\"/app/account\"]").ShouldNotBeNull();
+    }
+
+    [Fact]
     public void Empty_list_shows_the_no_endpoints_note_and_the_register_form()
     {
         Use(PayloadsWebhooksTenantContext.LinkedTo(Handler([])));

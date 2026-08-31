@@ -9,7 +9,7 @@ namespace Crawldad.Portal.Infrastructure.Security;
 /// <summary>The portal's console-mode wiring (issue #119 PR4). Registers the console-auth options + boot guard always, and
 /// — only when <c>Crawldad:ConsoleAuth</c> is fully configured — the managed-identity token source and the
 /// <see cref="ConsoleClientFactory"/> that builds console-mode API clients. Absent config, neither is registered, so
-/// <see cref="PortalTenantContext"/> falls to its byte-identical stored-key path and dev/tests are untouched. Mirrors the
+/// <see cref="PortalTenantContext"/> resolves its honest "console access not configured" state for data pages. Mirrors the
 /// email / Data-Protection modules' config-gating idiom (read the section directly at registration time; a half-set pair is
 /// rejected by the boot validator). Dev/CI never uses the real credential — a fake token source is injected in tests.</summary>
 public static class PortalConsoleAuthModule
@@ -33,7 +33,7 @@ public static class PortalConsoleAuthModule
         var audience = configuration[$"{PortalConsoleAuthOptions.Section}:Audience"];
         if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(audience))
         {
-            return; // no config → console-mode off → the stored-key path is byte-identical; a half-set pair fails at boot
+            return; // no config → console-mode off → data pages show "console access not configured"; a half-set pair fails at boot
         }
 
         // The portal's own managed identity mints the console token — no static secret. Construction is I/O-free (the token

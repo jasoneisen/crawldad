@@ -1,6 +1,7 @@
 @page "/app/runs"
 @layout AppLayout
 @attribute [Authorize]
+@using Crawldad.Client
 @using Crawldad.Contracts.Runs
 @using Crawldad.Portal.Runs
 @using Crawldad.Portal.Tenancy
@@ -19,7 +20,7 @@
 @if (_result is null)
 {
     <div class="card mt-3">
-        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 else
@@ -188,8 +189,10 @@ else
     private int? _size;
     private bool _filtered;
 
-    // Null once resolved => the account is not linked to a tenant (the not-linked empty state); otherwise the page.
+    // Null once resolved => no usable workspace (the empty state); otherwise the page. _workspaceUnavailable distinguishes a
+    // resolved-but-forbidden workspace (a stale/suspended selection → 403) so the empty state points the user at Account.
     private RunListResponse? _result;
+    private bool _workspaceUnavailable;
     private int _firstRow;
     private int _lastRow;
 
@@ -209,7 +212,19 @@ else
         }
 
         var page = RunView.ParsePage(Page);
-        _result = await tenant.Client.ListRunsAsync(_status, _payloadId, from, to, page, _size);
+        try
+        {
+            _result = await tenant.Client.ListRunsAsync(_status, _payloadId, from, to, page, _size);
+        }
+        catch (CrawldadException)
+        {
+            // The active workspace can't be read — dominantly a stale/suspended selection the console gate 403s (also the
+            // switcher's own GET /workspaces source), else a transient API error. Degrade to the honest "unavailable" state
+            // that points at Account (where re-select/claim live) — never a 500.
+            _workspaceUnavailable = true;
+            return;
+        }
+
         _firstRow = ((_result.Page - 1) * _result.Size) + 1;
         _lastRow = _firstRow + _result.Runs.Count - 1;
     }

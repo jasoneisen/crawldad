@@ -42,7 +42,7 @@ public static class DataProtectionModule
         var builder = services.AddDataProtection();
 
         // Pin the discriminator unconditionally (the local-default AND Azure-persisted rings), so a WORKDIR/content-root
-        // change never silently shifts it and breaks Unprotect on an existing cookie or stored key. This is also the
+        // change never silently shifts it and breaks Unprotect on an existing cookie / antiforgery token. This is also the
         // cryptographic isolation boundary from the API (see ApplicationName): its "crawldad" and the portal's
         // "crawldad-portal" derive different keys from the same material.
         builder.SetApplicationName(ApplicationName);

@@ -33,7 +33,7 @@
 @if (_notLinked)
 {
     <div class="card mt-3">
-        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 else if (_payloads.Count == 0)
@@ -101,6 +101,7 @@ else
 
 @code {
     private bool _notLinked;
+    private bool _workspaceUnavailable; // resolved-but-forbidden workspace (stale/suspended selection → 403) → Account escape
     private IReadOnlyList<PayloadRow> _payloads = [];
 
     protected override async Task OnInitializedAsync()
@@ -112,7 +113,20 @@ else
             return;
         }
 
-        var list = await tenant.Client.ListPayloadsAsync();
+        PayloadListResponse list;
+        try
+        {
+            list = await tenant.Client.ListPayloadsAsync();
+        }
+        catch (CrawldadException)
+        {
+            // The active workspace can't be read — dominantly a stale/suspended selection the console gate 403s, else a
+            // transient API error. Degrade to the honest "unavailable" state (points at Account) — never a 500.
+            _notLinked = true;
+            _workspaceUnavailable = true;
+            return;
+        }
+
         _payloads = await Task.WhenAll(list.Payloads.Select(item => LoadRowAsync(tenant.Client, item)));
     }
 

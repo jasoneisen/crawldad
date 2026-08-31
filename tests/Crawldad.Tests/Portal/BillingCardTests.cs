@@ -73,7 +73,7 @@ public class BillingCardTests : BunitContext
     [Fact]
     public void The_billing_card_shows_not_available_when_the_config_call_fails()
     {
-        // The /billing/config call errors (a stored key the API now rejects) → the card degrades, never crashes.
+        // The /billing/config call errors (the API returns 503) → the card degrades, never crashes.
         var cut = Render(Linked(Api(billing: null)));
 
         cut.Find("[data-testid=billing-unavailable]").ShouldNotBeNull();

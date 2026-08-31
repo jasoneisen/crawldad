@@ -14,8 +14,8 @@ public enum PortalProvisionOutcome
     /// selected it, so the account still lands on its workspace.</summary>
     AlreadyProvisioned,
 
-    /// <summary>Self-serve provisioning is not available on this deployment (stored-key mode — no console identity to create
-    /// a workspace with). Nothing was created.</summary>
+    /// <summary>Self-serve provisioning is not available on this deployment (console access unconfigured — no first-party
+    /// console identity to create a workspace with). Nothing was created.</summary>
     Unavailable,
 
     /// <summary>The provision could not be completed (the API was unreachable, rate-limited, or rejected the request).
@@ -67,8 +67,8 @@ internal sealed class PortalProvisioningService : IPortalProvisioningService
 
         if (_consoleClients is null)
         {
-            // Stored-key mode: no first-party console identity, so there is nothing to create a workspace as. The Account
-            // affordance is hidden in this mode, so this is only reachable by a crafted POST — reported honestly, never a 500.
+            // Console access unconfigured: no first-party console identity, so there is nothing to create a workspace as. The
+            // Account affordance is hidden in this mode, so this is only reachable by a crafted POST — reported honestly, never a 500.
             return new PortalProvisionResult(
                 PortalProvisionOutcome.Unavailable,
                 null,

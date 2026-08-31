@@ -27,7 +27,7 @@
 @if (_notLinked)
 {
     <div class="card mt-3">
-        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 else
@@ -244,6 +244,7 @@ else
     public DeleteWebhookInput Removal { get; set; } = default!;
 
     private bool _notLinked;
+    private bool _workspaceUnavailable; // resolved-but-forbidden workspace (stale/suspended selection → 403) → Account escape
     private IReadOnlyList<WebhookSummary> _webhooks = [];
     private string? _selectedEndpoint;
     private IReadOnlyList<WebhookDeliveryItem>? _deliveries;
@@ -264,7 +265,18 @@ else
             return;
         }
 
-        _webhooks = (await tenant.Client.ListWebhooksAsync()).Webhooks;
+        try
+        {
+            _webhooks = (await tenant.Client.ListWebhooksAsync()).Webhooks;
+        }
+        catch (CrawldadException)
+        {
+            // The active workspace can't be read — dominantly a stale/suspended selection the console gate 403s, else a
+            // transient API error. Degrade to the honest "unavailable" state (points at Account) — never a 500.
+            _notLinked = true;
+            _workspaceUnavailable = true;
+            return;
+        }
 
         // Default the deliveries panel to the first endpoint; ?endpoint=name overrides. A selected name we don't know
         // is surfaced as "no such endpoint" rather than a failed read.

@@ -271,7 +271,7 @@ else
 {
     @* No tenant resolved (no active workspace / unconfigured console), or still loading on the first render pass. *@
     <div class="card mt-3">
-        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 
@@ -284,6 +284,7 @@ else
     public ReplayRunInput ReplayForm { get; set; } = default!;
 
     private bool _notFound;
+    private bool _workspaceUnavailable; // resolved-but-forbidden workspace (stale/suspended selection → 403) → Account escape
     private RunTimelineResponse? _timeline;
     private RunDriftResponse? _drift;
     private string? _replayError;
@@ -306,6 +307,13 @@ else
         catch (CrawldadNotFoundException)
         {
             _notFound = true;
+            return;
+        }
+        catch (CrawldadException)
+        {
+            // Any non-404 read failure — dominantly a stale/suspended selection the console gate 403s, else a transient API
+            // error. Degrade to the honest "unavailable" state (points at Account) — never a 500.
+            _workspaceUnavailable = true;
             return;
         }
 

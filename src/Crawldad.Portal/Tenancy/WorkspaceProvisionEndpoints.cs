@@ -9,7 +9,7 @@ namespace Crawldad.Portal.Tenancy;
 /// SSR, antiforgery-protected, the same POST-then-redirect shape as the switcher / sign-out), it provisions the signed-in
 /// account's one free workspace through <see cref="IPortalProvisioningService"/>, and redirects — to the dashboard (now scoped
 /// to the new workspace) on success, or back to the account with a safe error message otherwise. The service is console-mode
-/// only; in stored-key mode the affordance is never rendered, so a crafted post degrades to a clean "unavailable" error.</summary>
+/// only; when console access is unconfigured the affordance is never rendered, so a crafted post degrades to a clean "unavailable" error.</summary>
 internal static class WorkspaceProvisionEndpoints
 {
     /// <summary>Where a successful provision lands — the dashboard, scoped to the newly created/active workspace.</summary>

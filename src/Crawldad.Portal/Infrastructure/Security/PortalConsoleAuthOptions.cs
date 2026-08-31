@@ -1,12 +1,12 @@
 namespace Crawldad.Portal.Infrastructure.Security;
 
-/// <summary>The portal's console-auth knobs, bound from <c>Crawldad:ConsoleAuth</c> (issue #119 PR4) — the portal side of
-/// the same section the API reads. When configured, the portal acquires its first-party managed-identity token for
-/// <see cref="Audience"/> (the API's App ID URI) and its dashboard READ pages call the API through the console credential
-/// (with the stored key as fallback) instead of the stored key alone. Both empty (the default) ⇒ console-mode off and the
-/// portal's stored-key behaviour is byte-for-byte unchanged. Config-gated exactly like the email / Data-Protection modules;
-/// half-configured fails fast at boot (<see cref="PortalConsoleAuthOptionsValidator"/>). Carries no secret — the token is
-/// acquired from the platform managed identity, never a static credential.</summary>
+/// <summary>The portal's console-auth knobs, bound from <c>Crawldad:ConsoleAuth</c> (issue #119) — the portal side of the
+/// same section the API reads. When configured, the portal acquires its first-party managed-identity token for
+/// <see cref="Audience"/> (the API's App ID URI) and calls the API exclusively through that console credential (the portal is
+/// console-mode only for data; there is no stored tenant key). Both empty (the default) ⇒ console-mode off and the portal
+/// shows an honest "console access not configured" state on data pages. Config-gated exactly like the email / Data-Protection
+/// modules; half-configured fails fast at boot (<see cref="PortalConsoleAuthOptionsValidator"/>). Carries no secret — the
+/// token is acquired from the platform managed identity, never a static credential.</summary>
 public sealed class PortalConsoleAuthOptions
 {
     /// <summary>The configuration section these bind from — the portal side of the API's <c>Crawldad:ConsoleAuth</c>.</summary>

@@ -40,6 +40,19 @@ public class PayloadsPageTests : BunitContext
     }
 
     [Fact]
+    public void A_forbidden_read_shows_the_workspace_unavailable_state_not_a_500()
+    {
+        // A stale/suspended active-workspace selection: the console gate 403s the list read. Degrade to the honest
+        // "unavailable" state pointing at Account — never a 500.
+        Use(PayloadsWebhooksTenantContext.LinkedTo(new StubHttpMessageHandler(_ => ClientTestHarness.Empty(System.Net.HttpStatusCode.Forbidden))));
+
+        var cut = Render<Payloads>();
+
+        cut.Find("[data-testid=workspace-unavailable]").ShouldNotBeNull();
+        cut.Find("a[href=\"/app/account\"]").ShouldNotBeNull();
+    }
+
+    [Fact]
     public void Linked_but_empty_registry_shows_the_no_payloads_state()
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new PayloadListResponse([])));

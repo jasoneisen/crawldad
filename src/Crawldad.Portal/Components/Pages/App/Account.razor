@@ -117,7 +117,13 @@
 
             <dt>Workspace</dt>
             <dd>
-                @if (_hasWorkspace)
+                @if (_workspaceUnavailable)
+                {
+                    <span class="status status-yellow" data-testid="link-status">
+                        <span class="status-dot"></span>Workspace unavailable
+                    </span>
+                }
+                else if (_hasWorkspace)
                 {
                     <span class="status status-green" data-testid="link-status">
                         <span class="status-dot"></span>@WorkspaceName
@@ -141,7 +147,7 @@
                 }
             </dd>
 
-            @if (_hasWorkspace)
+            @if (_hasWorkspace && !_workspaceUnavailable)
             {
                 @* The ONE place the raw workspace id is surfaced — for API/SDK/CLI use. Copyable; never the identity. *@
                 <dt>Workspace ID</dt>
@@ -181,6 +187,22 @@
                     can't be shown here. Contact your operator.
                 </p>
             </div>
+        </div>
+    </div>
+}
+else if (_workspaceUnavailable)
+{
+    <!-- The active workspace is forbidden by the console gate (the user was removed, or an operator suspended it). Every
+         console read — including GET /workspaces — 403s under this selector, so there is no in-page switch to offer: give an
+         honest escape (contact the operator, or claim a workspace the user still holds a key for). Never a 500. -->
+    <div class="card mt-3" id="workspace-unavailable" data-testid="workspace-unavailable">
+        <div class="card-header"><h3 class="card-title">Workspace unavailable</h3></div>
+        <div class="card-body">
+            <p class="text-secondary">
+                Your active workspace can't be reached — you may have been removed from it, or an operator suspended it.
+                Contact your operator to restore access, or claim a workspace you still have an API key for below.
+            </p>
+            @ClaimDisclosure
         </div>
     </div>
 }
@@ -678,6 +700,7 @@ else
 
     private bool _configured;          // console access configured on this deployment (Crawldad:ConsoleAuth)
     private bool _hasWorkspace;        // an active workspace resolved for this account
+    private bool _workspaceUnavailable; // resolved a selection, but the console gate 403s it (removed/suspended) → the escape
     private string? _tenantId;         // the active workspace id — surfaced ONCE, in the copyable field
     private PortalTenant? _tenant;     // the resolved workspace client
     private TenantProfileResponse? _profile;
@@ -785,6 +808,14 @@ else
         {
             _profile = await tenant.Client.GetTenantAsync(HttpContext.RequestAborted);
             _usage = await tenant.Client.GetUsageAsync(HttpContext.RequestAborted);
+        }
+        catch (CrawldadException ex) when (ex.StatusCode == StatusCodes.Status403Forbidden)
+        {
+            // A stale/suspended active-workspace selection: the console gate 403s every read (including GET /workspaces, so
+            // there is no in-page switch to offer). Show the honest "workspace unavailable" escape instead of a broken
+            // has-workspace layout, and skip the rest — they would all 403 too. Never a 500.
+            _workspaceUnavailable = true;
+            return;
         }
         catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
         {

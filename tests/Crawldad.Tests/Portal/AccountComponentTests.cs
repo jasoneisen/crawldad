@@ -98,6 +98,22 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
+    public void A_forbidden_workspace_shows_the_unavailable_escape_not_a_broken_layout()
+    {
+        // A stale/suspended active-workspace selection: the console gate 403s GET /tenant (and GET /workspaces, so there is
+        // no in-page switch). Account survives and shows the honest "workspace unavailable" escape — the profile status, plus
+        // a claim form to re-establish access — never a 500, never a broken has-workspace layout.
+        var handler = ClientTestHarness.Always(() => ClientTestHarness.Empty(System.Net.HttpStatusCode.Forbidden));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed());
+
+        cut.Find("[data-testid=workspace-unavailable]").ShouldNotBeNull();       // the escape card
+        cut.Find("[data-testid=link-status]").TextContent.ShouldContain("Workspace unavailable");
+        cut.Find("#link-form").ShouldNotBeNull();                                // the claim form is the escape
+        cut.FindAll("[data-testid=usage-panel]").ShouldBeEmpty();                // no broken has-workspace layout
+        cut.FindAll("[data-testid=workspace-id]").ShouldBeEmpty();               // the stale id is not surfaced
+    }
+
+    [Fact]
     public void Zero_allowances_and_a_long_wait_render_without_dividing_by_zero()
     {
         var profile = new TenantProfileResponse("tenant-zero", "Zero Co", Tier: null, 0, 0);

@@ -35,7 +35,7 @@
 @if (_notLinked)
 {
     <div class="card mt-3">
-        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 else if (_notFound)
@@ -375,6 +375,7 @@ else if (_loaded)
 
     private bool _notLinked;
     private bool _notFound;
+    private bool _workspaceUnavailable; // resolved-but-forbidden workspace (stale/suspended selection → 403) → Account escape
     private bool _loaded;
     private Guid _payloadGuid;
     private PayloadResponse? _payload;
@@ -414,6 +415,14 @@ else if (_loaded)
         catch (CrawldadNotFoundException)
         {
             _notFound = true;
+            return;
+        }
+        catch (CrawldadException)
+        {
+            // Any non-404 read failure — dominantly a stale/suspended selection the console gate 403s, else a transient API
+            // error. Degrade to the honest "unavailable" state (points at Account) — never a 500.
+            _notLinked = true;
+            _workspaceUnavailable = true;
             return;
         }
 

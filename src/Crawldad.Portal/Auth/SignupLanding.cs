@@ -14,8 +14,8 @@ internal interface ISignupLanding
     /// auth service, and proven controlled by the just-verified OTP). A <b>returning</b> account (already linked to a
     /// workspace) → the open-redirect-guarded <paramref name="returnUrl"/>, byte-identical to <c>/login</c>; a
     /// <b>zero-workspace</b> account → its one free-workspace provision, landing on the first-run dashboard on success, on the
-    /// account page in stored-key mode (nothing to provision with — honest), or on the account page carrying a safe error on a
-    /// transient failure.</summary>
+    /// account page when console access is unconfigured (nothing to provision with — honest), or on the account page carrying a
+    /// safe error on a transient failure.</summary>
     Task<string> ResolveAsync(string verifiedEmail, string? returnUrl, CancellationToken cancellationToken);
 }
 

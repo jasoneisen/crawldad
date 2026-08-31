@@ -69,6 +69,20 @@ public class RunDetailPageTests : BunitContext
     }
 
     [Fact]
+    public void A_forbidden_read_shows_the_workspace_unavailable_state_not_a_500()
+    {
+        // A stale/suspended active-workspace selection: the console gate 403s the timeline read (a non-404 failure). Degrade
+        // to the honest "unavailable" state pointing at Account — never a 500.
+        var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Empty(HttpStatusCode.Forbidden));
+        Services.AddSingleton<IPortalTenantContext>(new FakePortalTenantContext(PortalRunsTestSupport.TenantOver(handler)));
+
+        var cut = RenderDetail();
+
+        cut.Find("[data-testid=workspace-unavailable]").ShouldNotBeNull();
+        cut.Find("a[href=\"/app/account\"]").ShouldNotBeNull();
+    }
+
+    [Fact]
     public void Unknown_run_shows_the_not_found_empty_state()
     {
         LinkedButUnknownRun();
