@@ -36,7 +36,7 @@ public class PayloadDetailPageTests : BunitContext
     {
         Use(PayloadsWebhooksTenantContext.NotLinked());
 
-        RenderDetail().Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace linked");
+        RenderDetail().Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace yet");
     }
 
     [Fact]

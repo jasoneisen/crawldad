@@ -2,19 +2,19 @@ using System.Net;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>End-to-end public-signup flow over real HTTP (issue #119 PR8): the SAME antiforgery-guarded, enumeration-safe
-/// two-step OTP the login flow uses, posted to <c>/signup</c>, plus the post-verification landing. The shared test host is
-/// unconfigured for console auth, so it exercises the honest STORED-KEY behaviour: signup signs the account in but cannot
-/// provision, so it lands on the account page's attach-a-workspace state (never a 500, never a hidden dead button). The
-/// console-mode provisioning landing is covered by <see cref="SignupLandingTests"/>; login stays byte-identical (its suites
-/// are untouched).</summary>
+/// <summary>End-to-end public-signup flow over real HTTP (issue #119): the SAME antiforgery-guarded, enumeration-safe
+/// two-step OTP the login flow uses, posted to <c>/signup</c>, plus the post-verification landing. The shared test host runs
+/// in console-mode (fake token source) but has no live API, so a zero-workspace signup provisions, the provision fails
+/// against the unreachable API, and it lands on the account page's get-started state carrying a safe error (never a 500,
+/// never a hidden dead button). The happy-path provisioning landing is covered by <see cref="SignupLandingTests"/> over a
+/// stub API; login stays byte-identical (its suites are untouched).</summary>
 [Collection(PortalCollection.Name)]
 public class SignupFlowTests(PortalFixture fixture)
 {
     private static string NewEmail() => $"signup-{Guid.NewGuid():N}@example.com";
 
     [Fact]
-    public async Task Signup_signs_in_and_lands_on_the_account_attach_state_in_stored_key_mode()
+    public async Task Signup_signs_in_provisions_and_a_failure_lands_on_the_account_get_started_state()
     {
         var email = NewEmail();
         using var client = fixture.NewClient();
@@ -27,16 +27,19 @@ public class SignupFlowTests(PortalFixture fixture)
         var verifyToken = PortalHttp.ExtractAntiforgeryToken(await requestResp.Content.ReadAsStringAsync());
         var verifyResp = await client.PostAsync(PortalHttp.Rel("/signup"), PortalHttp.SignupForm(verifyToken, email, "verify", code));
 
-        // Verified → signed in → stored-key mode can't provision → the honest account-page landing.
+        // Verified → signed in → console-mode provisions, but the test host has no live API, so the provision fails and the
+        // signup lands on the account page's get-started state carrying a safe error (never a 500).
         verifyResp.StatusCode.ShouldBe(HttpStatusCode.Redirect);
-        verifyResp.Headers.Location!.OriginalString.ShouldEndWith("/app/account");
+        var location = verifyResp.Headers.Location!;
+        location.OriginalString.ShouldContain("/app/account");
+        location.OriginalString.ShouldContain("provisionError");
 
-        var accountResp = await client.GetAsync(PortalHttp.Rel("/app/account"));
+        var accountResp = await client.GetAsync(location);
         accountResp.StatusCode.ShouldBe(HttpStatusCode.OK);
         var html = await accountResp.Content.ReadAsStringAsync();
-        html.ShouldContain(email);                                    // the account is genuinely signed in
-        html.ShouldContain("Attach a workspace below to get started"); // the operator-provisioned reality (the attach form path)
-        html.ShouldNotContain("data-testid=\"provision-form\"");        // no self-serve provision affordance in stored-key mode
+        html.ShouldContain(email);                                // the account is genuinely signed in
+        html.ShouldContain("data-testid=\"provision-form\"");      // console-mode shows the self-serve create affordance
+        html.ShouldContain("data-testid=\"provision-error\"");     // the safe provision-failure message is surfaced
     }
 
     [Fact]
@@ -94,10 +97,13 @@ public class SignupFlowTests(PortalFixture fixture)
         var verifyResp = await client.PostAsync(PortalHttp.Rel("/signup"),
             PortalHttp.SignupForm(verifyToken, email, "verify", code, returnUrl: "/app/payloads"));
 
-        // Stored-key mode still can't provision, so a zero-workspace account lands on the account page regardless of the
-        // return url (the return url is honoured only for a returning, already-linked account — see SignupLandingTests).
+        // A zero-workspace account is provisioned rather than honouring the return url; the test host has no live API, so the
+        // provision fails and it lands on the account page — never /app/payloads. The return url is honoured only for a
+        // returning, already-active account (see SignupLandingTests).
         verifyResp.StatusCode.ShouldBe(HttpStatusCode.Redirect);
-        verifyResp.Headers.Location!.OriginalString.ShouldEndWith("/app/account");
+        var location = verifyResp.Headers.Location!.OriginalString;
+        location.ShouldContain("/app/account");
+        location.ShouldNotContain("/app/payloads");
     }
 
     [Fact]

@@ -14,9 +14,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Crawldad.Tests.Portal;
 
 /// <summary>bUnit rendering of the account page's <b>API keys</b> section (fake tenant context + stub SDK handler): the
-/// not-linked / operator-managed / error states, the key list with status badges and row actions, the show-once mint and
-/// rotate (never persisted, the session-key rotation re-links the portal), and the revoke confirm + refusal surfacing.
-/// All keys here are synthetic test values.</summary>
+/// operator-managed / error / empty states, the key list with status badges and row actions, the show-once mint and rotate
+/// (never persisted; the portal authenticates via console, so a key mint/rotate never affects the session), and the revoke
+/// confirm + last-key note + refusal surfacing. All keys here are synthetic test values. The keys card renders only for a
+/// resolved workspace — a zero-workspace account shows the get-started state (covered by <see cref="AccountComponentTests"/>).</summary>
 public class AccountKeysComponentTests : BunitContext
 {
     private static readonly TenantProfileResponse _profile = new("tenant-alpha", "alpha@crawldad.test", "Team", 5, 100);
@@ -28,15 +29,6 @@ public class AccountKeysComponentTests : BunitContext
     private NavigationManager Nav => Services.GetRequiredService<NavigationManager>();
 
     // ---- states --------------------------------------------------------------------------------------------------
-
-    [Fact]
-    public void Not_linked_shows_the_manage_keys_empty_state()
-    {
-        var cut = RenderPage(new FakeTenantContext(tenant: null));
-
-        cut.Find("[data-testid=keys-unlinked]").ShouldNotBeNull();
-        cut.FindAll("[data-testid=mint-form]").ShouldBeEmpty();
-    }
 
     [Fact]
     public void An_env_tenant_sees_the_operator_managed_note()
@@ -70,19 +62,20 @@ public class AccountKeysComponentTests : BunitContext
     [Fact]
     public void The_key_list_renders_status_badges_and_row_actions()
     {
-        var current = Key(Guid.NewGuid(), "ck_test_CUR", "portal", active: true, current: true, lastUsed: DateTimeOffset.UnixEpoch);
-        var other = Key(Guid.NewGuid(), "ck_test_OTH", label: null, active: true, current: false);
-        var revoked = Key(Guid.NewGuid(), "ck_test_REV", "old-ci", active: false, current: false);
-        var cut = RenderLinked(Api(_ => ClientTestHarness.Json(new TenantApiKeyList([current, other, revoked]))));
+        // The portal authenticates via console, never a tenant key, so no key is ever the "session" key: every active key
+        // renders the same Active badge and offers both rotate and revoke (the API enforces the last-key rule on submit).
+        var first = Key(Guid.NewGuid(), "ck_test_ONE", "portal", active: true, lastUsed: DateTimeOffset.UnixEpoch);
+        var other = Key(Guid.NewGuid(), "ck_test_OTH", label: null, active: true);
+        var revoked = Key(Guid.NewGuid(), "ck_test_REV", "old-ci", active: false);
+        var cut = RenderLinked(Api(_ => ClientTestHarness.Json(new TenantApiKeyList([first, other, revoked]))));
 
         cut.FindAll("[data-testid=key-row]").Count.ShouldBe(3);
-        cut.FindAll("[data-testid=key-status-current]").Count.ShouldBe(1);
-        cut.FindAll("[data-testid=key-status-active]").Count.ShouldBe(1);
+        cut.FindAll("[data-testid=key-status-active]").Count.ShouldBe(2);
         cut.FindAll("[data-testid=key-status-revoked]").Count.ShouldBe(1);
 
-        // Rotate is offered for both active keys; revoke only for the active NON-current key (never the session key).
+        // Rotate and revoke are both offered for every active key.
         cut.FindAll("[data-testid=rotate-link]").Count.ShouldBe(2);
-        cut.FindAll("[data-testid=revoke-link]").Count.ShouldBe(1);
+        cut.FindAll("[data-testid=revoke-link]").Count.ShouldBe(2);
     }
 
     // ---- mint (show once) ----------------------------------------------------------------------------------------
@@ -151,27 +144,6 @@ public class AccountKeysComponentTests : BunitContext
         cut.Find("[data-testid=minted-key-value]").GetAttribute("value").ShouldBe("ck_test_NEW_secret");
         cut.Markup.ShouldContain("(ci)"); // the replacement carries the label
         linker.Calls.ShouldBeEmpty();      // a non-session key rotation doesn't touch the stored portal key
-    }
-
-    [Fact]
-    public void Rotating_the_session_key_relinks_the_portal_and_prompts_a_refresh()
-    {
-        var session = Key(Guid.NewGuid(), "ck_test_CUR", "portal", active: true, current: true);
-        var linker = new FakeLinker();
-        var cut = RenderLinked(
-            Api(req => req.Method == HttpMethod.Post
-                ? ClientTestHarness.Json(new TenantApiKeyCreated(Guid.NewGuid(), "ck_test_NEW", "portal", "ck_test_NEW_secret", DateTimeOffset.UnixEpoch), HttpStatusCode.Created)
-                : ClientTestHarness.Json(new TenantApiKeyList([session]))),
-            query: $"?rotate={session.KeyId}",
-            linker: linker);
-
-        cut.Instance.RotateForm.KeyId = session.KeyId;
-        cut.Find("[data-testid=rotate-form]").Submit();
-
-        cut.Find("[data-testid=minted-key-value]").GetAttribute("value").ShouldBe("ck_test_NEW_secret");
-        cut.Find("[data-testid=keys-stale]").ShouldNotBeNull();     // the old client can't re-list — prompt a refresh
-        linker.Calls.ShouldHaveSingleItem();                        // the portal re-links to the replacement
-        linker.Calls[0].ApiKey.ShouldBe("ck_test_NEW_secret");
     }
 
     [Fact]
@@ -301,34 +273,15 @@ public class AccountKeysComponentTests : BunitContext
     }
 
     [Fact]
-    public void The_revoke_confirm_warns_when_revoking_the_last_key_without_console_recovery()
+    public void The_revoke_confirm_notes_the_console_recovery_for_the_last_key()
     {
-        // One active key + no membership → revoking the last key is refused (no console recovery); the copy says so.
-        var last = Key(Guid.NewGuid(), "ck_test_LAST", null, active: true, current: false);
-        var cut = RenderLinked(KeysAndMemberships([last], new TenantMembershipList([])), query: $"?revoke={last.KeyId}");
-
-        cut.Find("[data-testid=revoke-last-note]").TextContent.ShouldContain("refused");
-    }
-
-    [Fact]
-    public void The_revoke_confirm_reassures_when_console_recovery_exists()
-    {
-        // One active key + an active Owner membership → revoking the last key is allowed; the copy points at console access.
-        var last = Key(Guid.NewGuid(), "ck_test_LAST", null, active: true, current: false);
-        var memberships = new TenantMembershipList(
-            [new(Guid.NewGuid(), "owner@example.com", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
-        var cut = RenderLinked(KeysAndMemberships([last], memberships), query: $"?revoke={last.KeyId}");
+        // One active key → revoking the last key is allowed (the workspace always keeps a console way back in); the confirm
+        // copy points the user at console access.
+        var last = Key(Guid.NewGuid(), "ck_test_LAST", null, active: true);
+        var cut = RenderLinked(Api(_ => ClientTestHarness.Json(new TenantApiKeyList([last]))), query: $"?revoke={last.KeyId}");
 
         cut.Find("[data-testid=revoke-last-note]").TextContent.ShouldContain("console access");
     }
-
-    // Serves the key list AND a membership list (so the revoke-confirm can reflect the console-recovery state).
-    private static StubHttpMessageHandler KeysAndMemberships(IReadOnlyList<TenantApiKeyInfo> keys, TenantMembershipList memberships) =>
-        new(req =>
-            req.Path.Contains("/tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([.. keys]))
-            : req.Path.EndsWith("/tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.Json(memberships)
-            : req.Path.EndsWith("/usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
-            : ClientTestHarness.Json(_profile));
 
     // ---- helpers -------------------------------------------------------------------------------------------------
 
@@ -340,8 +293,6 @@ public class AccountKeysComponentTests : BunitContext
         Services.AddSingleton(ctx);
         Services.AddSingleton<IWorkspaceLinker>(linker ?? new FakeLinker());
         Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
-        Services.AddSingleton<Microsoft.Extensions.Options.IOptions<Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions>>(
-            Microsoft.Extensions.Options.Options.Create(new Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions())); // stored-key default; affordance not under test here
         if (query is not null)
         {
             Nav.NavigateTo($"/app/account{query}");
@@ -358,7 +309,9 @@ public class AccountKeysComponentTests : BunitContext
             : req.Path.EndsWith("/usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
             : ClientTestHarness.Json(_profile)); // /tenant and /billing/config both tolerate the profile shape
 
-    private static TenantApiKeyInfo Key(Guid id, string prefix, string? label, bool active, bool current, DateTimeOffset? lastUsed = null) =>
+    // `current` is retained on the API contract but the portal no longer distinguishes it (console auth presents no key), so
+    // it defaults to false here and does not affect rendering.
+    private static TenantApiKeyInfo Key(Guid id, string prefix, string? label, bool active, bool current = false, DateTimeOffset? lastUsed = null) =>
         new(id, prefix, label, DateTimeOffset.UnixEpoch, lastUsed, active ? null : DateTimeOffset.UnixEpoch, active, current);
 
     private static PortalTenant Linked(string tenantId, HttpMessageHandler handler) =>
@@ -370,6 +323,8 @@ public class AccountKeysComponentTests : BunitContext
 
     private sealed class FakeTenantContext(PortalTenant? tenant) : IPortalTenantContext
     {
+        public bool ConsoleConfigured => true;
+
         public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant);
 
         public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) =>
@@ -383,7 +338,7 @@ public class AccountKeysComponentTests : BunitContext
         public Task<WorkspaceLinkResult> LinkAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default)
         {
             Calls.Add((email, tenantId, apiKey));
-            return Task.FromResult(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok"));
+            return Task.FromResult(new WorkspaceLinkResult(WorkspaceLinkOutcome.Claimed, "ok"));
         }
     }
 }

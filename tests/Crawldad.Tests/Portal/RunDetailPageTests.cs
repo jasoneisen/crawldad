@@ -65,7 +65,7 @@ public class RunDetailPageTests : BunitContext
         var cut = RenderDetail();
 
         cut.Find("[data-testid=not-linked]").ShouldNotBeNull();
-        cut.Markup.ShouldContain("No workspace linked");
+        cut.Markup.ShouldContain("No workspace yet");
     }
 
     [Fact]

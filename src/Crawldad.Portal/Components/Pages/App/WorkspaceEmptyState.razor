@@ -1,0 +1,39 @@
+@*
+    The shared empty state a data page renders when it has no resolvable workspace (issue #119 simplification). The portal is
+    console-mode only for data, so there are exactly two honest reasons a page has nothing to show, and this tells them apart:
+
+      • console access isn't CONFIGURED on this deployment (an operator misconfig) — nothing the user can do; or
+      • the account simply has no active workspace yet — create a free one or claim an existing one from Account.
+
+    Kept as one component so every data page renders the identical, honest empty state (no per-page "linked" language — there
+    is no linking or stored key anymore). The stable data-testid="not-linked" is retained so the existing page tests keep
+    finding this block wherever a page wraps it.
+*@
+<div class="empty" data-testid="not-linked">
+    @if (Configured)
+    {
+        <p class="empty-title">No workspace yet</p>
+        <p class="empty-subtitle text-secondary">
+            This account has no active Crawldad workspace yet. Create a free workspace or claim an existing one from your
+            account to get started.
+        </p>
+        <div class="empty-action">
+            <a href="/app/account" class="btn btn-primary">Go to Account</a>
+        </div>
+    }
+    else
+    {
+        <p class="empty-title" data-testid="console-unconfigured">Console access isn't configured</p>
+        <p class="empty-subtitle text-secondary">
+            This deployment isn't configured for console access, so workspace data can't be shown here. Contact your operator.
+        </p>
+    }
+</div>
+
+@code {
+    /// <summary>Whether console access is configured on this deployment (from the tenant context / circuit resolver). True
+    /// renders the "no workspace yet" state with an Account call-to-action; false renders the honest
+    /// "console access isn't configured" state with no user action.</summary>
+    [Parameter]
+    public bool Configured { get; set; }
+}

@@ -35,15 +35,7 @@
 @if (_notLinked)
 {
     <div class="card mt-3">
-        <div class="empty" data-testid="not-linked">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet. Link one from your Account to see its payloads here.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
     </div>
 }
 else if (_notFound)
@@ -402,7 +394,7 @@ else if (_loaded)
         // and a null-ref when rendering the empty form).
         Editor ??= new();
 
-        var tenant = await Tenant.TryResolveForPageAsync();
+        var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
             _notLinked = true; // unlinked, or an undecryptable key (rotated ring) — re-link from Account

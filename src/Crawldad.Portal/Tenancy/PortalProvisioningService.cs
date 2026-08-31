@@ -30,17 +30,17 @@ public enum PortalProvisionOutcome
 /// <param name="Message">A human-readable, non-sensitive description to show the account holder.</param>
 public sealed record PortalProvisionResult(PortalProvisionOutcome Outcome, string? TenantId, string Message);
 
-/// <summary>Creates a portal account's <b>free-tier</b> workspace end-to-end (issue #119 PR7): it calls the API's
-/// console-only provisioning endpoint as the portal's first-party identity acting for the signed-in user, then — on success —
-/// records the account's keyless <see cref="PortalTenantLink"/> to the new workspace and makes it the active selection, so the
-/// account resolves to it on the next request exactly like a console-mode attach. Console-mode only: in stored-key mode (no
-/// <see cref="ConsoleClientFactory"/>) there is no first-party identity to create a workspace with, so it reports
-/// <see cref="PortalProvisionOutcome.Unavailable"/> and the affordance is never shown. This is the plumbing PR8's public
-/// signup calls; today it also backs the Account page's transition affordance for a zero-workspace console user.</summary>
+/// <summary>Creates a portal account's <b>free-tier</b> workspace end-to-end (issue #119): it calls the API's console-only
+/// provisioning endpoint as the portal's first-party identity acting for the signed-in user, then — on success — makes the new
+/// workspace the account's active selection, so the account resolves to it on the next request. The API creates the Owner
+/// membership (the authority); the portal keeps only the active-workspace pointer. Console-mode only: when console access is
+/// unconfigured (no <see cref="ConsoleClientFactory"/>) there is no first-party identity to create a workspace with, so it
+/// reports <see cref="PortalProvisionOutcome.Unavailable"/> and the affordance is never shown. This is the plumbing the public
+/// signup flow calls, and it backs the Account page's "create a free workspace" affordance.</summary>
 public interface IPortalProvisioningService
 {
-    /// <summary>Provisions the signed-in account's one free workspace and, on success, links + selects it. A repeat is a clean
-    /// <see cref="PortalProvisionOutcome.AlreadyProvisioned"/> that still links + selects the pre-existing workspace.</summary>
+    /// <summary>Provisions the signed-in account's one free workspace and, on success, selects it. A repeat is a clean
+    /// <see cref="PortalProvisionOutcome.AlreadyProvisioned"/> that still selects the pre-existing workspace.</summary>
     /// <param name="email">The signed-in account's email (the console identity + link identity).</param>
     /// <param name="displayName">An optional display name for the new workspace; blank/absent → a server default.</param>
     /// <param name="cancellationToken">Cancels the round-trip.</param>
@@ -51,15 +51,12 @@ public interface IPortalProvisioningService
 internal sealed class PortalProvisioningService : IPortalProvisioningService
 {
     private readonly ConsoleClientFactory? _consoleClients;
-    private readonly IPortalTenantLinkStore _links;
     private readonly IPortalWorkspaceSelectionStore _selections;
 
     public PortalProvisioningService(
-        IPortalTenantLinkStore links,
         IPortalWorkspaceSelectionStore selections,
         ConsoleClientFactory? consoleClients = null)
     {
-        _links = links;
         _selections = selections;
         _consoleClients = consoleClients; // present only in console-mode (Crawldad:ConsoleAuth configured)
     }
@@ -84,7 +81,7 @@ internal sealed class PortalProvisioningService : IPortalProvisioningService
         try
         {
             var workspace = await client.ProvisionTenantAsync(displayName, cancellationToken);
-            await LinkAndSelectAsync(normalized, workspace.TenantId, cancellationToken);
+            await _selections.SetAsync(normalized, workspace.TenantId, cancellationToken);
             return new PortalProvisionResult(
                 PortalProvisionOutcome.Provisioned,
                 workspace.TenantId,
@@ -92,10 +89,10 @@ internal sealed class PortalProvisioningService : IPortalProvisioningService
         }
         catch (CrawldadApiException ex) when (ex.StatusCode == _conflictStatusCode && ExtractTenantId(ex.ResponseBody) is { } existing)
         {
-            // One free workspace per email, ever: the account already has one but the portal lost its link (a rare recovery
-            // case — the target population is brand-new users). Re-establish the link to the existing workspace and select it,
-            // so the account still lands on its workspace rather than being stranded.
-            await LinkAndSelectAsync(normalized, existing, cancellationToken);
+            // One free workspace per email, ever: the account already has one but the portal lost its active-workspace
+            // pointer (a rare recovery case — the target population is brand-new users). The API creates no second tenant and
+            // returns the existing one; select it, so the account still lands on its workspace rather than being stranded.
+            await _selections.SetAsync(normalized, existing, cancellationToken);
             return new PortalProvisionResult(
                 PortalProvisionOutcome.AlreadyProvisioned,
                 existing,
@@ -108,14 +105,6 @@ internal sealed class PortalProvisioningService : IPortalProvisioningService
                 null,
                 "We couldn't create your workspace just now. Please try again in a moment.");
         }
-    }
-
-    // Records the account's KEYLESS link to the workspace (console-mode: the console credential is the authenticator, no key
-    // is stored) and makes it the active selection — so the next request resolves to it exactly like a console-mode attach.
-    private async Task LinkAndSelectAsync(string email, string tenantId, CancellationToken cancellationToken)
-    {
-        await _links.UpsertKeylessAsync(email, tenantId, cancellationToken);
-        await _selections.SetAsync(email, tenantId, cancellationToken);
     }
 
     // The portal doesn't reference ASP.NET's StatusCodes here, so name the one status it branches on once.

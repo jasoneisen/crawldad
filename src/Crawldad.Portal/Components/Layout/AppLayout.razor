@@ -84,46 +84,38 @@
     <div class="page-wrapper">
         <header class="navbar navbar-expand-md d-print-none sticky-top border-bottom">
             <div class="container-xl">
-                @* Workspace switcher (issue #119 PR6): the active workspace, with a dropdown to switch when the account
-                   holds more than one. Single-workspace (or stored-key mode) shows the name as static text. Each switch is
-                   an antiforgery-protected POST that persists the selection server-side, then reloads scoped to it. *@
-                @if (_workspaces.Count > 0)
+                @* Workspace switcher (issue #119 — single-workspace-first): the shell shows switcher chrome ONLY when the
+                   account holds MORE THAN ONE workspace. A single-workspace user sees no workspace chrome at all (the name
+                   lives on Account); the word "workspace" disappears for the common case. Each switch is an
+                   antiforgery-protected POST that persists the selection server-side, then reloads scoped to it. Labels are
+                   display names — the raw workspace id never renders here. *@
+                @if (_workspaces.Count > 1)
                 {
                     var active = _workspaces.FirstOrDefault(w => w.IsActive);
                     <div class="navbar-nav flex-row me-auto align-items-center" data-testid="workspace-switcher">
-                        @if (_workspaces.Count == 1)
-                        {
-                            <span class="nav-item text-secondary d-flex align-items-center" data-testid="workspace-current">
-                                <span class="text-uppercase small me-2">Workspace</span>
-                                <span class="fw-semibold">@_workspaces[0].Label</span>
-                            </span>
-                        }
-                        else
-                        {
-                            <div class="nav-item dropdown">
-                                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" data-testid="workspace-menu">
-                                    <span class="text-uppercase small text-secondary me-1">Workspace</span>
-                                    <span class="fw-semibold" data-testid="workspace-active">@(active?.Label ?? "Select")</span>
-                                </button>
-                                <div class="dropdown-menu">
-                                    @foreach (var ws in _workspaces)
+                        <div class="nav-item dropdown">
+                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" data-testid="workspace-menu">
+                                <span class="text-uppercase small text-secondary me-1">Workspace</span>
+                                <span class="fw-semibold" data-testid="workspace-active">@(active?.Label ?? "Select")</span>
+                            </button>
+                            <div class="dropdown-menu">
+                                @foreach (var ws in _workspaces)
+                                {
+                                    @if (ws.IsActive)
                                     {
-                                        @if (ws.IsActive)
-                                        {
-                                            <span class="dropdown-item active" data-testid="workspace-option">@ws.Label</span>
-                                        }
-                                        else
-                                        {
-                                            <form method="post" action="/app/workspace" class="d-block">
-                                                <AntiforgeryToken />
-                                                <input type="hidden" name="workspace" value="@ws.TenantId" />
-                                                <button type="submit" class="dropdown-item" data-testid="workspace-option">@ws.Label</button>
-                                            </form>
-                                        }
+                                        <span class="dropdown-item active" data-testid="workspace-option">@ws.Label</span>
                                     }
-                                </div>
+                                    else
+                                    {
+                                        <form method="post" action="/app/workspace" class="d-block">
+                                            <AntiforgeryToken />
+                                            <input type="hidden" name="workspace" value="@ws.TenantId" />
+                                            <button type="submit" class="dropdown-item" data-testid="workspace-option">@ws.Label</button>
+                                        </form>
+                                    }
+                                }
                             </div>
-                        }
+                        </div>
                     </div>
                 }
                 <div class="navbar-nav flex-row order-md-last ms-auto align-items-center">
@@ -154,19 +146,19 @@
     // branches on one flag (present → live numbers, absent → the quiet placeholder), never on a half-loaded pair.
     private (UsageResponse Usage, TenantProfileResponse Profile)? _snapshot;
 
-    // The switcher's workspaces (issue #119 PR6). Empty until a linked user resolves; one entry in stored-key mode (single
-    // workspace) or when the console list can't be read; many in console-mode multi-workspace.
+    // The switcher's workspaces (issue #119). Empty until a resolved user's GET /workspaces returns >1 (the only case the
+    // switcher renders); a single workspace or an unreadable list leaves this short/empty and the shell shows no switcher.
     private IReadOnlyList<WorkspaceOption> _workspaces = [];
 
     private string? UserEmail => HttpContext.User.FindFirstValue(ClaimTypes.Email);
 
     protected override async Task OnInitializedAsync()
     {
-        // Resolve the tenant, then load the usage mini-widget and the switcher's workspace list — all best-effort, once per
+        // Resolve the workspace, then load the usage mini-widget and the switcher's workspace list — all best-effort, once per
         // request (the tenant context caches within the request; no cross-request caching — the numbers stay fresh). An
-        // unauthenticated request or a circuit (the context returns null with no ambient HttpContext), a rotated key ring
-        // (CryptographicException), or any API failure leaves the chrome in its quiet placeholder state — a data hiccup must
-        // never break the shell. The usage read and the workspace read are independent, so one failing never hides the other.
+        // unauthenticated request or a circuit (the context returns null with no ambient HttpContext), an unconfigured console,
+        // no active workspace, or any API failure leaves the chrome in its quiet placeholder state — a data hiccup must never
+        // break the shell. The usage read and the workspace read are independent, so one failing never hides the other.
         PortalTenant? tenant;
         try
         {
@@ -174,56 +166,48 @@
         }
         catch (Exception)
         {
-            return; // unresolvable link (e.g. rotated ring) → quiet placeholder, no switcher
+            return; // an unexpected resolve fault → quiet placeholder, no switcher
         }
 
         if (tenant is null)
         {
-            return; // unauthenticated / not linked / no ambient HttpContext → the quiet placeholder
+            return; // unauthenticated / no active workspace / unconfigured console / no ambient HttpContext → placeholder
         }
 
-        var profile = await LoadSnapshotAsync(tenant);
-        _workspaces = await BuildWorkspacesAsync(tenant, profile);
+        await LoadSnapshotAsync(tenant);
+        _workspaces = await BuildWorkspacesAsync(tenant);
     }
 
     // Reads the tenant profile + usage for the mini-widget; sets _snapshot when both land, else leaves it null (placeholder).
-    // Returns the profile (or null) so the switcher can label a single stored-key workspace with its display name.
-    private async Task<TenantProfileResponse?> LoadSnapshotAsync(PortalTenant tenant)
+    private async Task LoadSnapshotAsync(PortalTenant tenant)
     {
         try
         {
             var profile = await tenant.Client.GetTenantAsync();
             var usage = await tenant.Client.GetUsageAsync();
             _snapshot = (usage, profile);
-            return profile;
         }
         catch (Exception)
         {
             _snapshot = null; // any hiccup keeps the quiet placeholder — never a broken shell
-            return null;
         }
     }
 
-    // The switcher's workspace list: console-mode reads the authoritative GET /workspaces (multi-workspace); stored-key mode
-    // (or a console list that couldn't be read) shows just the active workspace. Never throws — the chrome must not break.
-    private static async Task<IReadOnlyList<WorkspaceOption>> BuildWorkspacesAsync(PortalTenant tenant, TenantProfileResponse? profile)
+    // The switcher's workspace list: the authoritative GET /workspaces (console is the only mode). The switcher renders only
+    // for >1, so a single workspace or an unreadable list (returned empty here) simply hides the switcher. Never throws — a
+    // data hiccup in the chrome must not break the shell.
+    private static async Task<IReadOnlyList<WorkspaceOption>> BuildWorkspacesAsync(PortalTenant tenant)
     {
-        if (tenant.AuthMode == PortalAuthMode.Console)
+        try
         {
-            try
-            {
-                var list = await tenant.Client.ListMyWorkspacesAsync();
-                return [.. list.Workspaces.Select(w => new WorkspaceOption(
-                    w.TenantId, w.DisplayName, string.Equals(w.TenantId, tenant.TenantId, StringComparison.Ordinal)))];
-            }
-            catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
-            {
-                // Couldn't list — degrade to the single active workspace below.
-            }
+            var list = await tenant.Client.ListMyWorkspacesAsync();
+            return [.. (list.Workspaces ?? []).Select(w => new WorkspaceOption(
+                w.TenantId, w.DisplayName, string.Equals(w.TenantId, tenant.TenantId, StringComparison.Ordinal)))];
         }
-
-        var label = profile?.DisplayName is { Length: > 0 } name ? name : tenant.TenantId;
-        return [new WorkspaceOption(tenant.TenantId, label, true)];
+        catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
+        {
+            return []; // couldn't list → no switcher (single-workspace-first default)
+        }
     }
 
     // Percentage (0..100) of a value against a cap, guarding a zero/absent allowance (mirrors the Account page's meter).

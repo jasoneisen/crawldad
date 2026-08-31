@@ -1,5 +1,4 @@
 using System.Net;
-using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
 using Crawldad.Portal.Auth;
 using Crawldad.Portal.Infrastructure.Security;
@@ -9,13 +8,13 @@ using Microsoft.Extensions.Configuration;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>The post-verification landing decision for the public signup flow (issue #119 PR8). Signup shares the login
-/// page's enumeration-safe OTP steps; the ONLY thing it does differently is this: a returning account (already linked) lands
-/// exactly like a /login sign-in (ReturnUrl via SafeRedirect), while a zero-workspace account is provisioned its one free
-/// workspace and lands on the first-run dashboard — or, honestly, on the account page in stored-key mode (nothing to
-/// provision with) or with a safe error on a transient failure. The console-mode arms drive the REAL
-/// <see cref="PortalProvisioningService"/> over a stub API (the console harness), so "zero-workspace user lands and
-/// provisions" and the one-per-email 409 recovery are exercised end-to-end through the landing.</summary>
+/// <summary>The post-verification landing decision for the public signup flow (issue #119). Signup shares the login page's
+/// enumeration-safe OTP steps; the ONLY thing it does differently is this: a returning account (one that already has an
+/// active workspace) lands exactly like a /login sign-in (ReturnUrl via SafeRedirect), while a zero-workspace account is
+/// provisioned its one free workspace and lands on the first-run dashboard — or, honestly, on the account page when console
+/// access is unconfigured (nothing to provision with) or with a safe error on a transient failure. The console arms drive
+/// the REAL <see cref="PortalProvisioningService"/> over a stub API, so "zero-workspace user lands and provisions" and the
+/// one-per-email 409 recovery are exercised end-to-end through the landing.</summary>
 public class SignupLandingTests
 {
     private const string _email = "new@example.com";
@@ -26,55 +25,51 @@ public class SignupLandingTests
     [InlineData("//evil.example", "/app")]           // an open-redirect attempt is rejected by SafeRedirect
     public async Task A_returning_account_lands_like_a_login_and_is_never_provisioned(string? returnPath, string expected)
     {
-        var existing = new PortalTenantLink { Email = _email, TenantId = "t-existing", ProtectedApiKey = null };
-        var (landing, links, selections) = LandingFor(handler: null, consoleMode: false, existingLink: existing);
+        var existing = new PortalWorkspaceSelection { Email = _email, TenantId = "ws-existing" };
+        var (landing, selections) = LandingFor(handler: null, consoleMode: false, existingSelection: existing);
 
         var destination = await landing.ResolveAsync(_email, returnPath, CancellationToken.None);
 
         destination.ShouldBe(expected);
-        links.KeylessUpserts.ShouldBeEmpty();  // a returning account is never re-provisioned
-        selections.Last.ShouldBeNull();
+        selections.SetCount.ShouldBe(0); // a returning account is never re-provisioned / re-selected
     }
 
     [Fact]
     public async Task A_zero_workspace_console_account_provisions_and_lands_on_the_first_run_dashboard()
     {
         var handler = new StubHttpMessageHandler(_ =>
-            ClientTestHarness.Json(new WorkspaceSummary("t-created", "My workspace", MembershipRole.Owner), HttpStatusCode.Created));
-        var (landing, links, selections) = LandingFor(handler);
+            ClientTestHarness.Json(new WorkspaceSummary("ws-created", "My workspace", MembershipRole.Owner), HttpStatusCode.Created));
+        var (landing, selections) = LandingFor(handler);
 
         var destination = await landing.ResolveAsync(_email, returnUrl: null, CancellationToken.None);
 
-        destination.ShouldBe(SignupLanding.FirstRunDashboard);   // "/app?welcome=1" — the first-run on-ramp
-        links.KeylessUpserts.ShouldHaveSingleItem().ShouldBe((_email, "t-created")); // provisioned + linked (keyless, console)
-        selections.Last.ShouldBe((_email, "t-created"));                             // ...and made the active workspace
+        destination.ShouldBe(SignupLanding.FirstRunDashboard);
+        selections.Last.ShouldBe((_email, "ws-created")); // provisioned + made the active workspace
     }
 
     [Fact]
     public async Task A_one_per_email_conflict_recovers_the_existing_workspace_and_still_lands_on_the_dashboard()
     {
         var handler = new StubHttpMessageHandler(_ =>
-            ClientTestHarness.JsonRaw(HttpStatusCode.Conflict, """{"title":"free_tenant_exists","status":409,"tenantId":"t-existing"}"""));
-        var (landing, links, selections) = LandingFor(handler);
+            ClientTestHarness.JsonRaw(HttpStatusCode.Conflict, """{"title":"free_tenant_exists","status":409,"tenantId":"ws-existing"}"""));
+        var (landing, selections) = LandingFor(handler);
 
         var destination = await landing.ResolveAsync(_email, returnUrl: null, CancellationToken.None);
 
         destination.ShouldBe(SignupLanding.FirstRunDashboard);
-        links.KeylessUpserts.ShouldHaveSingleItem().ShouldBe((_email, "t-existing")); // recovered the link to the existing one
-        selections.Last.ShouldBe((_email, "t-existing"));
+        selections.Last.ShouldBe((_email, "ws-existing")); // recovered + selected the existing workspace
     }
 
     [Fact]
-    public async Task A_stored_key_signup_lands_on_the_account_page_and_provisions_nothing()
+    public async Task An_unconfigured_console_signup_lands_on_the_account_page_and_provisions_nothing()
     {
-        // No console identity is configured (stored-key mode) → the service reports Unavailable → the honest account-page
-        // landing, where the zero-workspace state explains the operator-provisioned reality and offers the attach form.
-        var (landing, links, selections) = LandingFor(handler: null, consoleMode: false);
+        // No console identity is configured → the service reports Unavailable → the honest account-page landing, where the
+        // zero-workspace state explains it and offers the "claim an existing workspace" action.
+        var (landing, selections) = LandingFor(handler: null, consoleMode: false);
 
         var destination = await landing.ResolveAsync(_email, returnUrl: null, CancellationToken.None);
 
         destination.ShouldBe(SignupLanding.AccountPath); // "/app/account"
-        links.KeylessUpserts.ShouldBeEmpty();
         selections.Last.ShouldBeNull();
     }
 
@@ -82,7 +77,7 @@ public class SignupLandingTests
     public async Task A_failed_provision_lands_on_the_account_page_carrying_the_safe_error()
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Empty(HttpStatusCode.TooManyRequests));
-        var (landing, _, _) = LandingFor(handler);
+        var (landing, _) = LandingFor(handler);
 
         var destination = await landing.ResolveAsync(_email, returnUrl: null, CancellationToken.None);
 
@@ -91,13 +86,12 @@ public class SignupLandingTests
         destination.ShouldContain(Uri.EscapeDataString("We couldn't create your workspace just now. Please try again in a moment."));
     }
 
-    private static (SignupLanding Landing, RecordingLinkStore Links, RecordingSelectionStore Selections) LandingFor(
+    private static (SignupLanding Landing, RecordingSelectionStore Selections) LandingFor(
         HttpMessageHandler? handler,
         bool consoleMode = true,
-        PortalTenantLink? existingLink = null)
+        PortalWorkspaceSelection? existingSelection = null)
     {
-        var links = new RecordingLinkStore(existingLink);
-        var selections = new RecordingSelectionStore();
+        var selections = new RecordingSelectionStore(existingSelection);
         ConsoleClientFactory? consoleClients = null;
         if (consoleMode)
         {
@@ -107,8 +101,8 @@ public class SignupLandingTests
             consoleClients = new ConsoleClientFactory(new StubHandlerFactory(handler!), new FakeTokenSource("entra-token"), config);
         }
 
-        var provisioning = new PortalProvisioningService(links, selections, consoleClients);
-        return (new SignupLanding(links, provisioning), links, selections);
+        var provisioning = new PortalProvisioningService(selections, consoleClients);
+        return (new SignupLanding(selections, provisioning), selections);
     }
 
     private sealed class StubHandlerFactory(HttpMessageHandler handler) : IHttpMessageHandlerFactory
@@ -121,35 +115,20 @@ public class SignupLandingTests
         public ValueTask<string> GetTokenAsync(CancellationToken cancellationToken) => ValueTask.FromResult(token);
     }
 
-    // GetAsync returns the preset link (a returning account) or null (a zero-workspace account); UpsertKeylessAsync records the
-    // provision's keyless link so a test can assert the account was actually linked + selected.
-    private sealed class RecordingLinkStore(PortalTenantLink? existing) : IPortalTenantLinkStore
-    {
-        public List<(string Email, string TenantId)> KeylessUpserts { get; } = [];
-
-        public Task<PortalTenantLink?> GetAsync(string email, CancellationToken cancellationToken = default) =>
-            Task.FromResult(existing);
-
-        public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("signup provisioning is keyless (console-mode)");
-
-        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default)
-        {
-            KeylessUpserts.Add((email, tenantId));
-            return Task.FromResult(new PortalTenantLink { Email = email, TenantId = tenantId, ProtectedApiKey = null });
-        }
-    }
-
-    private sealed class RecordingSelectionStore : IPortalWorkspaceSelectionStore
+    // GetAsync returns the preset selection (a returning account) or null (a zero-workspace account); SetAsync records the
+    // provision's selection so a test can assert the account was made active on its workspace.
+    private sealed class RecordingSelectionStore(PortalWorkspaceSelection? existing) : IPortalWorkspaceSelectionStore
     {
         public (string Email, string TenantId)? Last { get; private set; }
+        public int SetCount { get; private set; }
 
         public Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default) =>
-            Task.FromResult<PortalWorkspaceSelection?>(null);
+            Task.FromResult(existing);
 
         public Task SetAsync(string email, string tenantId, CancellationToken cancellationToken = default)
         {
             Last = (email, tenantId);
+            SetCount++;
             return Task.CompletedTask;
         }
     }

@@ -1,26 +1,26 @@
 using System.Security.Claims;
-using System.Security.Cryptography;
 using Bunit;
 using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
 using Crawldad.Portal.Components.Pages.App;
-using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Client;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>bUnit rendering of the account page in isolation (fake tenant context + fake linker): the not-linked, live,
-/// usage-error, and re-link-needed states; the workspace-link form's success (redirect) / failure (error) / missing-
-/// email / blank paths; and the guarantee that a submitted key is never echoed back into the markup.</summary>
+/// <summary>bUnit rendering of the account page in isolation (fake tenant context + fake linker). Issue #119 simplified the
+/// surface: the portal is console-mode only for data, the workspace's display NAME is its identity (its raw id appears only
+/// in the copyable Workspace ID field), and the switcher / member-management chrome is single-workspace-first. Covers the
+/// unconfigured / no-workspace / resolved states; the profile identity + copyable id; membership role + operator-managed;
+/// the multi-workspace switch list and the members section (team vs solo-owner invite); the "claim an existing workspace"
+/// form's success/failure/missing-email/blank paths (never echoing the key); and the "create a free workspace" affordance.</summary>
 public class AccountComponentTests : BunitContext
 {
-    private static readonly TenantProfileResponse _profile = new("tenant-alpha", "alpha@crawldad.test", "Team", 5, 100);
+    private static readonly TenantProfileResponse _profile = new("tenant-alpha", "Alpha Co", "Team", 5, 100);
 
     private static readonly UsageResponse _usage = new(
         new UsageSlots(2, 5),
@@ -34,29 +34,40 @@ public class AccountComponentTests : BunitContext
     // ---- render states --------------------------------------------------------------------------------------------
 
     [Fact]
-    public void Unlinked_account_shows_not_linked_and_the_usage_empty_state()
+    public void Unconfigured_console_shows_the_honest_not_configured_state()
     {
-        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed());
+        var cut = RenderPage(new FakeTenantContext(tenant: null, configured: false), Authed());
 
-        cut.Find("[data-testid=link-status]").TextContent.ShouldContain("Not linked");
-        cut.FindAll("[data-testid=usage-unlinked]").Count.ShouldBe(1);
+        cut.Find("[data-testid=link-status]").TextContent.ShouldContain("Console access not configured");
+        cut.FindAll("[data-testid=console-unconfigured]").Count.ShouldBe(1);
+        cut.FindAll("[data-testid=get-started]").ShouldBeEmpty();
         cut.FindAll("[data-testid=usage-panel]").ShouldBeEmpty();
-        // The link form + operator info card are always present.
-        cut.FindAll("#link-form").Count.ShouldBe(1);
-        cut.Markup.ShouldContain("API keys");
     }
 
     [Fact]
-    public void Linked_account_renders_live_usage_and_plan()
+    public void Zero_workspace_shows_the_get_started_affordance_and_the_claim_disclosure()
+    {
+        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed());
+
+        cut.Find("[data-testid=link-status]").TextContent.ShouldContain("No workspace yet");
+        cut.Find("[data-testid=provision-form]").GetAttribute("action").ShouldBe("/app/workspace/provision");
+        cut.Find("[data-testid=claim-disclosure]").ShouldNotBeNull();
+        cut.FindAll("#link-form").Count.ShouldBe(1);
+        cut.FindAll("[data-testid=usage-panel]").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Resolved_workspace_renders_the_name_heading_the_copyable_id_and_live_usage()
     {
         var handler = ApiReturning(_profile, _usage);
         var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed());
 
-        cut.Find("[data-testid=link-status]").TextContent.ShouldContain("tenant-alpha");
+        // The display NAME is the identity; the raw id appears ONLY in the copyable Workspace ID field.
+        cut.Find("[data-testid=workspace-heading]").TextContent.ShouldContain("Alpha Co");
+        cut.Find("[data-testid=link-status]").TextContent.ShouldContain("Alpha Co");
+        cut.Find("[data-testid=workspace-id]").GetAttribute("value").ShouldBe("tenant-alpha");
         cut.Find("[data-testid=usage-panel]").ShouldNotBeNull();
         cut.Find("[data-testid=usage-slots]").TextContent.ShouldContain("2");
-        cut.Find("[data-testid=usage-slots]").TextContent.ShouldContain("5");
-        cut.Find("[data-testid=usage-queue]").TextContent.ShouldContain("3");
         cut.Find("[data-testid=usage-queue]").TextContent.ShouldContain("100");
         cut.Find("[data-testid=usage-p95]").TextContent.ShouldContain("1.2s");
         cut.Find("[data-testid=usage-events]").TextContent.ShouldContain("6800");
@@ -65,14 +76,16 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
-    public void Usage_that_the_api_rejects_shows_a_friendly_error_not_a_crash()
+    public void Usage_that_the_api_rejects_shows_a_friendly_error_and_a_generic_heading()
     {
-        // A stored key the API now rejects (401 → CrawldadException) must not 500 the page.
+        // GET /tenant 401 → CrawldadException, caught: usage-error, and the profile is null so the heading falls back to a
+        // generic label rather than leaking the id.
         var handler = ClientTestHarness.Always(() => ClientTestHarness.Empty(System.Net.HttpStatusCode.Unauthorized));
         var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed());
 
         cut.FindAll("[data-testid=usage-error]").Count.ShouldBe(1);
         cut.FindAll("[data-testid=usage-panel]").ShouldBeEmpty();
+        cut.Find("[data-testid=workspace-heading]").TextContent.ShouldContain("Your workspace"); // never the raw id
     }
 
     [Fact]
@@ -85,20 +98,9 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
-    public void An_undecryptable_stored_key_prompts_a_relink_rather_than_crashing()
-    {
-        // A rotated/lost Data-Protection ring makes Unprotect throw CryptographicException from inside the resolve.
-        var cut = RenderPage(new FakeTenantContext(tenant: null, fault: new CryptographicException("ring rotated")), Authed());
-
-        cut.Find("[data-testid=link-status]").TextContent.ShouldContain("Re-link required");
-        cut.FindAll("[data-testid=usage-relink]").Count.ShouldBe(1);
-        cut.FindAll("[data-testid=usage-panel]").ShouldBeEmpty();
-    }
-
-    [Fact]
     public void Zero_allowances_and_a_long_wait_render_without_dividing_by_zero()
     {
-        var profile = new TenantProfileResponse("tenant-zero", "z@crawldad.test", Tier: null, 0, 0);
+        var profile = new TenantProfileResponse("tenant-zero", "Zero Co", Tier: null, 0, 0);
         var usage = new UsageResponse(new UsageSlots(0, 0), new UsageQueueStats(0, 0, 252_000), 0, new UsageEvents(0, 0, 0, 0));
         var cut = RenderPage(new FakeTenantContext(Linked("tenant-zero", ApiReturning(profile, usage))), Authed());
 
@@ -115,10 +117,10 @@ public class AccountComponentTests : BunitContext
         cut.Find("[data-testid=account-email]").TextContent.ShouldBe("dana@meridiantitle.co");
     }
 
-    // ---- console access + membership (issue #119 PR4) -------------------------------------------------------------
+    // ---- membership / role ----------------------------------------------------------------------------------------
 
     [Fact]
-    public void Console_mode_with_a_membership_shows_the_console_badge_and_the_owner_role()
+    public void The_profile_shows_the_signed_in_users_role()
     {
         // A prior revoked (inactive) membership for the same user is skipped; the active one is the current membership.
         var memberships = new TenantMembershipList(
@@ -127,40 +129,16 @@ public class AccountComponentTests : BunitContext
             new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
         ]);
         var handler = ApiReturning(_profile, _usage, memberships);
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed("dana@meridiantitle.co"));
 
-        cut.Find("[data-testid=console-mode]").TextContent.ShouldContain("Console");
-        cut.Find("[data-testid=console-key-state]").TextContent.ShouldContain("stored key retained"); // a transition key remains
         cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("Owner");
     }
 
     [Fact]
-    public void Console_mode_with_no_stored_key_shows_the_key_retired_state()
+    public void An_env_tenant_shows_the_operator_managed_members_state()
     {
-        var memberships = new TenantMembershipList(
-            [new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
-        var handler = ApiReturning(_profile, _usage, memberships);
-        var cut = RenderPage(
-            new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console, storedKeyRetained: false)),
-            Authed("dana@meridiantitle.co"));
-
-        cut.Find("[data-testid=console-mode]").TextContent.ShouldContain("Console");
-        cut.Find("[data-testid=console-key-state]").TextContent.ShouldContain("no stored key"); // the key was retired
-    }
-
-    [Fact]
-    public void Key_mode_with_no_membership_shows_the_stored_key_badge_and_no_membership()
-    {
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage))), Authed());
-
-        cut.Find("[data-testid=console-mode]").TextContent.ShouldContain("Stored key");
-        cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("No membership");
-    }
-
-    [Fact]
-    public void An_env_tenant_shows_the_operator_managed_membership_state()
-    {
-        // GET /tenant/memberships is a 400 self_service_unavailable for an env tenant — surfaced as a clean state, no crash.
+        // GET /tenant/memberships is a 400 self_service_unavailable for an env tenant — surfaced as a clean state, no crash,
+        // and no role is shown in the profile (there is no membership).
         var handler = new StubHttpMessageHandler(req =>
             req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal)
                 ? ClientTestHarness.JsonRaw(System.Net.HttpStatusCode.BadRequest, "{\"title\":\"self_service_unavailable\"}")
@@ -169,14 +147,15 @@ public class AccountComponentTests : BunitContext
                 : ClientTestHarness.Json(_profile));
         var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed());
 
-        cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("Operator-managed");
+        cut.Find("[data-testid=members-operator-managed]").ShouldNotBeNull();
+        cut.FindAll("[data-testid=membership-status]").ShouldBeEmpty(); // no membership → no role in the profile
     }
 
     [Fact]
-    public void A_linked_account_with_no_email_and_a_malformed_membership_body_degrades_cleanly()
+    public void A_malformed_membership_body_degrades_cleanly()
     {
-        // Defensive edges: no email claim (still authorized to render), and a 2xx membership body missing its list — neither
-        // crashes the page; the console row simply shows "no membership".
+        // A 2xx membership body missing its list must not crash the page (nor without an email claim); the profile simply
+        // shows no role and the solo-invite state is not reached (not an Owner).
         var handler = new StubHttpMessageHandler(req =>
             req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.JsonRaw(System.Net.HttpStatusCode.OK, "{}")
             : req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
@@ -184,18 +163,18 @@ public class AccountComponentTests : BunitContext
             : ClientTestHarness.Json(_profile));
         var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed(email: null));
 
-        cut.Find("[data-testid=membership-status]").TextContent.ShouldContain("No membership");
+        cut.FindAll("[data-testid=membership-status]").ShouldBeEmpty();
     }
 
-    // ---- multi-workspace + members (issue #119 PR6) ---------------------------------------------------------------
+    // ---- multi-workspace switch list + members (single-workspace-first) --------------------------------------------
 
     [Fact]
-    public void Console_mode_lists_the_users_workspaces_and_offers_a_switch()
+    public void A_multi_workspace_user_gets_the_switch_list()
     {
         var memberships = new TenantMembershipList([new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
         var workspaces = new WorkspaceList([new("tenant-alpha", "Alpha Co", MembershipRole.Owner), new("tenant-beta", "Beta Co", MembershipRole.Member)]);
         var handler = ApiReturning(_profile, _usage, memberships, workspaces);
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed("dana@meridiantitle.co"));
 
         cut.FindAll("[data-testid=workspace-row]").Count.ShouldBe(2);
         cut.Find("[data-testid=workspace-active-badge]").ShouldNotBeNull();           // the active workspace is badged
@@ -204,7 +183,19 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
-    public void An_owner_sees_the_member_management_controls()
+    public void A_single_workspace_user_sees_no_switch_list()
+    {
+        // Single-workspace-first: exactly one workspace → no switch list at all (the name is the heading).
+        var workspaces = new WorkspaceList([new("tenant-alpha", "Alpha Co", MembershipRole.Owner)]);
+        var handler = ApiReturning(_profile, _usage, workspaces: workspaces);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed());
+
+        cut.FindAll("[data-testid=workspaces-list]").ShouldBeEmpty();
+        cut.FindAll("[data-testid=workspace-row]").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void An_owner_of_a_team_sees_the_member_management_controls()
     {
         var memberships = new TenantMembershipList(
         [
@@ -212,26 +203,24 @@ public class AccountComponentTests : BunitContext
             new(Guid.NewGuid(), "teammate@meridiantitle.co", MembershipRole.Member, DateTimeOffset.UnixEpoch, null, true),
         ]);
         var handler = ApiReturning(_profile, _usage, memberships);
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed("dana@meridiantitle.co"));
 
         cut.FindAll("[data-testid=member-row]").Count.ShouldBe(2);
         cut.Find("[data-testid=add-member-form]").ShouldNotBeNull();                  // an Owner can add members
         cut.FindAll("[data-testid=member-remove]").Count.ShouldBe(2);                 // and remove / change role
         cut.FindAll("[data-testid=member-role-toggle]").Count.ShouldBe(2);
-        cut.Find("form[action=\"/app/members/add\"]").ShouldNotBeNull();
     }
 
     [Fact]
-    public void A_member_sees_the_roster_read_only()
+    public void A_member_of_a_team_sees_the_roster_read_only()
     {
-        // The signed-in user is a Member, so the management controls are hidden and the read-only note shows instead.
         var memberships = new TenantMembershipList(
         [
             new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Member, DateTimeOffset.UnixEpoch, null, true),
             new(Guid.NewGuid(), "owner@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
         ]);
         var handler = ApiReturning(_profile, _usage, memberships);
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed("dana@meridiantitle.co"));
 
         cut.FindAll("[data-testid=member-row]").Count.ShouldBe(2);
         cut.FindAll("[data-testid=add-member-form]").ShouldBeEmpty();                 // a Member cannot manage members
@@ -240,67 +229,50 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
-    public void Stored_key_mode_shows_the_single_workspace_and_no_member_controls()
+    public void A_solo_owner_sees_the_understated_invite_not_the_full_section()
     {
-        // Stored-key mode: the workspaces card shows just the current workspace (GET /workspaces is not consulted), and with
-        // no membership the member roster is empty and controls are hidden.
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage))), Authed());
-
-        cut.FindAll("[data-testid=workspace-row]").Count.ShouldBe(1);
-        cut.Find("[data-testid=workspace-active-badge]").ShouldNotBeNull(); // the sole workspace is the active one
-        cut.Find("[data-testid=members-empty]").ShouldNotBeNull();
-    }
-
-    [Fact]
-    public void A_console_workspace_list_failure_falls_back_to_the_current_workspace()
-    {
-        // GET /workspaces fails but the membership read succeeds: the Workspaces card degrades to the single current
-        // workspace, labelled by the user's own role from the membership.
+        // Single-workspace-first: a solo Owner (one workspace, one member) gets an understated invite entry, not the full
+        // member-management table.
         var memberships = new TenantMembershipList([new(Guid.NewGuid(), "dana@meridiantitle.co", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
-        var handler = new StubHttpMessageHandler(req =>
-            req.Path.EndsWith("workspaces", StringComparison.Ordinal) ? ClientTestHarness.Empty(System.Net.HttpStatusCode.InternalServerError)
-            : req.Path.EndsWith("tenant/memberships", StringComparison.Ordinal) ? ClientTestHarness.Json(memberships)
-            : req.Path.EndsWith("tenant/keys", StringComparison.Ordinal) ? ClientTestHarness.Json(new TenantApiKeyList([]))
-            : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(_usage)
-            : ClientTestHarness.Json(_profile));
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler, PortalAuthMode.Console)), Authed("dana@meridiantitle.co"));
+        var handler = ApiReturning(_profile, _usage, memberships);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", handler)), Authed("dana@meridiantitle.co"));
 
-        var rows = cut.FindAll("[data-testid=workspace-row]");
-        rows.Count.ShouldBe(1);                                    // the single current workspace fallback
-        rows[0].TextContent.ShouldContain("Owner");                // labelled with the signed-in user's role
+        cut.Find("[data-testid=members-solo]").ShouldNotBeNull();
+        cut.Find("[data-testid=add-member-form]").ShouldNotBeNull(); // the understated invite entry
+        cut.FindAll("[data-testid=member-row]").ShouldBeEmpty();     // no full roster table for a solo workspace
     }
 
     [Fact]
-    public void The_member_roster_renders_without_an_email_claim()
+    public void The_member_roster_renders_for_a_team_without_an_email_claim()
     {
-        // A render with no email claim still lists members read-only (the signed-in user matches none, so it is not an Owner).
+        // A render with no email claim still lists a team's members read-only (the signed-in user matches none → not Owner).
         var memberships = new TenantMembershipList(
         [
             new(Guid.NewGuid(), "owner@x.test", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true),
             new(Guid.NewGuid(), "member@x.test", MembershipRole.Member, DateTimeOffset.UnixEpoch, null, true),
         ]);
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships), PortalAuthMode.Console)), Authed(email: null));
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships))), Authed(email: null));
 
         cut.FindAll("[data-testid=member-row]").Count.ShouldBe(2);
-        cut.Find("[data-testid=members-readonly]").ShouldNotBeNull(); // no email ⇒ not an Owner ⇒ read-only
+        cut.Find("[data-testid=members-readonly]").ShouldNotBeNull();
     }
 
     [Fact]
     public void A_member_action_error_is_surfaced_from_the_redirect()
     {
         var memberships = new TenantMembershipList([new(Guid.NewGuid(), "owner@example.com", MembershipRole.Owner, DateTimeOffset.UnixEpoch, null, true)]);
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships), PortalAuthMode.Console)), Authed(),
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage, memberships))), Authed(),
             query: "?memberError=A%20workspace%20must%20keep%20an%20Owner");
 
         cut.Find("[data-testid=members-action-error]").TextContent.ShouldContain("must keep an Owner");
     }
 
-    // ---- workspace-link form --------------------------------------------------------------------------------------
+    // ---- claim-an-existing-workspace form -------------------------------------------------------------------------
 
     [Fact]
-    public void A_successful_link_redirects_to_the_confirmed_page()
+    public void A_successful_claim_redirects_to_the_confirmed_page()
     {
-        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok"));
+        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Claimed, "ok"));
         var cut = RenderPage(new FakeTenantContext(tenant: null), Authed("owner@example.com"), linker);
 
         SubmitLink(cut, "tenant-alpha", "sk_live_secret_key");
@@ -325,9 +297,9 @@ public class AccountComponentTests : BunitContext
     }
 
     [Fact]
-    public void A_failed_link_never_echoes_the_submitted_key_in_the_markup()
+    public void A_failed_claim_never_echoes_the_submitted_key_in_the_markup()
     {
-        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.InvalidKey, "That API key was rejected."));
+        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.OperatorManaged, "can't be claimed"));
         var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), linker);
 
         SubmitLink(cut, "tenant-alpha", "SUPER-SECRET-KEY-9999");
@@ -338,7 +310,7 @@ public class AccountComponentTests : BunitContext
     [Fact]
     public void A_missing_email_claim_is_handled_without_calling_the_linker()
     {
-        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok"));
+        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Claimed, "ok"));
         var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(email: null), linker);
 
         SubmitLink(cut, "tenant-alpha", "sk_live_secret_key");
@@ -350,7 +322,7 @@ public class AccountComponentTests : BunitContext
     [Fact]
     public void Blank_fields_are_rejected_client_side_without_calling_the_linker()
     {
-        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok"));
+        var linker = new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Claimed, "ok"));
         var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), linker);
 
         cut.Find("#link-form").Submit();
@@ -360,61 +332,32 @@ public class AccountComponentTests : BunitContext
         cut.Markup.ShouldContain("Enter your API key.");
     }
 
-    // ---- free-workspace provisioning affordance (issue #119 PR7) --------------------------------------------------
+    // ---- create-a-free-workspace affordance -----------------------------------------------------------------------
 
     [Fact]
-    public void Console_mode_with_zero_workspaces_shows_the_create_free_workspace_affordance()
+    public void A_resolved_workspace_does_not_show_the_create_affordance()
     {
-        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), consoleMode: true);
-
-        var form = cut.Find("[data-testid=provision-form]");
-        form.GetAttribute("action").ShouldBe("/app/workspace/provision");
-        cut.Find("[data-testid=provision-submit]").ShouldNotBeNull();
-        cut.FindAll("[data-testid=workspaces-unlinked]").ShouldBeEmpty(); // the affordance replaces the bare "attach below" hint
-    }
-
-    [Fact]
-    public void Stored_key_mode_with_zero_workspaces_hides_the_affordance()
-    {
-        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), consoleMode: false);
-
-        cut.FindAll("[data-testid=provision-form]").ShouldBeEmpty();       // no console identity → no self-serve create (honest)
-        cut.Find("[data-testid=workspaces-unlinked]").ShouldNotBeNull();   // the plain attach hint instead
-    }
-
-    [Fact]
-    public void A_linked_console_account_does_not_show_the_affordance()
-    {
-        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage), PortalAuthMode.Console)), Authed(), consoleMode: true);
+        var cut = RenderPage(new FakeTenantContext(Linked("tenant-alpha", ApiReturning(_profile, _usage))), Authed());
 
         cut.FindAll("[data-testid=provision-form]").ShouldBeEmpty(); // already has a workspace
-    }
-
-    [Fact]
-    public void A_relink_needed_account_does_not_show_the_affordance()
-    {
-        // A linked-but-undecryptable-key account (re-link needed) is NOT a zero-workspace account — the affordance stays hidden.
-        var cut = RenderPage(new FakeTenantContext(tenant: null, fault: new CryptographicException("ring rotated")), Authed(), consoleMode: true);
-
-        cut.FindAll("[data-testid=provision-form]").ShouldBeEmpty();
+        cut.FindAll("[data-testid=get-started]").ShouldBeEmpty();
     }
 
     [Fact]
     public void A_provision_error_is_surfaced_from_the_redirect()
     {
-        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), consoleMode: true, query: "?provisionError=We%20couldn%27t%20create%20your%20workspace");
+        var cut = RenderPage(new FakeTenantContext(tenant: null), Authed(), query: "?provisionError=We%20couldn%27t%20create%20your%20workspace");
 
         cut.Find("[data-testid=provision-error]").TextContent.ShouldContain("couldn't create your workspace");
     }
 
     // ---- helpers --------------------------------------------------------------------------------------------------
 
-    private IRenderedComponent<Account> RenderPage(IPortalTenantContext ctx, HttpContext http, IWorkspaceLinker? linker = null, string? query = null, bool consoleMode = false)
+    private IRenderedComponent<Account> RenderPage(IPortalTenantContext ctx, HttpContext http, IWorkspaceLinker? linker = null, string? query = null)
     {
         Services.AddSingleton(ctx);
-        Services.AddSingleton(linker ?? new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok")));
+        Services.AddSingleton(linker ?? new FakeLinker(new WorkspaceLinkResult(WorkspaceLinkOutcome.Claimed, "ok")));
         Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
-        Services.AddSingleton(ConsoleAuthOption(consoleMode));
         if (query is not null)
         {
             Services.GetRequiredService<NavigationManager>().NavigateTo($"/app/account{query}");
@@ -422,12 +365,6 @@ public class AccountComponentTests : BunitContext
 
         return Render<Account>(ps => ps.AddCascadingValue<HttpContext>(http));
     }
-
-    // The console-auth options the account page injects to decide whether the "create your free workspace" affordance shows.
-    // Console-mode = a configured (TenantId + Audience) pair; the default is stored-key mode (affordance hidden).
-    private static IOptions<PortalConsoleAuthOptions> ConsoleAuthOption(bool enabled) => Options.Create(enabled
-        ? new PortalConsoleAuthOptions { TenantId = Guid.NewGuid().ToString(), Audience = "api://crawldad-test" }
-        : new PortalConsoleAuthOptions());
 
     // The API key is a deliberately-unbound password input (it must never echo), so bUnit's interactive renderer has no
     // change handler to drive. Set the form model directly, then submit — the name→model POST binding itself is covered
@@ -439,9 +376,9 @@ public class AccountComponentTests : BunitContext
         cut.Find("#link-form").Submit();
     }
 
-    private static PortalTenant Linked(string tenantId, HttpMessageHandler handler, PortalAuthMode authMode = PortalAuthMode.Key, bool storedKeyRetained = true) =>
+    private static PortalTenant Linked(string tenantId, HttpMessageHandler handler) =>
         new(tenantId, new CrawldadClient(new HttpClient(handler) { BaseAddress = ClientTestHarness.BaseUrl },
-            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), authMode, storedKeyRetained);
+            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }));
 
     private static StubHttpMessageHandler ApiReturning(TenantProfileResponse profile, UsageResponse usage, TenantMembershipList? memberships = null, WorkspaceList? workspaces = null) =>
         new(req =>
@@ -457,10 +394,11 @@ public class AccountComponentTests : BunitContext
         return new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, authenticationType: "TestCookie")) };
     }
 
-    private sealed class FakeTenantContext(PortalTenant? tenant, Exception? fault = null) : IPortalTenantContext
+    private sealed class FakeTenantContext(PortalTenant? tenant, bool configured = true) : IPortalTenantContext
     {
-        public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) =>
-            fault is not null ? Task.FromException<PortalTenant?>(fault) : Task.FromResult(tenant);
+        public bool ConsoleConfigured => configured;
+
+        public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant);
 
         public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) =>
             tenant is null ? throw new NotLinkedException("not linked") : Task.FromResult(tenant);

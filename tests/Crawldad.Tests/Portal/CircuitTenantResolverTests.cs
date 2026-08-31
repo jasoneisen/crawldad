@@ -1,29 +1,23 @@
 using System.Security.Claims;
 using Crawldad.Contracts.Runs;
+using Crawldad.Contracts.Tenancy;
 using Crawldad.Portal.Auth;
+using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Client;
 using Microsoft.AspNetCore.Components.Authorization;
-using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Configuration;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>Unit tests for <see cref="CircuitTenantResolver"/> in isolation (fake auth-state provider + fake store +
-/// stub HttpClient factory): a linked circuit user gets a client authenticated as their tenant; an unauthenticated,
-/// unlinked, or claim-less circuit is a clean not-linked state (never a client with an empty key); and the email is
-/// normalized byte-for-byte the same way the OTP sign-in stores it, so a circuit lands on the same link as a request.</summary>
+/// <summary>Unit tests for <see cref="CircuitTenantResolver"/> in isolation (fake auth-state provider + fake selection
+/// store + fake console client factory). The portal is console-mode only (issue #119): a signed-in circuit with an active
+/// workspace gets a <see cref="Crawldad.Client.CrawldadClient"/> authenticated as the portal console identity; an
+/// unauthenticated, no-selection, or claim-less circuit is a clean not-linked state; an unconfigured console is a distinct
+/// state; and the email is normalized byte-for-byte the same way the OTP sign-in stores it, so a circuit and a request for
+/// the same user land on the same active workspace.</summary>
 public class CircuitTenantResolverTests
 {
-    private const string _apiKey = "sk_tenant_LEAKME_9876543210";
-    private static readonly EphemeralDataProtectionProvider _protection = new();
-
-    private static PortalTenantLink LinkFor(string email, string tenantId) => new()
-    {
-        Email = email,
-        TenantId = tenantId,
-        ProtectedApiKey = PortalTenancy.ApiKeyProtector(_protection).Protect(_apiKey),
-    };
-
     private static FakeAuthStateProvider AuthenticatedAs(string? email)
     {
         Claim[] claims = email is null ? [] : [new Claim(ClaimTypes.Email, email)];
@@ -31,83 +25,87 @@ public class CircuitTenantResolverTests
     }
 
     private static FakeAuthStateProvider Anonymous() =>
-        new FakeAuthStateProvider(new ClaimsPrincipal(new ClaimsIdentity()));
+        new(new ClaimsPrincipal(new ClaimsIdentity()));
 
-    private static (CircuitTenantResolver Resolver, StubHttpMessageHandler Handler) ResolverFor(
-        AuthenticationStateProvider authState, FakeLinkStore store, string? selection = null)
+    private static (CircuitTenantResolver Resolver, CapturingHandler Handler, FakeSelectionStore Selections) ResolverFor(
+        AuthenticationStateProvider authState, string? selection)
     {
-        var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(4, 0, 0)));
-        var factory = new StubHttpClientFactory(handler, new Uri("https://api.crawldad.test/"));
-        return (new CircuitTenantResolver(authState, store, new FakeSelectionStore(selection), _protection, factory), handler);
+        var capture = new CapturingHandler(_ => ClientTestHarness.Json(new QueueStatsResponse(4, 0, 0)));
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>(StringComparer.Ordinal) { ["Crawldad:Api:BaseUrl"] = "https://api.crawldad.test/" })
+            .Build();
+        var consoleClients = new ConsoleClientFactory(new StubHandlerFactory(capture), new FakeTokenSource("entra-token"), config);
+        var selections = new FakeSelectionStore(selection);
+        return (new CircuitTenantResolver(authState, selections, consoleClients), capture, selections);
     }
 
     [Fact]
-    public async Task Resolves_a_linked_circuit_user_with_a_client_authenticated_as_the_tenant()
+    public async Task Resolves_the_active_workspace_with_a_console_client()
     {
-        var store = new FakeLinkStore { Link = LinkFor("user@example.com", "tenant-77") };
-        var (resolver, handler) = ResolverFor(AuthenticatedAs("user@example.com"), store);
+        var (resolver, capture, _) = ResolverFor(AuthenticatedAs("user@example.com"), selection: "tenant-77");
 
         var tenant = await resolver.TryResolveAsync();
 
+        resolver.ConsoleConfigured.ShouldBeTrue();
         tenant.ShouldNotBeNull();
         tenant.TenantId.ShouldBe("tenant-77");
-        (await tenant.Client.GetQueueStatsAsync()).Queued.ShouldBe(4); // the client actually calls the API...
-        handler.Last.Authorization.ShouldBe($"Bearer {_apiKey}");       // ...bearing the tenant's decrypted key
+        (await tenant.Client.GetQueueStatsAsync()).Queued.ShouldBe(4); // the console client actually calls the API...
+        capture.Authorization.ShouldBe("Bearer entra-token");           // ...bearing the first-party token...
+        capture.Workspace.ShouldBe("tenant-77");                        // ...and the active-workspace selector.
     }
 
     [Fact]
     public async Task Normalizes_the_claim_email_exactly_like_the_otp_sign_in()
     {
-        // The link is keyed by the OTP-normalized identity; a differently-cased/spaced claim must still find it.
+        // The active workspace is keyed by the OTP-normalized identity; a differently-cased/spaced claim must still find it,
+        // and the console user selector carries the normalized form.
         const string StoredIdentity = "user@example.com";
-        var store = new FakeLinkStore { Link = LinkFor(StoredIdentity, "tenant-9") };
-        var (resolver, _) = ResolverFor(AuthenticatedAs("  User@Example.COM  "), store);
+        var (resolver, capture, selections) = ResolverFor(AuthenticatedAs("  User@Example.COM  "), selection: "tenant-9");
 
         var tenant = await resolver.TryResolveAsync();
 
         tenant.ShouldNotBeNull();
-        // The store was queried with the OTP-normalized form — parity with PortalAuthService.NormalizeEmail, byte-for-byte.
-        store.LastQueriedEmail.ShouldBe(StoredIdentity);
-        store.LastQueriedEmail.ShouldBe(PortalAuthService.NormalizeEmail("  User@Example.COM  "));
+        await tenant.Client.GetQueueStatsAsync();
+        selections.LastQueriedEmail.ShouldBe(StoredIdentity);
+        selections.LastQueriedEmail.ShouldBe(PortalAuthService.NormalizeEmail("  User@Example.COM  "));
+        capture.ConsoleUser.ShouldBe(StoredIdentity);
     }
 
     [Fact]
-    public async Task A_stored_key_circuit_ignores_a_selection_and_resolves_the_single_link()
+    public async Task Authenticated_but_no_active_workspace_is_not_linked()
     {
-        // A stray active-workspace selection (from a console session) must not repoint a stored-key circuit — it stays on the
-        // single link. This also exercises the selection lookup on the circuit path.
-        var store = new FakeLinkStore { Link = LinkFor("user@example.com", "tenant-77") };
-        var (resolver, _) = ResolverFor(AuthenticatedAs("user@example.com"), store, selection: "tenant-99");
-
-        (await resolver.TryResolveAsync())!.TenantId.ShouldBe("tenant-77");
-    }
-
-    [Fact]
-    public async Task Authenticated_but_unlinked_circuit_is_not_linked()
-    {
-        var (resolver, _) = ResolverFor(AuthenticatedAs("nolink@example.com"), new FakeLinkStore { Link = null });
+        var (resolver, _, _) = ResolverFor(AuthenticatedAs("nolink@example.com"), selection: null);
 
         (await resolver.TryResolveAsync()).ShouldBeNull();
     }
 
     [Fact]
-    public async Task Anonymous_circuit_is_not_linked_and_never_touches_the_store()
+    public async Task Unconfigured_console_circuit_is_not_linked_and_reports_not_configured()
     {
-        var store = new FakeLinkStore { Link = LinkFor("x@example.com", "t") };
-        var (resolver, _) = ResolverFor(Anonymous(), store);
+        // No ConsoleClientFactory: even with a selection the circuit resolves null, and ConsoleConfigured is false.
+        var selections = new FakeSelectionStore("tenant-77");
+        var resolver = new CircuitTenantResolver(AuthenticatedAs("user@example.com"), selections, consoleClients: null);
+
+        resolver.ConsoleConfigured.ShouldBeFalse();
+        (await resolver.TryResolveAsync()).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Anonymous_circuit_is_not_linked_and_never_touches_the_selection_store()
+    {
+        var (resolver, _, selections) = ResolverFor(Anonymous(), selection: "t");
 
         (await resolver.TryResolveAsync()).ShouldBeNull();
-        store.GetCalls.ShouldBe(0);
+        selections.GetCalls.ShouldBe(0);
     }
 
     [Fact]
     public async Task Authenticated_without_an_email_claim_is_not_linked_and_never_touches_the_store()
     {
-        var store = new FakeLinkStore { Link = LinkFor("x@example.com", "t") };
-        var (resolver, _) = ResolverFor(AuthenticatedAs(email: null), store);
+        var (resolver, _, selections) = ResolverFor(AuthenticatedAs(email: null), selection: "t");
 
         (await resolver.TryResolveAsync()).ShouldBeNull();
-        store.GetCalls.ShouldBe(0);
+        selections.GetCalls.ShouldBe(0);
     }
 
     private sealed class FakeAuthStateProvider(ClaimsPrincipal user) : AuthenticationStateProvider
@@ -116,35 +114,42 @@ public class CircuitTenantResolverTests
             Task.FromResult(new AuthenticationState(user));
     }
 
-    private sealed class FakeLinkStore : IPortalTenantLinkStore
+    private sealed class StubHandlerFactory(HttpMessageHandler handler) : IHttpMessageHandlerFactory
     {
-        public PortalTenantLink? Link { get; set; }
-        public int GetCalls { get; private set; }
-        public string? LastQueriedEmail { get; private set; }
-
-        public Task<PortalTenantLink?> GetAsync(string email, CancellationToken cancellationToken = default)
-        {
-            GetCalls++;
-            LastQueriedEmail = email;
-            return Task.FromResult(Link);
-        }
-
-        public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+        public HttpMessageHandler CreateHandler(string name) => handler;
     }
 
-    private sealed class StubHttpClientFactory(HttpMessageHandler handler, Uri baseAddress) : IHttpClientFactory
+    private sealed class FakeTokenSource(string token) : IConsoleTokenSource
     {
-        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false) { BaseAddress = baseAddress };
+        public ValueTask<string> GetTokenAsync(CancellationToken cancellationToken) => ValueTask.FromResult(token);
+    }
+
+    private sealed class CapturingHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
+    {
+        public string? Authorization { get; private set; }
+        public string? ConsoleUser { get; private set; }
+        public string? Workspace { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Authorization = request.Headers.Authorization?.ToString();
+            ConsoleUser = request.Headers.TryGetValues(ConsoleAuthHeaders.ConsoleUser, out var user) ? user.Single() : null;
+            Workspace = request.Headers.TryGetValues(ConsoleAuthHeaders.Workspace, out var workspace) ? workspace.Single() : null;
+            return Task.FromResult(responder(request));
+        }
     }
 
     private sealed class FakeSelectionStore(string? tenantId) : IPortalWorkspaceSelectionStore
     {
-        public Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default) =>
-            Task.FromResult(tenantId is null ? null : new PortalWorkspaceSelection { Email = email, TenantId = tenantId });
+        public int GetCalls { get; private set; }
+        public string? LastQueriedEmail { get; private set; }
+
+        public Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default)
+        {
+            GetCalls++;
+            LastQueriedEmail = email;
+            return Task.FromResult(tenantId is null ? null : new PortalWorkspaceSelection { Email = email, TenantId = tenantId });
+        }
 
         public Task SetAsync(string email, string tenantId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

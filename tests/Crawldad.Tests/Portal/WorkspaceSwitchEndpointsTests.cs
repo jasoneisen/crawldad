@@ -9,10 +9,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>The workspace switcher's form handler (issue #119 PR6): it persists the active-workspace selection only for a
-/// workspace the account is actually a member of (console-mode consults the API list; stored-key mode is the single link),
-/// then redirects to the dashboard — and redirects to the account page (persisting nothing) when there is no linked tenant
-/// or no target. A non-member target is silently ignored (the API's membership gate is the real authority).</summary>
+/// <summary>The workspace switcher's form handler (issue #119): it persists the active-workspace selection only for a
+/// workspace the account is actually a member of (consulting the authoritative GET /workspaces list — console is the only
+/// mode), then redirects to the dashboard — and redirects to the account page (persisting nothing) when there is no active
+/// workspace or no target. A non-member target is silently ignored (the API's membership gate is the real authority).</summary>
 public class WorkspaceSwitchEndpointsTests
 {
     private static readonly IServiceProvider _services = new ServiceCollection().AddLogging().BuildServiceProvider();
@@ -21,7 +21,7 @@ public class WorkspaceSwitchEndpointsTests
     public async Task Switches_to_a_workspace_the_user_is_a_member_of()
     {
         var selections = new RecordingSelectionStore();
-        var tenant = Linked(WorkspacesReturning("tenant-a", "tenant-b"), PortalAuthMode.Console);
+        var tenant = Linked(WorkspacesReturning("tenant-a", "tenant-b"));
 
         var result = await WorkspaceSwitchEndpoints.SwitchAsync(Http(), Context(tenant), selections, "tenant-b");
 
@@ -33,7 +33,7 @@ public class WorkspaceSwitchEndpointsTests
     public async Task A_non_member_target_is_ignored_but_still_redirects()
     {
         var selections = new RecordingSelectionStore();
-        var tenant = Linked(WorkspacesReturning("tenant-a"), PortalAuthMode.Console);
+        var tenant = Linked(WorkspacesReturning("tenant-a"));
 
         var result = await WorkspaceSwitchEndpoints.SwitchAsync(Http(), Context(tenant), selections, "tenant-zzz");
 
@@ -45,7 +45,7 @@ public class WorkspaceSwitchEndpointsTests
     public async Task A_console_list_failure_leaves_the_selection_unchanged()
     {
         var selections = new RecordingSelectionStore();
-        var tenant = Linked(Failing(), PortalAuthMode.Console);
+        var tenant = Linked(Failing());
 
         var result = await WorkspaceSwitchEndpoints.SwitchAsync(Http(), Context(tenant), selections, "tenant-b");
 
@@ -54,27 +54,10 @@ public class WorkspaceSwitchEndpointsTests
     }
 
     [Fact]
-    public async Task Stored_key_mode_only_switches_to_the_single_link_tenant()
-    {
-        var selections = new RecordingSelectionStore();
-        var tenant = Linked(WorkspacesReturning(), PortalAuthMode.Key); // stored-key: the list endpoint is never consulted
-
-        // The single stored-key workspace is the link tenant — a matching target persists...
-        (await RunAsync(await WorkspaceSwitchEndpoints.SwitchAsync(Http(), Context(tenant), selections, "tenant-alpha"))).Location
-            .ShouldBe(WorkspaceSwitchEndpoints.DashboardPath);
-        selections.Last.ShouldBe(("u@x.test", "tenant-alpha"));
-
-        // ...but any other target does not.
-        selections.Reset();
-        await WorkspaceSwitchEndpoints.SwitchAsync(Http(), Context(tenant), selections, "tenant-other");
-        selections.Last.ShouldBeNull();
-    }
-
-    [Fact]
     public async Task No_email_or_no_workspace_redirects_to_the_account_without_persisting()
     {
         var selections = new RecordingSelectionStore();
-        var tenant = Linked(WorkspacesReturning("tenant-a"), PortalAuthMode.Console);
+        var tenant = Linked(WorkspacesReturning("tenant-a"));
 
         (await RunAsync(await WorkspaceSwitchEndpoints.SwitchAsync(Http(email: null), Context(tenant), selections, "tenant-a"))).Location
             .ShouldBe(WorkspaceSwitchEndpoints.AccountPath);
@@ -102,10 +85,10 @@ public class WorkspaceSwitchEndpointsTests
 
     private static FakeContext Context(PortalTenant? tenant) => new(tenant);
 
-    private static PortalTenant Linked(StubHttpMessageHandler handler, PortalAuthMode authMode) =>
+    private static PortalTenant Linked(StubHttpMessageHandler handler) =>
         new("tenant-alpha", new CrawldadClient(
             new HttpClient(handler) { BaseAddress = ClientTestHarness.BaseUrl },
-            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), authMode);
+            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }));
 
     private static StubHttpMessageHandler WorkspacesReturning(params string[] tenantIds) =>
         new(_ => ClientTestHarness.Json(new WorkspaceList([.. tenantIds.Select(id => new WorkspaceSummary(id, id, MembershipRole.Owner))])));
@@ -122,6 +105,8 @@ public class WorkspaceSwitchEndpointsTests
 
     private sealed class FakeContext(PortalTenant? tenant) : IPortalTenantContext
     {
+        public bool ConsoleConfigured => true;
+
         public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant);
 
         public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant!);

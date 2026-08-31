@@ -37,7 +37,7 @@ public class LivePickerPageTests : BunitContext
         var cut = Render<Live>();
 
         cut.Find("[data-testid=not-linked]").ShouldNotBeNull();
-        cut.Markup.ShouldContain("No workspace linked");
+        cut.Markup.ShouldContain("No workspace yet");
         cut.Find("a[href=\"/app/account\"]").ShouldNotBeNull();
     }
 

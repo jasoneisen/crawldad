@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using Bunit;
 using Crawldad.Contracts.Drift;
 using Crawldad.Contracts.Payloads;
@@ -17,30 +16,27 @@ public class PayloadsPageTests : BunitContext
     private void Use(IPortalTenantContext context) => Services.AddSingleton(context);
 
     [Fact]
-    public void Not_linked_shows_the_link_your_workspace_empty_state()
+    public void No_workspace_shows_the_get_started_empty_state()
     {
         Use(PayloadsWebhooksTenantContext.NotLinked());
 
         var cut = Render<Payloads>();
 
-        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace linked");
+        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace yet");
         cut.Markup.ShouldContain("/app/account");
         cut.FindAll("[data-testid=tenant]").ShouldBeEmpty();
     }
 
     [Fact]
-    public void An_undecryptable_stored_key_degrades_to_the_not_linked_state_rather_than_crashing()
+    public void Unconfigured_console_shows_the_honest_not_configured_state()
     {
-        // A rotated/lost Data-Protection ring makes the resolve throw CryptographicException; the shared page-resolve
-        // helper folds it into the same not-linked empty state (pointing at Account) instead of a 500. Representative of
-        // every data page's OnInitializedAsync resolve — the seven pages share one helper, tested directly in
-        // PortalTenantContextExtensionsTests.
-        Use(PayloadsWebhooksTenantContext.Throwing(new CryptographicException("ring rotated")));
+        // Console access is unconfigured on the deployment (an operator misconfig): the shared WorkspaceEmptyState renders
+        // the honest "console access isn't configured" state — never a 500, never a misleading "no workspace" prompt.
+        Use(PayloadsWebhooksTenantContext.NotConfigured());
 
         var cut = Render<Payloads>();
 
-        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace linked");
-        cut.Markup.ShouldContain("/app/account");
+        cut.Find("[data-testid=console-unconfigured]").TextContent.ShouldContain("Console access isn't configured");
     }
 
     [Fact]
@@ -52,7 +48,8 @@ public class PayloadsPageTests : BunitContext
         var cut = Render<Payloads>();
 
         cut.Find("[data-testid=empty]").TextContent.ShouldContain("No payloads yet");
-        cut.Find("[data-testid=tenant]").TextContent.ShouldBe("meridian-title");
+        // The raw tenant id is no longer rendered on data pages (issue #119 id de-emphasis — it lives only in Account).
+        cut.FindAll("[data-testid=tenant]").ShouldBeEmpty();
     }
 
     [Fact]

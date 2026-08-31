@@ -1,24 +1,31 @@
 using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
-using Crawldad.Portal.Infrastructure.Security;
-using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Http;
 
 namespace Crawldad.Portal.Tenancy;
 
-/// <summary>The outcome of a workspace-link attempt. Only <see cref="Linked"/> persists anything — every other value
-/// is a validated-and-rejected attempt that left no link written, so a bad key can never be stored.</summary>
+/// <summary>The outcome of a workspace-claim attempt. Nothing is ever persisted here: a claim proves key possession and
+/// records a console membership on the API — the key is <b>always discarded</b>, never stored (issue #119 simplification).
+/// Every value other than <see cref="Claimed"/> is a validated-and-rejected attempt.</summary>
 public enum WorkspaceLinkOutcome
 {
-    /// <summary>The key authenticated and its tenant matched — the link was created or updated.</summary>
-    Linked,
+    /// <summary>The key authenticated, its tenant matched, and the account's Owner membership was recorded — the console
+    /// credential authenticates the workspace from here on. The key is discarded.</summary>
+    Claimed,
 
-    /// <summary>The API rejected the key (<c>401</c>) — nothing was stored.</summary>
+    /// <summary>The API rejected the key (<c>401</c>) — nothing recorded.</summary>
     InvalidKey,
 
-    /// <summary>The key is valid but authenticates a different tenant than the one entered — nothing was stored.</summary>
+    /// <summary>The key is valid but authenticates a different tenant than the one entered — nothing recorded.</summary>
     TenantMismatch,
 
-    /// <summary>The key could not be verified (the API was unreachable or errored) — nothing was stored.</summary>
+    /// <summary>The workspace is an operator-configured (env) tenant that has no membership surface — it cannot be claimed as
+    /// a self-serve workspace (the API returns <c>400 self_service_unavailable</c> when recording the membership). Nothing
+    /// recorded, and — crucially — no key is kept (issue #119: the old stored-key fallback is gone).</summary>
+    OperatorManaged,
+
+    /// <summary>The key could not be verified, or the membership could not be recorded (the API was unreachable or errored) —
+    /// nothing recorded.</summary>
     Unverifiable,
 }
 
@@ -28,19 +35,23 @@ public enum WorkspaceLinkOutcome
 /// <param name="Message">A human-readable, non-sensitive description to show the account holder.</param>
 public sealed record WorkspaceLinkResult(WorkspaceLinkOutcome Outcome, string Message);
 
-/// <summary>Creates or updates a portal account's workspace link — the account area's real (non-dev-seed) link path.
-/// It <b>always validates the submitted key against the live API before persisting</b>: a key that fails to
-/// authenticate, or that authenticates the wrong tenant, is never written. The submitted key is treated like a
-/// password throughout — passed straight to a one-shot client, never logged, echoed, or returned.</summary>
+/// <summary>Claims an existing workspace for a portal account (the account area's understated "Claim an existing workspace"
+/// action, issue #119 simplification). It <b>validates the submitted key against the live API before recording anything</b>:
+/// it probes <c>GET /tenant</c> with a one-shot client built for that key, confirms the key authenticates the entered
+/// workspace, then records the account's Owner <b>membership</b> (the console authorization authority) — and <b>always
+/// discards the key</b>. There is no stored key anywhere anymore; the console credential authenticates the workspace from
+/// here on. An operator-configured (env) tenant has no membership surface, so it can never be claimed as a workspace (a clear
+/// message, no silently-kept key). The submitted key is treated like a password throughout — passed straight to a one-shot
+/// client, never logged, echoed, stored, or returned.</summary>
 public interface IWorkspaceLinker
 {
-    /// <summary>Validates <paramref name="apiKey"/> by reading the tenant profile it authenticates, then — only when
-    /// that succeeds and the profile's tenant matches <paramref name="tenantId"/> — upserts the link for
-    /// <paramref name="email"/>. No API round-trip means no write.</summary>
-    /// <param name="email">The signed-in account's email (the link identity).</param>
+    /// <summary>Validates <paramref name="apiKey"/> by reading the tenant profile it authenticates, and — only when that
+    /// succeeds and the profile's tenant matches <paramref name="tenantId"/> — records the account's Owner membership, then
+    /// discards the key. No API round-trip means nothing recorded.</summary>
+    /// <param name="email">The signed-in account's email (the membership identity).</param>
     /// <param name="tenantId">The workspace/tenant id the account holder entered (confirmed against the key).</param>
-    /// <param name="apiKey">The tenant API key to validate and, on success, store encrypted. Never logged or echoed.</param>
-    /// <param name="cancellationToken">Cancels the validation round-trip.</param>
+    /// <param name="apiKey">The tenant API key to validate. Never logged, echoed, stored, or returned.</param>
+    /// <param name="cancellationToken">Cancels the round-trips.</param>
     /// <returns>The outcome and a safe-to-render message.</returns>
     Task<WorkspaceLinkResult> LinkAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default);
 }
@@ -49,21 +60,16 @@ public interface IWorkspaceLinker
 internal sealed class WorkspaceLinker : IWorkspaceLinker
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IPortalTenantLinkStore _links;
-    private readonly bool _consoleMode;
 
-    public WorkspaceLinker(IHttpClientFactory httpClientFactory, IPortalTenantLinkStore links, IOptions<PortalConsoleAuthOptions> consoleAuth)
+    public WorkspaceLinker(IHttpClientFactory httpClientFactory)
     {
-        ArgumentNullException.ThrowIfNull(consoleAuth);
         _httpClientFactory = httpClientFactory;
-        _links = links;
-        _consoleMode = consoleAuth.Value.Enabled;
     }
 
     public async Task<WorkspaceLinkResult> LinkAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default)
     {
         // Validate the key by making the cheapest authenticated read (GET /tenant) through a one-shot client built for
-        // THIS key — not the request's tenant client. The result decides whether we ever touch the store.
+        // THIS key — not the request's console client. The result decides whether we ever record a membership.
         var http = _httpClientFactory.CreateClient(PortalTenancy.ApiHttpClientName); // base address preset at wiring
         var probe = new CrawldadClient(http, new CrawldadClientOptions { ApiKey = apiKey });
 
@@ -94,42 +100,28 @@ internal sealed class WorkspaceLinker : IWorkspaceLinker
         }
 
         // Validated: record the account's OWNER membership (the console authorization authority) using the same proven key,
-        // so a later console read/write for this email resolves to the tenant. In stored-key mode this is additive best-effort;
-        // in console-mode it is what the discard below depends on (it becomes the only authenticator), so its success gates the
-        // discard. An env-configured tenant has no membership surface (400) and a transient fault both degrade to keeping the key.
-        var membershipRecorded = await TryRecordMembershipAsync(probe, email, cancellationToken);
-
-        if (_consoleMode && membershipRecorded)
-        {
-            // Verify-then-discard (issue #119 PR5): the membership is recorded, so the console credential authenticates —
-            // store the AUTHORITATIVE email→tenant mapping WITHOUT the key. The stored key is now unnecessary.
-            await _links.UpsertKeylessAsync(email, profile.TenantId, cancellationToken);
-        }
-        else
-        {
-            // Stored-key mode (byte-identical to today), OR console-mode where membership recording failed — persist the link
-            // WITH the encrypted key so the user is never locked out: it authenticates (unconfigured) or is the transition
-            // read-fallback (console-mode). The store protects the key at rest; the tenant id is the authoritative one.
-            await _links.UpsertAsync(email, profile.TenantId, apiKey, cancellationToken);
-        }
-
-        return new WorkspaceLinkResult(
-            WorkspaceLinkOutcome.Linked,
-            $"Workspace ‘{profile.TenantId}’ is linked.");
-    }
-
-    // Records the signed-in account's Owner membership best-effort, returning whether it was recorded. A failure (an env
-    // tenant's 400, or a transient API fault) is swallowed — the caller keeps the stored key so the account is never locked out.
-    private static async Task<bool> TryRecordMembershipAsync(CrawldadClient probe, string email, CancellationToken cancellationToken)
-    {
+        // so a later console read/write for this email resolves to the workspace. The key is discarded either way — it is
+        // NEVER stored (issue #119: the stored-key path is gone). An env-configured tenant has no membership surface (400):
+        // it can't be claimed as a workspace, and we keep no key for it.
         try
         {
             await probe.RecordOwnerMembershipAsync(email, cancellationToken);
-            return true;
+        }
+        catch (CrawldadApiException ex) when (ex.StatusCode == StatusCodes.Status400BadRequest)
+        {
+            return new WorkspaceLinkResult(
+                WorkspaceLinkOutcome.OperatorManaged,
+                $"‘{profile.TenantId}’ is an operator-configured tenant — it can't be claimed as a workspace. Ask your operator for access, or create a free workspace instead.");
         }
         catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
         {
-            return false; // membership surface unavailable / transient — degrade to keeping the stored key
+            return new WorkspaceLinkResult(
+                WorkspaceLinkOutcome.Unverifiable,
+                "We couldn't record your access to that workspace just now. Try again in a moment.");
         }
+
+        return new WorkspaceLinkResult(
+            WorkspaceLinkOutcome.Claimed,
+            $"Workspace ‘{profile.TenantId}’ is now yours.");
     }
 }

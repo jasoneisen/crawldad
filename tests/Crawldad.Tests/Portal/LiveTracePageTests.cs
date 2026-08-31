@@ -52,7 +52,7 @@ public class LiveTracePageTests : BunitContext
         var cut = Render<LiveTrace>(p => p.Add(x => x.RunId, _runId));
 
         cut.Find("[data-testid=not-linked]").ShouldNotBeNull();
-        cut.Markup.ShouldContain("No workspace linked");
+        cut.Markup.ShouldContain("No workspace yet");
         cut.FindAll("[data-testid=status-header]").ShouldBeEmpty(); // nothing streamed
     }
 

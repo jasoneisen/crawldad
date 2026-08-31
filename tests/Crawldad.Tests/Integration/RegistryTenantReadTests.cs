@@ -1,7 +1,8 @@
 using System.Text.Json;
 using Alba;
 using Crawldad.Api.Features.Runs;
-using Crawldad.Portal.Infrastructure.Security;
+using Crawldad.Api.Infrastructure.Security;
+using Crawldad.Contracts.Tenancy;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Support;
 using Marten;
@@ -62,25 +63,29 @@ public sealed class RegistryTenantReadTests(ManagementFixture fixture) : IAsyncL
     }
 
     [Fact]
-    public async Task A_registry_tenants_key_validates_through_the_portal_workspace_link_probe()
+    public async Task A_registry_tenants_key_claims_the_workspace_through_the_portal_probe_and_records_a_membership()
     {
         var id = NewTenantId();
-        await CreateTenantAsync(new { id, displayName = "Linkable" }); // no overrides → the registry default path
+        await CreateTenantAsync(new { id, displayName = "Claimable" }); // no overrides → the registry default path
         var raw = await IssueKeyAsync(id);
 
         // Drive the REAL portal WorkspaceLinker against the live API host: it validates a key by reading GET /tenant — the
-        // exact probe that 500'd for a registry tenant before this fix — then upserts only on a valid, matching key. A
-        // freshly provisioned registry tenant must now link.
-        var store = new RecordingLinkStore();
-        var linker = new WorkspaceLinker(new TestServerHttpClientFactory(Host), store, Options.Create(new PortalConsoleAuthOptions()));
+        // exact probe that 500'd for a registry tenant before this fix — then, only on a valid, matching key, records the
+        // account's Owner membership and DISCARDS the key (issue #119: no key is ever stored). A freshly provisioned registry
+        // tenant must now claim.
+        var linker = new WorkspaceLinker(new TestServerHttpClientFactory(Host));
 
         var result = await linker.LinkAsync("owner@example.com", id, raw);
 
-        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
-        var upsert = store.Upserts.ShouldHaveSingleItem();
-        upsert.TenantId.ShouldBe(id);         // the authoritative id from the profile the probe read
-        upsert.ApiKey.ShouldBe(raw);
+        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Claimed);
         result.Message.ShouldNotContain(raw); // never echoes the key material
+
+        // The Owner membership was recorded on the live API (the console authority) — that, not a stored key, is what a later
+        // console read resolves against.
+        var memberships = Host.Services.GetRequiredService<ITenantMembershipStore>();
+        var membership = await memberships.FindActiveAsync(id, "owner@example.com", CancellationToken.None);
+        membership.ShouldNotBeNull();
+        membership.Role.ShouldBe(MembershipRole.Owner);
     }
 
     // ---- helpers -------------------------------------------------------------------------------------------------
@@ -124,22 +129,4 @@ public sealed class RegistryTenantReadTests(ManagementFixture fixture) : IAsyncL
         public HttpClient CreateClient(string name) => host.GetTestServer().CreateClient();
     }
 
-    // Records upserts (never protects/persists) so the test can assert the linker wrote the authoritative id + key only
-    // after a successful probe.
-    private sealed class RecordingLinkStore : IPortalTenantLinkStore
-    {
-        public List<(string Email, string TenantId, string ApiKey)> Upserts { get; } = [];
-
-        public Task<PortalTenantLink?> GetAsync(string email, CancellationToken cancellationToken = default) =>
-            Task.FromResult<PortalTenantLink?>(null);
-
-        public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default)
-        {
-            Upserts.Add((email, tenantId, apiKey));
-            return Task.FromResult(new PortalTenantLink { Email = email, TenantId = tenantId });
-        }
-
-        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException(); // this test drives the stored-key (unconfigured) linker path
-    }
 }

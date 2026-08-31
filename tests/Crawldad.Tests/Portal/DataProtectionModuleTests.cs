@@ -121,13 +121,13 @@ public class DataProtectionModuleTests
             var portal = SharedRingProvider(PortalDataProtectionModule.ApplicationName, keyRing.FullName);
             var api = SharedRingProvider(ApiDataProtectionModule.ApplicationName, keyRing.FullName);
 
-            var sealedByPortal = portal.CreateProtector(PortalTenancy.ApiKeyProtectorPurpose).Protect("tenant-api-key");
+            var sealedByPortal = portal.CreateProtector("Crawldad.Portal.Test.IsolationProbe").Protect("tenant-api-key");
 
             // Same discriminator round-trips (the ring is functional)...
-            portal.CreateProtector(PortalTenancy.ApiKeyProtectorPurpose).Unprotect(sealedByPortal).ShouldBe("tenant-api-key");
+            portal.CreateProtector("Crawldad.Portal.Test.IsolationProbe").Unprotect(sealedByPortal).ShouldBe("tenant-api-key");
             // ...the API's discriminator cannot open it, despite sharing the exact same key material.
             Should.Throw<CryptographicException>(() =>
-                api.CreateProtector(PortalTenancy.ApiKeyProtectorPurpose).Unprotect(sealedByPortal));
+                api.CreateProtector("Crawldad.Portal.Test.IsolationProbe").Unprotect(sealedByPortal));
         }
         finally
         {

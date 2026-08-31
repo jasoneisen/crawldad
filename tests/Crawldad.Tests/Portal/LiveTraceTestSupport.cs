@@ -7,10 +7,12 @@ using Crawldad.Portal.Tenancy;
 namespace Crawldad.Tests.Portal;
 
 /// <summary>A programmable <see cref="ICircuitTenantResolver"/> for rendering the interactive live-trace component in
-/// isolation — a fixed linked <see cref="PortalTenant"/> (whose client rides a scripted transport) or the not-linked
-/// (null) state.</summary>
-internal sealed class FakeCircuitTenantResolver(PortalTenant? tenant) : ICircuitTenantResolver
+/// isolation — a fixed resolved <see cref="PortalTenant"/> (whose client rides a scripted transport) or the no-workspace
+/// (null) state. <paramref name="configured"/> models whether console access is configured (default true).</summary>
+internal sealed class FakeCircuitTenantResolver(PortalTenant? tenant, bool configured = true) : ICircuitTenantResolver
 {
+    public bool ConsoleConfigured => configured;
+
     public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(tenant);
 }

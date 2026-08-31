@@ -24,17 +24,8 @@
 
 @if (_active is null)
 {
-    <div class="card mt-3" data-testid="not-linked">
-        <div class="empty">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet, so there's nothing running to watch. Link a
-                workspace from your account to follow live runs here.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+    <div class="card mt-3">
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
     </div>
 }
 else if (_active.Count == 0)
@@ -118,7 +109,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        var tenant = await Tenant.TryResolveForPageAsync();
+        var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
             return; // unlinked, or an undecryptable key (rotated ring) => not-linked empty state (re-link from Account)

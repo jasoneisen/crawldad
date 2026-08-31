@@ -18,17 +18,8 @@
 
 @if (_result is null)
 {
-    <div class="card mt-3" data-testid="not-linked">
-        <div class="empty">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet, so there are no runs to show. Link a workspace
-                from your account to start seeing runs here.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+    <div class="card mt-3">
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
     </div>
 }
 else
@@ -211,7 +202,7 @@ else
         var to = RunView.ParseInstant(To);
         _filtered = RunView.HasFilter(_status, _payloadId, from, to);
 
-        var tenant = await Tenant.TryResolveForPageAsync();
+        var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
             return; // unlinked, or an undecryptable key (rotated ring) => not-linked empty state (re-link from Account)

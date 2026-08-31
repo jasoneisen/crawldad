@@ -7,25 +7,23 @@ using Microsoft.Extensions.Options;
 
 namespace Crawldad.Portal.Infrastructure.Security;
 
-/// <summary>The portal's Data-Protection key-ring wiring. The portal protects two things at rest with this key ring:
-/// the auth cookie (issued on the static-SSR login POST) and the tenant API key stored on each
-/// <see cref="PortalTenantLink"/>. Both must outlive the container, otherwise every restart/replace rotates the ring —
-/// signing users out AND making the stored keys undecryptable (the "relink needed" <c>CryptographicException</c> path).
-/// So when <c>Crawldad:Portal:DataProtection</c> is configured the ring is persisted to a blob and wrapped by a Key
-/// Vault key (managed-identity auth); absent config keeps the framework's default local ring, so dev/tests are
-/// untouched. Mirrors the API's <c>Crawldad.Api.Infrastructure.Security.DataProtectionModule</c> — same config shape,
-/// same fail-closed/fallback semantics.</summary>
+/// <summary>The portal's Data-Protection key-ring wiring. The portal protects its auth cookie (issued on the static-SSR
+/// login POST) and antiforgery tokens at rest with this key ring. It must outlive the container, otherwise every
+/// restart/replace rotates the ring and signs users out. (Issue #119 retired the stored-key path, so the ring no longer
+/// protects any tenant API key — it backs cookies/antiforgery only now.) So when <c>Crawldad:Portal:DataProtection</c> is
+/// configured the ring is persisted to a blob and wrapped by a Key Vault key (managed-identity auth); absent config keeps
+/// the framework's default local ring, so dev/tests are untouched. Mirrors the API's
+/// <c>Crawldad.Api.Infrastructure.Security.DataProtectionModule</c> — same config shape, same fail-closed/fallback semantics.</summary>
 public static class DataProtectionModule
 {
     /// <summary>The portal's fixed Data-Protection application discriminator. DELIBERATELY distinct from the API's
     /// <c>"crawldad"</c> (<c>Crawldad.Api.Infrastructure.Security.DataProtectionModule.ApplicationName</c>): the
     /// discriminator is folded into every key derivation, so even if the portal and the API were ever pointed at the
     /// SAME key ring, a payload protected by one could never be unprotected by the other. Combined with the portal's
-    /// own key-ring blob (its own storage container, never the API's) and its distinct protector purpose
-    /// (<see cref="PortalTenancy.ApiKeyProtectorPurpose"/>, unrelated to the API's browser/webhook purposes), the two
-    /// apps' protected data is fully isolated. Pinned so decryptability never rides on the container WORKDIR (the
-    /// framework otherwise derives the discriminator from the content-root path) — changing it once cookies/links are
-    /// encrypted would break Unprotect.</summary>
+    /// own key-ring blob (its own storage container, never the API's), the two apps' protected data (the portal's
+    /// cookies/antiforgery, the API's browser/webhook secrets) is fully isolated. Pinned so decryptability never rides on
+    /// the container WORKDIR (the framework otherwise derives the discriminator from the content-root path) — changing it
+    /// once cookies are encrypted would break Unprotect.</summary>
     internal const string ApplicationName = "crawldad-portal";
 
     /// <summary>Registers Data Protection plus the key-ring options + boot guard, and — only when the section is fully

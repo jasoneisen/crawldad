@@ -45,7 +45,7 @@ public class WebhooksPageTests : BunitContext
 
         var cut = RenderPage();
 
-        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace linked");
+        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace yet");
         cut.FindAll("[data-testid=register-form]").ShouldBeEmpty();
     }
 

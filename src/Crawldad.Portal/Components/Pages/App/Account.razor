@@ -2,41 +2,107 @@
 @layout AppLayout
 @attribute [Authorize]
 @using System.Globalization
-@using System.Security.Cryptography
 @using Crawldad.Client
 @using Crawldad.Contracts.Billing
 @using Crawldad.Contracts.Tenancy
 @using Crawldad.Portal.Tenancy
-@using Crawldad.Portal.Infrastructure.Security
-@using Microsoft.Extensions.Options
 @inject IPortalTenantContext Tenants
 @inject IWorkspaceLinker Linker
 @inject IPortalWorkspaceSelectionStore Selections
-@inject IOptions<PortalConsoleAuthOptions> ConsoleAuth
 @inject NavigationManager Nav
 
 <PageTitle>Account &amp; usage · Crawldad</PageTitle>
 
 @*
-    The account area (issue #119 P4). Static SSR — the workspace-link form handler runs on the real HTTP POST so it can
-    validate the submitted key against the live API and persist through IPortalTenantLinkStore before the response is
-    sent. Sections: profile, workspace link, plan & usage (from GET /tenant + GET /usage via the tenant client),
-    billing (Stripe Checkout + billing portal, from the billing-config read), and API keys (operator-managed for now).
-    Never a 500 when unlinked; the API key is treated
-    like a password — posted, validated, stored encrypted, and never echoed back or logged.
+    The account area (issue #119 — simplified workspace surface). The portal is console-mode only for data: there is no stored
+    tenant key. A workspace's IDENTITY is its display name everywhere; the raw workspace id appears in exactly ONE place — the
+    copyable "Workspace ID" field below, for API/SDK use. Single-workspace-first: a solo user sees plan/usage/keys with the
+    workspace name as a heading and no switcher/team chrome; the switch list and the full member-management section appear only
+    once there is more than one workspace / member. The "create a free workspace" and tucked-away "claim an existing workspace"
+    actions are the only ways to gain a workspace here. When console access is unconfigured on the deployment, every data
+    section reads an honest "console access not configured" — never a 500.
 *@
-<div class="page-header">
-    <h1 class="page-title">Account &amp; usage</h1>
+@{
+    // The understated "claim an existing workspace" disclosure and the "invite a teammate" form, each defined once here and
+    // rendered in whichever branch applies below (mutually exclusive, so a form name never renders twice per request).
+    // Declared before first use so the generated render method has them in scope wherever the markup references them.
+    RenderFragment ClaimDisclosure =@<details class="mt-2" data-testid="claim-disclosure">
+        <summary class="text-secondary" style="cursor: pointer;">Claim an existing workspace</summary>
+        <div class="mt-3">
+            <p class="text-secondary small">
+                Have an operator-provisioned workspace and its API key? Paste them to prove access — we verify the key against
+                the API, record your membership, and <b>never store the key</b>. From then on the portal reaches the workspace
+                through console access.
+            </p>
+            @if (_error is not null)
+            {
+                <div class="alert alert-danger" role="alert" data-testid="link-error">@_error</div>
+            }
+            <EditForm id="link-form" Model="Input" FormName="workspace-link" OnValidSubmit="HandleLinkAsync">
+                <DataAnnotationsValidator />
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <label class="form-label" for="tenantId">Workspace ID</label>
+                        <InputText id="tenantId" class="form-control" autocomplete="off" spellcheck="false" @bind-Value="Input.TenantId" />
+                        <ValidationMessage For="() => Input.TenantId" />
+                    </div>
+                    <div class="col-md-7">
+                        <label class="form-label" for="apiKey">API key</label>
+                        @* Manual input with no value attribute: the secret binds IN on POST but is never rendered back OUT. *@
+                        <input id="apiKey" name="Input.ApiKey" type="password" class="form-control" autocomplete="off" spellcheck="false" placeholder="Paste your API key" />
+                        <ValidationMessage For="() => Input.ApiKey" />
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="submit" class="btn btn-outline-primary" data-testid="link-submit">Verify &amp; claim</button>
+                </div>
+            </EditForm>
+        </div>
+    </details>;
+
+    RenderFragment AddMemberForm =@<div>
+        <hr class="my-3" />
+        <div class="fw-semibold mb-2">Invite a teammate</div>
+        <p class="text-secondary small">They sign in with email OTP; their access is scoped to the role you pick. Only Owners can manage keys, members, and billing.</p>
+        <form method="post" action="/app/members/add" data-testid="add-member-form">
+            <AntiforgeryToken />
+            <div class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label" for="member-email">Email</label>
+                    <input id="member-email" name="email" type="email" class="form-control" autocomplete="off" spellcheck="false" placeholder="teammate@example.com" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="member-role">Role</label>
+                    <select id="member-role" name="role" class="form-select">
+                        <option value="@MembershipRole.Member">Member</option>
+                        <option value="@MembershipRole.Owner">Owner</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100" data-testid="add-member-submit">Add member</button>
+                </div>
+            </div>
+        </form>
+    </div>;
+}
+<div class="page-header d-flex align-items-baseline justify-content-between">
+    <div>
+        <h1 class="page-title">Account &amp; usage</h1>
+        @if (_hasWorkspace)
+        {
+            <div class="text-secondary" data-testid="workspace-heading">@WorkspaceName</div>
+        }
+    </div>
 </div>
 
-@if (ShowLinked)
+@if (ShowClaimed)
 {
     <div class="alert alert-success mt-3" role="status" data-testid="link-success">
         <div class="d-flex">
             <div>
                 <svg xmlns="http://www.w3.org/2000/svg" class="icon alert-icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M5 12l5 5l10 -10" /></svg>
             </div>
-            <div>Workspace linked. Your plan and usage are shown below.</div>
+            <div>Workspace ready. Your plan and usage are shown below.</div>
         </div>
     </div>
 }
@@ -51,62 +117,43 @@
 
             <dt>Workspace</dt>
             <dd>
-                @if (_relinkNeeded)
-                {
-                    <span class="status status-yellow" data-testid="link-status">
-                        <span class="status-dot"></span>Re-link required
-                    </span>
-                }
-                else if (_linked)
+                @if (_hasWorkspace)
                 {
                     <span class="status status-green" data-testid="link-status">
-                        <span class="status-dot"></span>Linked to <span class="fw-semibold ms-1">@_tenantId</span>
+                        <span class="status-dot"></span>@WorkspaceName
+                    </span>
+                    @if (_myMembership is not null)
+                    {
+                        <span class="ms-2 text-secondary" data-testid="membership-status">@_myMembership.Role.ToString()</span>
+                    }
+                }
+                else if (!_configured)
+                {
+                    <span class="status status-secondary" data-testid="link-status">
+                        <span class="status-dot"></span>Console access not configured
                     </span>
                 }
                 else
                 {
                     <span class="status status-secondary" data-testid="link-status">
-                        <span class="status-dot"></span>Not linked
+                        <span class="status-dot"></span>No workspace yet
                     </span>
                 }
             </dd>
 
-            @if (_tenant is not null)
+            @if (_hasWorkspace)
             {
-                <dt>Console access</dt>
+                @* The ONE place the raw workspace id is surfaced — for API/SDK/CLI use. Copyable; never the identity. *@
+                <dt>Workspace ID</dt>
                 <dd>
-                    @if (_tenant.AuthMode == PortalAuthMode.Console)
-                    {
-                        <span class="status status-green" data-testid="console-mode">
-                            <span class="status-dot"></span>Console
+                    <div class="input-group input-group-flat" style="max-width: 26rem;">
+                        <input id="workspace-id" class="form-control cd-mono" readonly value="@_tenantId" onclick="this.select()" data-testid="workspace-id" />
+                        <span class="input-group-text p-0">
+                            <button type="button" class="btn btn-sm btn-ghost-secondary" data-testid="workspace-id-copy"
+                                    onclick="navigator.clipboard.writeText(document.getElementById('workspace-id').value);this.textContent='Copied';">Copy</button>
                         </span>
-                        @if (_tenant.StoredKeyRetained)
-                        {
-                            <span class="text-secondary ms-2" data-testid="console-key-state">stored key retained (transition fallback)</span>
-                        }
-                        else
-                        {
-                            <span class="text-secondary ms-2" data-testid="console-key-state">no stored key</span>
-                        }
-                    }
-                    else
-                    {
-                        <span class="status status-secondary" data-testid="console-mode">
-                            <span class="status-dot"></span>Stored key
-                        </span>
-                    }
-                    @if (_membershipsUnavailable)
-                    {
-                        <span class="text-secondary ms-2" data-testid="membership-status">Operator-managed workspace</span>
-                    }
-                    else if (_myMembership is not null)
-                    {
-                        <span class="ms-2" data-testid="membership-status">@_myMembership.Role.ToString() membership</span>
-                    }
-                    else
-                    {
-                        <span class="text-secondary ms-2" data-testid="membership-status">No membership</span>
-                    }
+                    </div>
+                    <div class="text-secondary small mt-1">Use this for the API and SDK (the <span class="cd-mono">X-Crawldad-Workspace</span> / tenant id). Your display name is your workspace's identity in the portal.</div>
                 </dd>
             }
 
@@ -122,512 +169,408 @@
     </div>
 </div>
 
-<!-- Workspaces (multi-workspace switcher state, issue #119 PR6) -->
-<div class="card mt-3" id="workspaces">
-    <div class="card-header"><h3 class="card-title">Workspaces</h3></div>
-    <div class="card-body">
-        @if (!_linked)
-        {
-            @if (ShowProvisionAffordance)
+@if (!_configured)
+{
+    <!-- Console access unconfigured (an operator misconfig): honest state, never a 500. -->
+    <div class="card mt-3" data-testid="console-unconfigured">
+        <div class="card-body">
+            <div class="empty">
+                <p class="empty-title">Console access isn't configured</p>
+                <p class="empty-subtitle text-secondary">
+                    This deployment isn't configured for console access, so your workspace's plan, usage, keys, and members
+                    can't be shown here. Contact your operator.
+                </p>
+            </div>
+        </div>
+    </div>
+}
+else if (!_hasWorkspace)
+{
+    <!-- Get started: the ONE create-free-workspace affordance, plus the tucked-away claim disclosure. -->
+    <div class="card mt-3" id="get-started" data-testid="get-started">
+        <div class="card-header"><h3 class="card-title">Get started</h3></div>
+        <div class="card-body">
+            <p class="text-secondary">You don't have a workspace yet. Create your free workspace to get started.</p>
+            @if (!string.IsNullOrEmpty(ProvisionError))
             {
-                @* Zero-workspace console user (the population signup creates): offer the one-click free workspace. Static SSR,
-                   antiforgery-protected POST → provision → link + select → redirect. Absent in stored-key mode (no console identity). *@
-                <p class="text-secondary">You don't have a workspace yet. Create your free workspace to get started — or attach an existing one below.</p>
-                @if (!string.IsNullOrEmpty(ProvisionError))
-                {
-                    <div class="alert alert-danger" role="alert" data-testid="provision-error">@ProvisionError</div>
-                }
-                <form method="post" action="/app/workspace/provision" data-testid="provision-form">
-                    <AntiforgeryToken />
-                    <div class="row g-2 align-items-end">
-                        <div class="col-md-7">
-                            <label class="form-label" for="provision-name">Workspace name</label>
-                            <input id="provision-name" name="displayName" class="form-control" autocomplete="off" spellcheck="false" placeholder="My workspace" maxlength="200" />
-                        </div>
-                        <div class="col-md-5">
-                            <button type="submit" class="btn btn-primary" data-testid="provision-submit">Create your free workspace</button>
-                        </div>
+                <div class="alert alert-danger" role="alert" data-testid="provision-error">@ProvisionError</div>
+            }
+            <form method="post" action="/app/workspace/provision" data-testid="provision-form">
+                <AntiforgeryToken />
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-7">
+                        <label class="form-label" for="provision-name">Workspace name</label>
+                        <input id="provision-name" name="displayName" class="form-control" autocomplete="off" spellcheck="false" placeholder="My workspace" maxlength="200" />
                     </div>
-                </form>
+                    <div class="col-md-5">
+                        <button type="submit" class="btn btn-primary" data-testid="provision-submit">Create your free workspace</button>
+                    </div>
+                </div>
+            </form>
+
+            @ClaimDisclosure
+        </div>
+    </div>
+}
+else
+{
+    <!-- Plan & usage -->
+    <div class="card mt-3" id="usage">
+        <div class="card-header">
+            <h3 class="card-title">Plan &amp; usage</h3>
+            @if (_profile is not null)
+            {
+                <div class="card-actions text-secondary small">@PlanLabel(_profile) · live</div>
+            }
+        </div>
+        <div class="card-body">
+            @if (_usageError)
+            {
+                <div class="empty" data-testid="usage-error">
+                    <p class="empty-title">Usage is unavailable right now</p>
+                    <p class="empty-subtitle text-secondary">
+                        We couldn't read your usage from the API. Try again shortly.
+                    </p>
+                </div>
             }
             else
             {
-                <p class="text-secondary mb-0" data-testid="workspaces-unlinked">Attach a workspace below to get started.</p>
-            }
-        }
-        else
-        {
-            <p class="text-secondary">The workspaces you can act as. Switching changes the active workspace for every page.</p>
-            <div class="list-group" data-testid="workspaces-list">
-                @foreach (var ws in WorkspaceRows())
-                {
-                    <div class="list-group-item d-flex align-items-center justify-content-between" data-testid="workspace-row">
-                        <div>
-                            <span class="fw-semibold">@ws.Label</span>
-                            <span class="text-secondary ms-2 small">@ws.Role</span>
+                // Reached only with a resolved workspace and no load error, so both are set — capture non-null locals.
+                var usage = _usage!;
+                var profile = _profile!;
+                <div class="row g-3" data-testid="usage-panel">
+                    <div class="col-sm-6 col-xl-4">
+                        <div class="datacard h-100">
+                            <div class="kpi-sub">Slots in use</div>
+                            <div class="kpi" data-testid="usage-slots">@usage.Slots.InUse <span class="kpi-of">/ @usage.Slots.Allowance</span></div>
+                            <div class="meter mt-2"><span style="width:@(Pct(usage.Slots.InUse, usage.Slots.Allowance))%"></span></div>
+                            <div class="text-secondary kpi-note">Concurrent runs admitted right now.</div>
                         </div>
-                        @if (ws.IsActive)
-                        {
-                            <span class="badge bg-primary" data-testid="workspace-active-badge">Active</span>
-                        }
-                        else
-                        {
-                            <form method="post" action="/app/workspace">
-                                <AntiforgeryToken />
-                                <input type="hidden" name="workspace" value="@ws.TenantId" />
-                                <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="workspace-switch">Switch</button>
-                            </form>
-                        }
                     </div>
-                }
-            </div>
-        }
-    </div>
-</div>
-
-<!-- Workspace link / attach another -->
-<div class="card mt-3" id="workspace-link">
-    <div class="card-header">
-        <h3 class="card-title">@(_linked ? "Attach another workspace" : "Link your workspace")</h3>
-    </div>
-    <div class="card-body">
-        <p class="text-secondary">
-            Paste a Crawldad workspace ID and a tenant API key. We verify the key against the API before saving it — it is
-            stored encrypted at rest and never shown again. Attaching switches you to that workspace; the others stay listed above.
-        </p>
-
-        @if (_error is not null)
-        {
-            <div class="alert alert-danger" role="alert" data-testid="link-error">@_error</div>
-        }
-
-        <EditForm id="link-form" Model="Input" FormName="workspace-link" OnValidSubmit="HandleLinkAsync">
-            <DataAnnotationsValidator />
-            <div class="row g-3">
-                <div class="col-md-5">
-                    <label class="form-label" for="tenantId">Workspace ID</label>
-                    <InputText id="tenantId" class="form-control" autocomplete="off" spellcheck="false" @bind-Value="Input.TenantId" />
-                    <ValidationMessage For="() => Input.TenantId" />
-                </div>
-                <div class="col-md-7">
-                    <label class="form-label" for="apiKey">API key</label>
-                    @* Manual input with no value attribute: the secret binds IN on POST but is never rendered back OUT. *@
-                    <input id="apiKey" name="Input.ApiKey" type="password" class="form-control" autocomplete="off" spellcheck="false" placeholder="Paste your API key" />
-                    <ValidationMessage For="() => Input.ApiKey" />
-                </div>
-            </div>
-            <div class="mt-3">
-                <button type="submit" class="btn btn-primary" data-testid="link-submit">
-                    @(_linked ? "Re-verify & update" : "Verify & link")
-                </button>
-            </div>
-        </EditForm>
-    </div>
-</div>
-
-<!-- Plan & usage -->
-<div class="card mt-3" id="usage">
-    <div class="card-header">
-        <h3 class="card-title">Plan &amp; usage</h3>
-        @if (_linked && _profile is not null)
-        {
-            <div class="card-actions text-secondary small">@PlanLabel(_profile) · live</div>
-        }
-    </div>
-    <div class="card-body">
-        @if (_relinkNeeded)
-        {
-            <div class="empty" data-testid="usage-relink">
-                <p class="empty-title">Your saved key can't be read</p>
-                <p class="empty-subtitle text-secondary">
-                    We couldn't decrypt your stored API key (the portal's encryption key was rotated). Re-link your
-                    workspace above with a current key to restore access — your data is safe.
-                </p>
-                <div class="empty-action">
-                    <a href="#workspace-link" class="btn btn-primary">Re-link your workspace</a>
-                </div>
-            </div>
-        }
-        else if (!_linked)
-        {
-            <div class="empty" data-testid="usage-unlinked">
-                <p class="empty-title">No usage yet</p>
-                <p class="empty-subtitle text-secondary">
-                    Link your workspace above to see live slot occupancy, queue depth, and your guardrails.
-                </p>
-                <div class="empty-action">
-                    <a href="#workspace-link" class="btn btn-primary">Link your workspace</a>
-                </div>
-            </div>
-        }
-        else if (_usageError)
-        {
-            <div class="empty" data-testid="usage-error">
-                <p class="empty-title">Usage is unavailable right now</p>
-                <p class="empty-subtitle text-secondary">
-                    We couldn't read your usage from the API. Your link is saved — try again shortly, or re-verify your
-                    key above if it was rotated.
-                </p>
-            </div>
-        }
-        else
-        {
-            // Reached only when linked with no load error, so both are set — capture non-null locals for the panel.
-            var usage = _usage!;
-            var profile = _profile!;
-            <div class="row g-3" data-testid="usage-panel">
-                <div class="col-sm-6 col-xl-4">
-                    <div class="datacard h-100">
-                        <div class="kpi-sub">Slots in use</div>
-                        <div class="kpi" data-testid="usage-slots">@usage.Slots.InUse <span class="kpi-of">/ @usage.Slots.Allowance</span></div>
-                        <div class="meter mt-2"><span style="width:@(Pct(usage.Slots.InUse, usage.Slots.Allowance))%"></span></div>
-                        <div class="text-secondary kpi-note">Concurrent runs admitted right now.</div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-4">
-                    <div class="datacard h-100">
-                        <div class="kpi-sub">Queue depth</div>
-                        <div class="kpi" data-testid="usage-queue">@usage.Queue.Depth <span class="kpi-of">/ @profile.QueueDepthAllowance</span></div>
-                        <div class="meter mt-2"><span style="width:@(Pct(usage.Queue.Depth, profile.QueueDepthAllowance))%"></span></div>
-                        <div class="text-secondary kpi-note">Runs wait here at the slot cap — no 429 until it fills.</div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-4">
-                    <div class="datacard h-100">
-                        <div class="kpi-sub">p95 queue wait</div>
-                        <div class="kpi" data-testid="usage-p95">@FormatWait(usage.Queue.P95WaitMs)</div>
-                        <div class="text-secondary kpi-note">Across @usage.Queue.Sampled promoted run(s). Sustained wait is the "add slots" signal.</div>
-                    </div>
-                </div>
-            </div>
-
-            <hr class="my-3" />
-
-            <div class="row g-4">
-                <div class="col-lg-7">
-                    <div class="fw-semibold mb-3">Guardrails <span class="text-secondary fw-normal small">— headroom before the hard ceilings</span></div>
-                    <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-baseline mb-1">
-                            <span class="small">Events / run (peak)</span>
-                            <span class="mono small" data-testid="usage-events">@usage.Events.Max <span class="text-secondary">/ @usage.Events.Guardrail</span></span>
+                    <div class="col-sm-6 col-xl-4">
+                        <div class="datacard h-100">
+                            <div class="kpi-sub">Queue depth</div>
+                            <div class="kpi" data-testid="usage-queue">@usage.Queue.Depth <span class="kpi-of">/ @profile.QueueDepthAllowance</span></div>
+                            <div class="meter mt-2"><span style="width:@(Pct(usage.Queue.Depth, profile.QueueDepthAllowance))%"></span></div>
+                            <div class="text-secondary kpi-note">Runs wait here at the slot cap — no 429 until it fills.</div>
                         </div>
-                        <div class="meter"><span style="width:@(Pct(usage.Events.Max, usage.Events.Guardrail))%"></span></div>
-                        <div class="text-secondary kpi-note">Peak over the last @usage.Events.Sampled run(s) · avg @usage.Events.Avg.</div>
                     </div>
-                    <div class="datacard">
-                        <div class="d-flex justify-content-between align-items-baseline">
-                            <span class="small">Runs started this month</span>
-                            <span class="kpi-inline mono" data-testid="usage-runs">@usage.RunsStartedThisMonth</span>
+                    <div class="col-sm-6 col-xl-4">
+                        <div class="datacard h-100">
+                            <div class="kpi-sub">p95 queue wait</div>
+                            <div class="kpi" data-testid="usage-p95">@FormatWait(usage.Queue.P95WaitMs)</div>
+                            <div class="text-secondary kpi-note">Across @usage.Queue.Sampled promoted run(s). Sustained wait is the "add slots" signal.</div>
                         </div>
                     </div>
                 </div>
-                <div class="col-lg-5">
-                    <div class="fw-semibold mb-3">Plan</div>
-                    <dl class="account-kv">
-                        <dt>Tier</dt>
-                        <dd data-testid="plan-tier">@PlanLabel(profile)</dd>
-                        <dt>Concurrent slots</dt>
-                        <dd>@profile.SlotAllowance</dd>
-                        <dt>Queue depth</dt>
-                        <dd>@profile.QueueDepthAllowance</dd>
-                    </dl>
-                </div>
-            </div>
-        }
-    </div>
-</div>
 
-<!-- Billing -->
-<div class="card mt-3" id="billing">
-    <div class="card-header"><h3 class="card-title">Billing</h3></div>
-    <div class="card-body">
-        @if (!_linked || _relinkNeeded)
-        {
-            <div class="empty" data-testid="billing-unlinked">
-                <p class="empty-title">Link your workspace to manage billing</p>
-                <p class="empty-subtitle text-secondary">
-                    Once your workspace is linked, upgrade your plan or open the billing portal from here.
-                </p>
-            </div>
-        }
-        else if (_billingConfig is not { Configured: true } billing)
-        {
-            <div class="empty" data-testid="billing-unavailable">
-                <p class="empty-title">Billing not yet available</p>
-                <p class="empty-subtitle text-secondary">
-                    Plan changes, invoices, and payment method will open in Stripe. Nothing to do here yet.
-                </p>
-            </div>
-        }
-        else
-        {
-            <div data-testid="billing-panel">
-                <p class="text-secondary">
-                    Your plan is <span class="fw-semibold" data-testid="billing-current">@CurrentPlanLabel(billing)</span>.
-                    Upgrading opens Stripe Checkout; "Manage billing" opens the Stripe billing portal. Your plan changes
-                    only after checkout completes.
-                </p>
-                <div class="row g-3">
-                    @foreach (var tier in billing.Tiers)
-                    {
-                        <div class="col-sm-6 col-lg-3">
-                            <div class="datacard h-100 @(tier.IsCurrent ? "border-primary" : "")">
-                                <div class="fw-semibold">@tier.DisplayName</div>
-                                <div class="kpi-inline">@tier.PriceLabel</div>
-                                @if (tier.Slots is int slots)
-                                {
-                                    <div class="text-secondary small">@slots concurrent slots</div>
-                                }
-                                <div class="mt-2">
-                                    @if (tier.IsCurrent)
-                                    {
-                                        <span class="badge bg-primary" data-testid="billing-tier-current">Current plan</span>
-                                    }
-                                    else if (tier.SelfServe)
-                                    {
-                                        <form method="post" action="/app/billing/checkout">
-                                            <AntiforgeryToken />
-                                            <input type="hidden" name="tier" value="@tier.Tier" />
-                                            <button type="submit" class="btn btn-outline-primary btn-sm" data-testid="billing-upgrade-@tier.Tier">
-                                                Choose @tier.DisplayName
-                                            </button>
-                                        </form>
-                                    }
-                                    else
-                                    {
-                                        <span class="text-secondary small">Contact sales</span>
-                                    }
-                                </div>
+                <hr class="my-3" />
+
+                <div class="row g-4">
+                    <div class="col-lg-7">
+                        <div class="fw-semibold mb-3">Guardrails <span class="text-secondary fw-normal small">— headroom before the hard ceilings</span></div>
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-baseline mb-1">
+                                <span class="small">Events / run (peak)</span>
+                                <span class="mono small" data-testid="usage-events">@usage.Events.Max <span class="text-secondary">/ @usage.Events.Guardrail</span></span>
+                            </div>
+                            <div class="meter"><span style="width:@(Pct(usage.Events.Max, usage.Events.Guardrail))%"></span></div>
+                            <div class="text-secondary kpi-note">Peak over the last @usage.Events.Sampled run(s) · avg @usage.Events.Avg.</div>
+                        </div>
+                        <div class="datacard">
+                            <div class="d-flex justify-content-between align-items-baseline">
+                                <span class="small">Runs started this month</span>
+                                <span class="kpi-inline mono" data-testid="usage-runs">@usage.RunsStartedThisMonth</span>
                             </div>
                         </div>
-                    }
-                </div>
-                <div class="mt-3">
-                    <form method="post" action="/app/billing/portal">
-                        <AntiforgeryToken />
-                        <button type="submit" class="btn btn-primary" data-testid="billing-manage">Manage billing</button>
-                    </form>
-                </div>
-            </div>
-        }
-    </div>
-</div>
-
-<!-- API keys -->
-<div class="card mt-3 mb-3" id="apikeys">
-    <div class="card-header"><h3 class="card-title">API keys</h3></div>
-    <div class="card-body">
-        @if (!_linked || _relinkNeeded)
-        {
-            <div class="empty" data-testid="keys-unlinked">
-                <p class="empty-title">Link your workspace to manage keys</p>
-                <p class="empty-subtitle text-secondary">
-                    Once your workspace is linked, mint, rotate, and revoke its API keys here.
-                </p>
-            </div>
-        }
-        else if (_keysOperatorManaged)
-        {
-            <div data-testid="keys-operator-managed">
-                <p class="mb-1">This workspace's API keys are managed by the Crawldad operator.</p>
-                <p class="text-secondary mb-0 small">
-                    Self-service key management isn't available for this workspace. For your security, key material is
-                    never displayed here.
-                </p>
-            </div>
-        }
-        else if (_keysError)
-        {
-            <div class="empty" data-testid="keys-error">
-                <p class="empty-title">Keys are unavailable right now</p>
-                <p class="empty-subtitle text-secondary">We couldn't read your keys from the API. Try again shortly.</p>
-            </div>
-        }
-        else
-        {
-            @if (_mintedKey is not null)
-            {
-                <div class="alert alert-success" role="status" data-testid="minted-key">
-                    <div class="fw-semibold mb-1">New API key@(_mintedLabel is null ? "" : $" ({_mintedLabel})") — copy it now</div>
-                    <p class="text-secondary small mb-2">
-                        This is the only time the full key is shown. Store it somewhere safe — you can't see it again.
-                    </p>
-                    <div class="input-group">
-                        @* Show-once: rendered on THIS response only, never persisted by the portal and never in a later GET. *@
-                        <input id="minted-key" class="form-control cd-mono" readonly value="@_mintedKey" onclick="this.select()" data-testid="minted-key-value" />
-                        <button type="button" class="btn btn-outline-primary" data-testid="minted-key-copy"
-                                onclick="navigator.clipboard.writeText(document.getElementById('minted-key').value);this.textContent='Copied';">Copy</button>
+                    </div>
+                    <div class="col-lg-5">
+                        <div class="fw-semibold mb-3">Plan</div>
+                        <dl class="account-kv">
+                            <dt>Tier</dt>
+                            <dd data-testid="plan-tier">@PlanLabel(profile)</dd>
+                            <dt>Concurrent slots</dt>
+                            <dd>@profile.SlotAllowance</dd>
+                            <dt>Queue depth</dt>
+                            <dd>@profile.QueueDepthAllowance</dd>
+                        </dl>
                     </div>
                 </div>
             }
+        </div>
+    </div>
 
-            @if (_keysActionError is not null)
+    <!-- Billing -->
+    <div class="card mt-3" id="billing">
+        <div class="card-header"><h3 class="card-title">Billing</h3></div>
+        <div class="card-body">
+            @if (_billingConfig is not { Configured: true } billing)
             {
-                <div class="alert alert-danger" role="alert" data-testid="keys-action-error">@_keysActionError</div>
+                <div class="empty" data-testid="billing-unavailable">
+                    <p class="empty-title">Billing not yet available</p>
+                    <p class="empty-subtitle text-secondary">
+                        Plan changes, invoices, and payment method will open in Stripe. Nothing to do here yet.
+                    </p>
+                </div>
             }
-
-            @if (RevokeConfirmTarget() is { } toRevoke)
+            else
             {
-                <div class="card mb-3 border-danger" data-testid="revoke-confirm">
-                    <div class="card-body">
-                        <h3 class="mb-1">Revoke key @toRevoke.Prefix…?</h3>
-                        <p class="text-secondary">Any client using this key stops working immediately. This can't be undone.</p>
-                        @if (IsLastActiveKey())
+                <div data-testid="billing-panel">
+                    <p class="text-secondary">
+                        Your plan is <span class="fw-semibold" data-testid="billing-current">@CurrentPlanLabel(billing)</span>.
+                        Upgrading opens Stripe Checkout; "Manage billing" opens the Stripe billing portal. Your plan changes
+                        only after checkout completes.
+                    </p>
+                    <div class="row g-3">
+                        @foreach (var tier in billing.Tiers)
                         {
-                            @if (HasConsoleRecovery())
+                            <div class="col-sm-6 col-lg-3">
+                                <div class="datacard h-100 @(tier.IsCurrent ? "border-primary" : "")">
+                                    <div class="fw-semibold">@tier.DisplayName</div>
+                                    <div class="kpi-inline">@tier.PriceLabel</div>
+                                    @if (tier.Slots is int slots)
+                                    {
+                                        <div class="text-secondary small">@slots concurrent slots</div>
+                                    }
+                                    <div class="mt-2">
+                                        @if (tier.IsCurrent)
+                                        {
+                                            <span class="badge bg-primary" data-testid="billing-tier-current">Current plan</span>
+                                        }
+                                        else if (tier.SelfServe)
+                                        {
+                                            <form method="post" action="/app/billing/checkout">
+                                                <AntiforgeryToken />
+                                                <input type="hidden" name="tier" value="@tier.Tier" />
+                                                <button type="submit" class="btn btn-outline-primary btn-sm" data-testid="billing-upgrade-@tier.Tier">
+                                                    Choose @tier.DisplayName
+                                                </button>
+                                            </form>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-secondary small">Contact sales</span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    <div class="mt-3">
+                        <form method="post" action="/app/billing/portal">
+                            <AntiforgeryToken />
+                            <button type="submit" class="btn btn-primary" data-testid="billing-manage">Manage billing</button>
+                        </form>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- API keys -->
+    <div class="card mt-3 mb-3" id="apikeys">
+        <div class="card-header"><h3 class="card-title">API keys</h3></div>
+        <div class="card-body">
+            @if (_keysOperatorManaged)
+            {
+                <div data-testid="keys-operator-managed">
+                    <p class="mb-1">This workspace's API keys are managed by the Crawldad operator.</p>
+                    <p class="text-secondary mb-0 small">
+                        Self-service key management isn't available for this workspace. For your security, key material is
+                        never displayed here.
+                    </p>
+                </div>
+            }
+            else if (_keysError)
+            {
+                <div class="empty" data-testid="keys-error">
+                    <p class="empty-title">Keys are unavailable right now</p>
+                    <p class="empty-subtitle text-secondary">We couldn't read your keys from the API. Try again shortly.</p>
+                </div>
+            }
+            else
+            {
+                @if (_mintedKey is not null)
+                {
+                    <div class="alert alert-success" role="status" data-testid="minted-key">
+                        <div class="fw-semibold mb-1">New API key@(_mintedLabel is null ? "" : $" ({_mintedLabel})") — copy it now</div>
+                        <p class="text-secondary small mb-2">
+                            This is the only time the full key is shown. Store it somewhere safe — you can't see it again.
+                        </p>
+                        <div class="input-group">
+                            @* Show-once: rendered on THIS response only, never persisted by the portal and never in a later GET. *@
+                            <input id="minted-key" class="form-control cd-mono" readonly value="@_mintedKey" onclick="this.select()" data-testid="minted-key-value" />
+                            <button type="button" class="btn btn-outline-primary" data-testid="minted-key-copy"
+                                    onclick="navigator.clipboard.writeText(document.getElementById('minted-key').value);this.textContent='Copied';">Copy</button>
+                        </div>
+                    </div>
+                }
+
+                @if (_keysActionError is not null)
+                {
+                    <div class="alert alert-danger" role="alert" data-testid="keys-action-error">@_keysActionError</div>
+                }
+
+                @if (RevokeConfirmTarget() is { } toRevoke)
+                {
+                    <div class="card mb-3 border-danger" data-testid="revoke-confirm">
+                        <div class="card-body">
+                            <h3 class="mb-1">Revoke key @toRevoke.Prefix…?</h3>
+                            <p class="text-secondary">Any client using this key stops working immediately. This can't be undone.</p>
+                            @if (IsLastActiveKey())
                             {
                                 <p class="text-secondary" data-testid="revoke-last-note">
                                     This is your workspace's last API key. You'll still reach this workspace through the portal
                                     (console access) — but any API or SDK client will need a newly minted key.
                                 </p>
                             }
-                            else
-                            {
-                                <p class="text-warning" data-testid="revoke-last-note">
-                                    This is your workspace's last API key and there's no console recovery, so revoking it is
-                                    refused to avoid a lockout. Rotate it instead to replace it without a gap.
-                                </p>
-                            }
-                        }
-                        <EditForm FormName="revoke-key" Model="RevokeForm" OnValidSubmit="RevokeKeyAsync" data-testid="revoke-form">
-                            <input type="hidden" name="RevokeForm.KeyId" value="@toRevoke.KeyId" />
-                            <button type="submit" class="btn btn-danger" data-testid="revoke-submit">Revoke key</button>
-                            <a href="/app/account" class="btn btn-link">Cancel</a>
-                        </EditForm>
+                            <EditForm FormName="revoke-key" Model="RevokeForm" OnValidSubmit="RevokeKeyAsync" data-testid="revoke-form">
+                                <input type="hidden" name="RevokeForm.KeyId" value="@toRevoke.KeyId" />
+                                <button type="submit" class="btn btn-danger" data-testid="revoke-submit">Revoke key</button>
+                                <a href="/app/account" class="btn btn-link">Cancel</a>
+                            </EditForm>
+                        </div>
                     </div>
-                </div>
-            }
+                }
 
-            @if (RotateConfirmTarget() is { } toRotate)
-            {
-                <div class="card mb-3 border-warning" data-testid="rotate-confirm">
-                    <div class="card-body">
-                        <h3 class="mb-1">Rotate key @toRotate.Prefix…?</h3>
-                        <p class="text-secondary">
-                            A new key is minted and this one is revoked immediately.
-                            @(toRotate.Current
-                                ? "This is the key this session uses — the portal switches to the new key automatically."
-                                : "Any client using the old key must switch to the new one.")
-                        </p>
-                        <EditForm FormName="rotate-key" Model="RotateForm" OnValidSubmit="RotateKeyAsync" data-testid="rotate-form">
-                            <input type="hidden" name="RotateForm.KeyId" value="@toRotate.KeyId" />
-                            <button type="submit" class="btn btn-warning" data-testid="rotate-submit">Rotate key</button>
-                            <a href="/app/account" class="btn btn-link">Cancel</a>
-                        </EditForm>
+                @if (RotateConfirmTarget() is { } toRotate)
+                {
+                    <div class="card mb-3 border-warning" data-testid="rotate-confirm">
+                        <div class="card-body">
+                            <h3 class="mb-1">Rotate key @toRotate.Prefix…?</h3>
+                            <p class="text-secondary">
+                                A new key is minted and this one is revoked immediately. Any client using the old key must
+                                switch to the new one.
+                            </p>
+                            <EditForm FormName="rotate-key" Model="RotateForm" OnValidSubmit="RotateKeyAsync" data-testid="rotate-form">
+                                <input type="hidden" name="RotateForm.KeyId" value="@toRotate.KeyId" />
+                                <button type="submit" class="btn btn-warning" data-testid="rotate-submit">Rotate key</button>
+                                <a href="/app/account" class="btn btn-link">Cancel</a>
+                            </EditForm>
+                        </div>
                     </div>
-                </div>
-            }
+                }
 
-            @if (_keyListStale)
-            {
-                <div class="empty" data-testid="keys-stale">
-                    <p class="empty-title">Session key rotated</p>
-                    <p class="empty-subtitle text-secondary">The portal is now using your new key. Refresh to see the updated key list.</p>
-                    <div class="empty-action"><a href="/app/account" class="btn btn-primary">Refresh</a></div>
-                </div>
-            }
-            else if (_keys.Count == 0)
-            {
-                <p class="text-secondary" data-testid="keys-empty">No keys yet — mint one below.</p>
-            }
-            else
-            {
-                <div class="table-responsive">
-                    <table class="table table-vcenter card-table">
-                        <thead>
-                            <tr><th>Key</th><th>Label</th><th>Created</th><th>Last used</th><th>Status</th><th class="w-1"></th></tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var key in _keys)
-                            {
-                                <tr data-testid="key-row">
-                                    <td class="cd-mono">@key.Prefix…</td>
-                                    <td>@(key.Label ?? "—")</td>
-                                    <td class="text-secondary">@FormatUtc(key.CreatedAt)</td>
-                                    <td class="text-secondary">@(key.LastUsedAt is { } used ? FormatUtc(used) : "—")</td>
-                                    <td>
-                                        @if (!key.Active)
-                                        {
-                                            <span class="badge bg-secondary-lt" data-testid="key-status-revoked">Revoked</span>
-                                        }
-                                        else if (key.Current)
-                                        {
-                                            <span class="badge bg-green-lt" data-testid="key-status-current">Active · this session</span>
-                                        }
-                                        else
-                                        {
-                                            <span class="badge bg-green-lt" data-testid="key-status-active">Active</span>
-                                        }
-                                    </td>
-                                    <td>
-                                        @if (key.Active)
-                                        {
-                                            <a href="@($"/app/account?rotate={key.KeyId}#apikeys")" class="btn btn-sm btn-ghost-secondary" data-testid="rotate-link">Rotate</a>
-                                            @if (!key.Current)
+                @if (_keys.Count == 0)
+                {
+                    <p class="text-secondary" data-testid="keys-empty">No keys yet — mint one below.</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-vcenter card-table">
+                            <thead>
+                                <tr><th>Key</th><th>Label</th><th>Created</th><th>Last used</th><th>Status</th><th class="w-1"></th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var key in _keys)
+                                {
+                                    <tr data-testid="key-row">
+                                        <td class="cd-mono">@key.Prefix…</td>
+                                        <td>@(key.Label ?? "—")</td>
+                                        <td class="text-secondary">@FormatUtc(key.CreatedAt)</td>
+                                        <td class="text-secondary">@(key.LastUsedAt is { } used ? FormatUtc(used) : "—")</td>
+                                        <td>
+                                            @if (key.Active)
                                             {
+                                                <span class="badge bg-green-lt" data-testid="key-status-active">Active</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-secondary-lt" data-testid="key-status-revoked">Revoked</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (key.Active)
+                                            {
+                                                <a href="@($"/app/account?rotate={key.KeyId}#apikeys")" class="btn btn-sm btn-ghost-secondary" data-testid="rotate-link">Rotate</a>
                                                 <a href="@($"/app/account?revoke={key.KeyId}#apikeys")" class="btn btn-sm btn-ghost-danger" data-testid="revoke-link">Revoke</a>
                                             }
-                                        }
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
 
-            <hr class="my-3" />
-            <div class="fw-semibold mb-2">Mint a new key</div>
-            <p class="text-secondary small">
-                Use keys to authenticate the API and the SDK. Rotating or revoking the key this session uses is guarded —
-                rotate replaces it without a gap. Your workspace's last key can be revoked only when console access can get
-                you back in.
-            </p>
-            <EditForm FormName="mint-key" Model="Mint" OnValidSubmit="MintKeyAsync" data-testid="mint-form">
-                <div class="row g-2 align-items-end">
-                    <div class="col-md-8">
-                        <label class="form-label" for="key-label">Label <span class="text-secondary fw-normal">(optional)</span></label>
-                        <InputText id="key-label" class="form-control" autocomplete="off" spellcheck="false" placeholder="e.g. ci, laptop, mcp-agent" @bind-Value="Mint.Label" />
+                <hr class="my-3" />
+                <div class="fw-semibold mb-2">Mint a new key</div>
+                <p class="text-secondary small">
+                    Use keys to authenticate the API and the SDK. Rotating replaces a key without a gap; your workspace's last
+                    key can be revoked because console access can always get you back in.
+                </p>
+                <EditForm FormName="mint-key" Model="Mint" OnValidSubmit="MintKeyAsync" data-testid="mint-form">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-8">
+                            <label class="form-label" for="key-label">Label <span class="text-secondary fw-normal">(optional)</span></label>
+                            <InputText id="key-label" class="form-control" autocomplete="off" spellcheck="false" placeholder="e.g. ci, laptop, mcp-agent" @bind-Value="Mint.Label" />
+                        </div>
+                        <div class="col-md-4">
+                            <button type="submit" class="btn btn-primary w-100" data-testid="mint-submit">Mint key</button>
+                        </div>
                     </div>
-                    <div class="col-md-4">
-                        <button type="submit" class="btn btn-primary w-100" data-testid="mint-submit">Mint key</button>
-                    </div>
-                </div>
-            </EditForm>
-        }
+                </EditForm>
+            }
+        </div>
     </div>
-</div>
 
-<!-- Members (issue #119 PR6): the workspace's members, and — for an Owner — add / change-role / remove controls. -->
-<div class="card mt-3 mb-3" id="members">
-    <div class="card-header"><h3 class="card-title">Members</h3></div>
-    <div class="card-body">
-        @if (!_linked || _relinkNeeded)
-        {
-            <div class="empty" data-testid="members-unlinked">
-                <p class="empty-title">Link your workspace to manage members</p>
-                <p class="empty-subtitle text-secondary">Once your workspace is linked, invite teammates and manage their roles here.</p>
+    @* Workspaces switch list — single-workspace-first: renders ONLY when the account has more than one workspace. *@
+    @if (IsMultiWorkspace)
+    {
+        <div class="card mt-3" id="workspaces">
+            <div class="card-header"><h3 class="card-title">Workspaces</h3></div>
+            <div class="card-body">
+                <p class="text-secondary">The workspaces you can act as. Switching changes the active workspace for every page.</p>
+                <div class="list-group" data-testid="workspaces-list">
+                    @foreach (var ws in _workspaces)
+                    {
+                        <div class="list-group-item d-flex align-items-center justify-content-between" data-testid="workspace-row">
+                            <div>
+                                <span class="fw-semibold">@ws.DisplayName</span>
+                                <span class="text-secondary ms-2 small">@ws.Role</span>
+                            </div>
+                            @if (string.Equals(ws.TenantId, _tenantId, StringComparison.Ordinal))
+                            {
+                                <span class="badge bg-primary" data-testid="workspace-active-badge">Active</span>
+                            }
+                            else
+                            {
+                                <form method="post" action="/app/workspace">
+                                    <AntiforgeryToken />
+                                    <input type="hidden" name="workspace" value="@ws.TenantId" />
+                                    <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="workspace-switch">Switch</button>
+                                </form>
+                            }
+                        </div>
+                    }
+                </div>
             </div>
-        }
-        else if (_membershipsUnavailable)
-        {
-            <div data-testid="members-operator-managed">
-                <p class="mb-0 text-secondary">This workspace is operator-managed; membership management isn't available here.</p>
-            </div>
-        }
-        else
-        {
-            @if (MemberError is not null)
-            {
-                <div class="alert alert-danger" role="alert" data-testid="members-action-error">@MemberError</div>
-            }
+        </div>
+    }
 
-            @if (ActiveMembers().Count == 0)
-            {
-                <p class="text-secondary" data-testid="members-empty">No members yet.</p>
-            }
-            else
-            {
+    <!-- Members -->
+    @if (_membershipsUnavailable)
+    {
+        <div class="card mt-3 mb-3" id="members">
+            <div class="card-header"><h3 class="card-title">Members</h3></div>
+            <div class="card-body">
+                <div data-testid="members-operator-managed">
+                    <p class="mb-0 text-secondary">This workspace is operator-managed; membership management isn't available here.</p>
+                </div>
+            </div>
+        </div>
+    }
+    else if (ShowMembersSection)
+    {
+        <div class="card mt-3 mb-3" id="members">
+            <div class="card-header"><h3 class="card-title">Members</h3></div>
+            <div class="card-body">
+                @if (MemberError is not null)
+                {
+                    <div class="alert alert-danger" role="alert" data-testid="members-action-error">@MemberError</div>
+                }
+
                 <div class="table-responsive">
                     <table class="table table-vcenter card-table">
                         <thead>
@@ -660,40 +603,41 @@
                         </tbody>
                     </table>
                 </div>
-            }
 
-            @if (_isOwner)
-            {
-                <hr class="my-3" />
-                <div class="fw-semibold mb-2">Add a member</div>
-                <p class="text-secondary small">They sign in with email OTP; their access is scoped to the role you pick. Only Owners can manage keys, members, and billing.</p>
-                <form method="post" action="/app/members/add" data-testid="add-member-form">
-                    <AntiforgeryToken />
-                    <div class="row g-2 align-items-end">
-                        <div class="col-md-6">
-                            <label class="form-label" for="member-email">Email</label>
-                            <input id="member-email" name="email" type="email" class="form-control" autocomplete="off" spellcheck="false" placeholder="teammate@example.com" />
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label" for="member-role">Role</label>
-                            <select id="member-role" name="role" class="form-select">
-                                <option value="@MembershipRole.Member">Member</option>
-                                <option value="@MembershipRole.Owner">Owner</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3">
-                            <button type="submit" class="btn btn-primary w-100" data-testid="add-member-submit">Add member</button>
-                        </div>
-                    </div>
-                </form>
-            }
-            else
-            {
-                <p class="text-secondary small mt-2" data-testid="members-readonly">Only Owners can add or manage members.</p>
-            }
-        }
+                @if (_isOwner)
+                {
+                    @AddMemberForm
+                }
+                else
+                {
+                    <p class="text-secondary small mt-2" data-testid="members-readonly">Only Owners can add or manage members.</p>
+                }
+            </div>
+        </div>
+    }
+    else if (ShowSoloInvite)
+    {
+        <!-- Single-workspace-first: a solo Owner gets an understated invite entry, not the full member-management section. -->
+        <div class="card mt-3 mb-3" id="members">
+            <div class="card-header"><h3 class="card-title">Members</h3></div>
+            <div class="card-body">
+                @if (MemberError is not null)
+                {
+                    <div class="alert alert-danger" role="alert" data-testid="members-action-error">@MemberError</div>
+                }
+                <p class="text-secondary mb-0" data-testid="members-solo">You're the only member of this workspace.</p>
+                @AddMemberForm
+            </div>
+        </div>
+    }
+
+    <!-- Claim an existing workspace (tucked-away disclosure) -->
+    <div class="card mt-3 mb-3" id="workspace-claim">
+        <div class="card-body">
+            @ClaimDisclosure
+        </div>
     </div>
-</div>
+}
 
 @code {
     [CascadingParameter]
@@ -703,9 +647,9 @@
     [SupplyParameterFromForm]
     public WorkspaceLinkInput Input { get; set; } = default!;
 
-    // Set by the post-link redirect (?linked=true) so a fresh GET can confirm the save that a redirect otherwise hides.
+    // Set by the post-claim redirect (?linked=true) so a fresh GET can confirm the save that a redirect otherwise hides.
     [SupplyParameterFromQuery(Name = "linked")]
-    public bool ShowLinked { get; set; }
+    public bool ShowClaimed { get; set; }
 
     // The self-service key forms (bound on POST; seeded fresh on GET — no initializer, BL0008).
     [SupplyParameterFromForm(FormName = "mint-key")]
@@ -717,11 +661,11 @@
     [SupplyParameterFromForm(FormName = "revoke-key")]
     public KeyActionInput RevokeForm { get; set; } = default!;
 
-    // A member-management action's error, surfaced back on the PRG redirect from the member endpoints (issue #119 PR6).
+    // A member-management action's error, surfaced back on the PRG redirect from the member endpoints.
     [SupplyParameterFromQuery(Name = "memberError")]
     public string? MemberError { get; set; }
 
-    // A free-workspace provision error, surfaced back on the PRG redirect from the provisioning endpoint (issue #119 PR7).
+    // A free-workspace provision error, surfaced back on the PRG redirect from the provisioning endpoint.
     [SupplyParameterFromQuery(Name = "provisionError")]
     public string? ProvisionError { get; set; }
 
@@ -732,9 +676,10 @@
     [SupplyParameterFromQuery(Name = "revoke")]
     public string? RevokeTarget { get; set; }
 
-    private bool _linked;
-    private bool _relinkNeeded;
-    private string? _tenantId;
+    private bool _configured;          // console access configured on this deployment (Crawldad:ConsoleAuth)
+    private bool _hasWorkspace;        // an active workspace resolved for this account
+    private string? _tenantId;         // the active workspace id — surfaced ONCE, in the copyable field
+    private PortalTenant? _tenant;     // the resolved workspace client
     private TenantProfileResponse? _profile;
     private UsageResponse? _usage;
     private bool _usageError;
@@ -742,35 +687,41 @@
     private string? _error;
 
     // API keys section state.
-    private PortalTenant? _tenant;     // the resolved tenant from LoadAsync; the key forms render only when this is set
     private IReadOnlyList<TenantApiKeyInfo> _keys = [];
     private bool _keysOperatorManaged; // env tenant — self-service unavailable (a 400 from GET /tenant/keys)
     private bool _keysError;           // the keys read failed for another reason (degrade cleanly, never a 500)
     private string? _mintedKey;        // the just-minted/rotated raw key, shown ONCE on this response, never persisted here
     private string? _mintedLabel;
-    private string? _keysActionError;  // a mint/rotate/revoke failure surfaced in-place (incl. the last/current-key refusal)
-    private bool _keyListStale;        // set after rotating the session key: the old client can't re-list, so prompt a refresh
+    private string? _keysActionError;  // a mint/rotate/revoke failure surfaced in-place (incl. the last-key refusal)
 
-    // Console membership section state (issue #119 PR4): the signed-in user's own membership for this tenant, shown
-    // alongside the link + console-mode state. Env tenants have no membership surface (a 400 from GET /tenant/memberships).
+    // Membership + members state. _myMembership is the signed-in user's own membership for this workspace; _members is this
+    // workspace's member list. Env tenants have no membership surface (a 400 from GET /tenant/memberships).
     private TenantMembershipInfo? _myMembership;
     private bool _membershipsUnavailable;
-
-    // Multi-workspace + members state (issue #119 PR6). _workspaces is the signed-in user's own workspaces (the switcher's
-    // list, from GET /workspaces); _members is this workspace's members (from GET /tenant/memberships), managed by an Owner.
-    private IReadOnlyList<WorkspaceSummary> _workspaces = [];
     private IReadOnlyList<TenantMembershipInfo> _members = [];
-    private bool _isOwner; // the signed-in user is an active Owner of this workspace → the member-management controls render
+    private bool _isOwner; // the signed-in user is an active Owner → the member-management controls render
+
+    // The signed-in user's own workspaces (from GET /workspaces) — the switch list + the multi-workspace signal.
+    private IReadOnlyList<WorkspaceSummary> _workspaces = [];
 
     private string? Email => HttpContext.User.FindFirstValue(ClaimTypes.Email);
 
-    // The "create your free workspace" affordance (issue #119 PR7): shown ONLY for a console-mode account with zero workspaces
-    // (no resolved link — the exact population signup creates) and never mid re-link. Absent in stored-key mode, where there is
-    // no console identity to provision with (honest: the endpoint would report "unavailable").
-    private bool ShowProvisionAffordance => !_linked && !_relinkNeeded && ConsoleAuth.Value.Enabled;
+    // The active workspace's DISPLAY NAME — its identity in the portal. Never the raw id (that lives only in the copyable
+    // field). Falls back to a generic label if the profile read hasn't landed, so the id is never leaked as a heading.
+    private string WorkspaceName => string.IsNullOrEmpty(_profile?.DisplayName) ? "Your workspace" : _profile!.DisplayName;
 
-    // The tier label, or a friendly default when the tenant has no configured tier. Called only where the profile is
-    // known non-null (the header guard + the loaded-usage panel), so it takes the profile rather than reading a nullable.
+    // The number of workspaces the account can act as — the multi-workspace signal. Falls back to 1 when the list read
+    // failed but a workspace is resolved (single-workspace-first: default to hiding the switcher/team chrome).
+    private int WorkspaceCount => _workspaces.Count > 0 ? _workspaces.Count : (_hasWorkspace ? 1 : 0);
+
+    // Single-workspace-first gates. The switch list + the full member-management section appear only when there is more than
+    // one workspace / member; a solo Owner instead gets the understated invite entry (ShowSoloInvite).
+    private bool IsMultiWorkspace => WorkspaceCount > 1;
+    private bool ShowMembersSection => _hasWorkspace && !_membershipsUnavailable && (IsMultiWorkspace || ActiveMembers().Count > 1);
+    private bool ShowSoloInvite => _hasWorkspace && !_membershipsUnavailable && _isOwner && !ShowMembersSection;
+
+    // The tier label, or a friendly default when the tenant has no configured tier. Called only where the profile is known
+    // non-null (the header guard + the loaded-usage panel), so it takes the profile rather than reading a nullable.
     private static string PlanLabel(TenantProfileResponse profile) => profile.Tier ?? "Default";
 
     // The display name of the tenant's current tier from the billing catalog, or "Free" when none is marked current.
@@ -779,13 +730,14 @@
 
     protected override async Task OnInitializedAsync()
     {
-        // No initializer on Input (BL0008): the framework binds it on a POST; on a GET it is null. Static SSR re-runs
-        // this for every request, so the current link + usage are resolved here for both the GET and the form-post
-        // re-render — the submit handler only redirects (on success) or sets an error (on failure).
+        // No initializer on the form inputs (BL0008): the framework binds them on a POST; on a GET they are null. Static SSR
+        // re-runs this for every request, so the current workspace + usage are resolved here for both the GET and the form-post
+        // re-render — the submit handlers only redirect (on success) or set an error (on failure).
         Input ??= new();
         Mint ??= new();
         RotateForm ??= new();
         RevokeForm ??= new();
+        _configured = Tenants.ConsoleConfigured;
         await LoadAsync();
     }
 
@@ -794,20 +746,20 @@
         var email = Email;
         if (string.IsNullOrWhiteSpace(email))
         {
-            // Defensive: an [Authorize] principal always carries the email claim, but never trust a null into the store.
-            _error = "Your session has expired. Sign in again to link a workspace.";
+            // Defensive: an [Authorize] principal always carries the email claim, but never trust a null through.
+            _error = "Your session has expired. Sign in again to claim a workspace.";
             return;
         }
 
         var result = await Linker.LinkAsync(email, Input.TenantId, Input.ApiKey, HttpContext.RequestAborted);
-        if (result.Outcome == WorkspaceLinkOutcome.Linked)
+        if (result.Outcome == WorkspaceLinkOutcome.Claimed)
         {
-            // Additive multi-workspace (issue #119 PR6): make the just-attached workspace the active one, so the switcher
-            // and every data page land on it. Any other workspaces stay reachable via their memberships (console mode).
+            // Make the just-claimed workspace the active one, so the switcher and every data page land on it. Any other
+            // workspaces stay reachable via their memberships.
             await Selections.SetAsync(email, Input.TenantId.Trim(), HttpContext.RequestAborted);
 
-            // Post/Redirect/Get: a fresh GET re-resolves the now-linked tenant and shows usage, and avoids a form
-            // re-post. Static SSR issues the redirect by throwing NavigationException; control does not return past here.
+            // Post/Redirect/Get: a fresh GET re-resolves the now-active workspace and shows usage, and avoids a form re-post.
+            // Static SSR issues the redirect by throwing NavigationException; control does not return past here.
             Nav.NavigateTo("/app/account?linked=true", forceLoad: true);
             return;
         }
@@ -815,30 +767,18 @@
         _error = result.Message;
     }
 
-    // Resolves the current link (if any) and, when linked, the live tenant profile + usage. Never throws for an
-    // unlinked account (a clean not-linked state) nor for an API hiccup on a linked account (a friendly usage-error).
+    // Resolves the current workspace (if any) and, when resolved, the live profile + usage + keys + members + workspaces.
+    // Never throws for a no-workspace account (a clean empty state) nor for an API hiccup on a resolved one.
     private async Task LoadAsync()
     {
-        PortalTenant? tenant;
-        try
-        {
-            tenant = await Tenants.TryResolveAsync(HttpContext.RequestAborted);
-        }
-        catch (CryptographicException)
-        {
-            // The account IS linked, but its stored key can't be decrypted (the Data-Protection ring was rotated or
-            // lost). That is a "re-link needed" prompt, never a 500 — the raw key is unrecoverable, so ask for a new one.
-            _relinkNeeded = true;
-            return;
-        }
-
+        var tenant = await Tenants.TryResolveAsync(HttpContext.RequestAborted);
         if (tenant is null)
         {
-            _linked = false;
+            _hasWorkspace = false;
             return;
         }
 
-        _linked = true;
+        _hasWorkspace = true;
         _tenant = tenant;
         _tenantId = tenant.TenantId;
         try
@@ -855,17 +795,17 @@
         // "not yet available" state without touching the usage panel (and a usage failure never hides the billing card).
         _billingConfig = await LoadBillingConfigAsync(tenant);
 
-        // The tenant's own keys, for the API-keys section (independent of usage/billing state).
+        // The workspace's own keys, for the API-keys section (independent of usage/billing state).
         await LoadKeysAsync(tenant);
 
-        // The signed-in user's console membership + this workspace's members, for the console-access row and the members card.
+        // The signed-in user's membership + this workspace's members, for the profile role + the members card.
         await LoadMembershipAsync(tenant);
 
-        // The signed-in user's own workspaces, for the workspaces card + switcher state (independent of everything above).
+        // The signed-in user's own workspaces, for the switch list + the multi-workspace signal.
         await LoadWorkspacesAsync(tenant);
     }
 
-    // The signed-in user's active membership for this tenant, plus this workspace's full member list. Never throws: an env
+    // The signed-in user's active membership for this workspace, plus this workspace's full member list. Never throws: an env
     // tenant is a clean "operator-managed" state (400), and any other API hiccup simply leaves the rows empty.
     private async Task LoadMembershipAsync(PortalTenant tenant)
     {
@@ -888,22 +828,17 @@
         }
     }
 
-    // The signed-in user's own workspaces (GET /workspaces) for the workspaces card + switcher state. Console-mode only —
-    // stored-key mode is single-workspace, so the card shows just the current linked workspace (WorkspaceRows' fallback).
+    // The signed-in user's own workspaces (GET /workspaces) for the switch list + the multi-workspace signal. Best-effort:
+    // a failure leaves the list empty, so the account defaults to single-workspace-first (no switcher chrome).
     private async Task LoadWorkspacesAsync(PortalTenant tenant)
     {
-        if (tenant.AuthMode != PortalAuthMode.Console)
-        {
-            return;
-        }
-
         try
         {
-            _workspaces = (await tenant.Client.ListMyWorkspacesAsync(HttpContext.RequestAborted)).Workspaces;
+            _workspaces = (await tenant.Client.ListMyWorkspacesAsync(HttpContext.RequestAborted)).Workspaces ?? [];
         }
         catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
         {
-            // Best-effort — the workspaces card degrades to just the current workspace.
+            // Best-effort — the switcher degrades to hidden.
         }
     }
 
@@ -935,7 +870,7 @@
 
     // ---- API keys ------------------------------------------------------------------------------------------------
 
-    // The authenticated tenant's keys, or the operator-managed / error state — never a throw (the section degrades cleanly).
+    // The workspace's keys, or the operator-managed / error state — never a throw (the section degrades cleanly).
     private async Task LoadKeysAsync(PortalTenant tenant)
     {
         try
@@ -953,18 +888,19 @@
     }
 
     // Mints a key and shows its raw value ONCE — no redirect, so the one-time secret is on this response body only and is
-    // never persisted by the portal nor visible on a later GET.
+    // never persisted by the portal nor visible on a later GET. The portal authenticates via console, so a new key never
+    // affects this session — the list simply re-reads.
     private async Task MintKeyAsync()
     {
-        var tenant = _tenant!; // the mint form renders only when linked, so the tenant is resolved
+        var tenant = _tenant!; // the mint form renders only with a resolved workspace
         try
         {
             ShowMinted(await tenant.Client.MintTenantKeyAsync(Mint.Label, HttpContext.RequestAborted));
-            await LoadKeysAsync(tenant); // the session key is unchanged, so the list re-reads cleanly
+            await LoadKeysAsync(tenant);
         }
         catch (CrawldadException ex)
         {
-            _keysActionError = ex.Message; // e.g. a too-long label (validation)
+            _keysActionError = ex.Message; // e.g. a too-long label (validation) or an Owner-only refusal
         }
         catch (HttpRequestException)
         {
@@ -974,28 +910,15 @@
         Mint = new(); // clear the label input on the re-render
     }
 
-    // Rotates a key: mints a replacement (shown once) and revokes the old one. Rotating the SESSION key re-links the portal
-    // to the replacement so it keeps working; the old client then can't re-list, so the list is marked stale for a refresh.
+    // Rotates a key: mints a replacement (shown once) and revokes the old one. The portal authenticates via console, not any
+    // tenant key, so rotating never affects this session — the list re-reads cleanly through the console client.
     private async Task RotateKeyAsync()
     {
         var tenant = _tenant!;
-        var wasCurrent = _keys.Any(key => key.KeyId == RotateForm.KeyId && key.Current);
         try
         {
-            var created = await tenant.Client.RotateTenantKeyAsync(RotateForm.KeyId, HttpContext.RequestAborted);
-            ShowMinted(created);
-
-            if (wasCurrent)
-            {
-                // The portal was authenticating with the key we just rotated out; persist the replacement so it keeps
-                // working (email is guaranteed by [Authorize]). The revoked client can't re-list — prompt a refresh instead.
-                await Linker.LinkAsync(Email!, tenant.TenantId, created.ApiKey, HttpContext.RequestAborted);
-                _keyListStale = true;
-            }
-            else
-            {
-                await LoadKeysAsync(tenant);
-            }
+            ShowMinted(await tenant.Client.RotateTenantKeyAsync(RotateForm.KeyId, HttpContext.RequestAborted));
+            await LoadKeysAsync(tenant);
         }
         catch (CrawldadNotFoundException)
         {
@@ -1011,8 +934,8 @@
         }
     }
 
-    // Revokes a key, then redirects (PRG) so the fresh list reflects it. A refusal (the last/current-key guard) or another
-    // error is surfaced in place; an already-gone key (404) is treated as done.
+    // Revokes a key, then redirects (PRG) so the fresh list reflects it. A refusal (the last-key guard for a workspace with
+    // no console recovery) or another error is surfaced in place; an already-gone key (404) is treated as done.
     private async Task RevokeKeyAsync()
     {
         var tenant = _tenant!;
@@ -1026,7 +949,7 @@
         }
         catch (CrawldadException ex)
         {
-            _keysActionError = ex.Message; // the 409 last/current-key refusal, surfaced with its rotate guidance
+            _keysActionError = ex.Message; // the 409 last-key refusal, surfaced with its rotate guidance
             return;
         }
         catch (HttpRequestException)
@@ -1045,7 +968,7 @@
     }
 
     // The key the ?revoke= row action points at (by id), or null — the confirm card renders for it; the API backstops a
-    // crafted id (a revoked/current key is a 404 / a 409 on submit).
+    // crafted id (a revoked key is a 404 on submit).
     private TenantApiKeyInfo? RevokeConfirmTarget() =>
         Guid.TryParse(RevokeTarget, out var id) ? _keys.FirstOrDefault(key => key.KeyId == id) : null;
 
@@ -1053,36 +976,12 @@
     private TenantApiKeyInfo? RotateConfirmTarget() =>
         Guid.TryParse(RotateTarget, out var id) ? _keys.FirstOrDefault(key => key.KeyId == id) : null;
 
-    // Whether the workspace has exactly one active key left — revoking it engages the revoke-ALL / refuse-last rule.
+    // Whether the workspace has exactly one active key left — the confirm copy notes the console recovery path.
     private bool IsLastActiveKey() => _keys.Count(key => key.Active) <= 1;
-
-    // Whether this account has a console recovery path (an active Owner membership) — so revoking the last key is allowed and
-    // the workspace stays reachable through the portal. The API enforces the real rule (≥1 Owner membership on the tenant);
-    // this reflects the signed-in owner's own membership for the confirm copy.
-    private bool HasConsoleRecovery() => _myMembership is { Active: true, Role: MembershipRole.Owner };
 
     // A UTC timestamp as a compact, stable string for a key's created / last-used columns.
     private static string FormatUtc(DateTimeOffset when) =>
         when.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
-
-    // The workspace rows for the account card: the user's own workspaces (console mode), or the single current workspace
-    // (stored-key mode, where GET /workspaces comes back empty). The active one is flagged so its row shows the badge.
-    private IReadOnlyList<WorkspaceRow> WorkspaceRows()
-    {
-        if (_workspaces.Count > 0)
-        {
-            return [.. _workspaces.Select(w => new WorkspaceRow(
-                w.TenantId, w.DisplayName, w.Role.ToString(),
-                string.Equals(w.TenantId, _tenantId, StringComparison.Ordinal)))];
-        }
-
-        // Stored-key / single-workspace fallback: the current tenant (set whenever this card renders), labelled by its
-        // profile display name when the profile loaded, else its id.
-        var id = _tenantId!;
-        var label = string.IsNullOrEmpty(_profile?.DisplayName) ? id : _profile!.DisplayName;
-        var role = _myMembership is { } m ? m.Role.ToString() : "—";
-        return [new WorkspaceRow(id, label, role, true)];
-    }
 
     // This workspace's active members (the listing already orders newest first).
     private IReadOnlyList<TenantMembershipInfo> ActiveMembers() => [.. _members.Where(m => m.Active)];
@@ -1094,9 +993,6 @@
     // The role a "make X" toggle switches to — the opposite of the member's current role.
     private static MembershipRole Other(MembershipRole role) =>
         role == MembershipRole.Owner ? MembershipRole.Member : MembershipRole.Owner;
-
-    /// <summary>One workspace row in the account card — the tenant id a switch posts, its label, the user's role, and active.</summary>
-    private sealed record WorkspaceRow(string TenantId, string Label, string Role, bool IsActive);
 
     /// <summary>The optional label for a minted key.</summary>
     public sealed class MintKeyInput

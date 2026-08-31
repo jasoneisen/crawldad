@@ -15,8 +15,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Crawldad.Tests.Portal;
 
 /// <summary>bUnit rendering of the account page's billing card: the plan ladder + current plan + upgrade/manage controls
-/// when configured, the friendly "not yet available" state when the provider is unconfigured or the config call fails,
-/// the "link your workspace" prompt when unlinked, and the "Free" fallback when no tier is marked current.</summary>
+/// when configured, the friendly "not yet available" state when the provider is unconfigured or the config call fails, and
+/// the "Free" fallback when no tier is marked current. (The card renders only for a resolved workspace — a zero-workspace
+/// account shows the get-started state instead, covered by <see cref="AccountComponentTests"/>.)</summary>
 public class BillingCardTests : BunitContext
 {
     private static readonly TenantProfileResponse _profile = new("tenant-alpha", "alpha@crawldad.test", "Team", 10, 100);
@@ -79,15 +80,6 @@ public class BillingCardTests : BunitContext
     }
 
     [Fact]
-    public void The_billing_card_prompts_to_link_when_unlinked()
-    {
-        var cut = Render(new FakeTenantContext(null));
-
-        cut.Find("[data-testid=billing-unlinked]").ShouldNotBeNull();
-        cut.FindAll("[data-testid=billing-panel]").ShouldBeEmpty();
-    }
-
-    [Fact]
     public void The_current_plan_defaults_to_free_when_none_is_marked_current()
     {
         var noCurrent = new BillingConfigResponse(true, null,
@@ -104,8 +96,6 @@ public class BillingCardTests : BunitContext
         Services.AddSingleton(ctx);
         Services.AddSingleton<IWorkspaceLinker>(new NoopLinker());
         Services.AddSingleton<IPortalWorkspaceSelectionStore>(new StubWorkspaceSelectionStore());
-        Services.AddSingleton<Microsoft.Extensions.Options.IOptions<Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions>>(
-            Microsoft.Extensions.Options.Options.Create(new Crawldad.Portal.Infrastructure.Security.PortalConsoleAuthOptions())); // stored-key default; affordance not under test here
         var http = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Email, "owner@example.com")], "TestCookie")),
@@ -130,6 +120,8 @@ public class BillingCardTests : BunitContext
 
     private sealed class FakeTenantContext(PortalTenant? tenant) : IPortalTenantContext
     {
+        public bool ConsoleConfigured => true;
+
         public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant);
 
         public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant!);
@@ -138,6 +130,6 @@ public class BillingCardTests : BunitContext
     private sealed class NoopLinker : IWorkspaceLinker
     {
         public Task<WorkspaceLinkResult> LinkAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new WorkspaceLinkResult(WorkspaceLinkOutcome.Linked, "ok"));
+            Task.FromResult(new WorkspaceLinkResult(WorkspaceLinkOutcome.Claimed, "ok"));
     }
 }
