@@ -1,5 +1,4 @@
 using System.Net;
-using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
 using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
@@ -8,57 +7,55 @@ using Microsoft.Extensions.Configuration;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>The portal-side free-workspace provisioning service (issue #119 PR7): it calls the API's console-only provisioning
-/// endpoint through a workspace-less console client and, on success, records the account's keyless link + active selection so
-/// the next request resolves to the new workspace. A one-per-email 409 that carries the existing workspace is a clean recovery
-/// (link + select it); a 409 with no recoverable id, any other API error, and stored-key mode (no console identity) each leave
-/// nothing linked. Exercised in isolation with a stub API handler + recording stores.</summary>
+/// <summary>The portal-side free-workspace provisioning service (issue #119): it calls the API's console-only provisioning
+/// endpoint through a workspace-less console client and, on success, sets the account's active-workspace selection so the
+/// next request resolves to the new workspace (the API owns the Owner membership — the portal keeps only the pointer). A
+/// one-per-email 409 that carries the existing workspace is a clean recovery (select it); a 409 with no recoverable id, any
+/// other API error, and an unconfigured console (no console identity) each select nothing. Exercised in isolation with a
+/// stub API handler + a recording selection store.</summary>
 public class PortalProvisioningServiceTests
 {
     private const string _email = "new@example.com";
 
     [Fact]
-    public async Task Provisions_then_links_and_selects_the_new_workspace()
+    public async Task Provisions_then_selects_the_new_workspace()
     {
         var handler = new StubHttpMessageHandler(_ =>
-            ClientTestHarness.Json(new WorkspaceSummary("t-created", "My workspace", MembershipRole.Owner), HttpStatusCode.Created));
-        var (service, links, selections) = ServiceFor(handler);
+            ClientTestHarness.Json(new WorkspaceSummary("ws-created", "My workspace", MembershipRole.Owner), HttpStatusCode.Created));
+        var (service, selections) = ServiceFor(handler);
 
         var result = await service.ProvisionAsync(_email, "My workspace");
 
         result.Outcome.ShouldBe(PortalProvisionOutcome.Provisioned);
-        result.TenantId.ShouldBe("t-created");
+        result.TenantId.ShouldBe("ws-created");
         handler.Last.Path.ShouldBe("/provisioning/tenants");
-        links.KeylessUpserts.ShouldHaveSingleItem().ShouldBe((_email, "t-created")); // keyless — console mode
-        selections.Last.ShouldBe((_email, "t-created"));
+        selections.Last.ShouldBe((_email, "ws-created")); // the new workspace is now active
     }
 
     [Fact]
-    public async Task The_email_is_normalized_for_the_link_and_selection()
+    public async Task The_email_is_normalized_for_the_selection()
     {
         var handler = new StubHttpMessageHandler(_ =>
-            ClientTestHarness.Json(new WorkspaceSummary("t-x", "n", MembershipRole.Owner), HttpStatusCode.Created));
-        var (service, links, selections) = ServiceFor(handler);
+            ClientTestHarness.Json(new WorkspaceSummary("ws-x", "n", MembershipRole.Owner), HttpStatusCode.Created));
+        var (service, selections) = ServiceFor(handler);
 
         await service.ProvisionAsync("  NEW@Example.COM  ", null);
 
-        links.KeylessUpserts.ShouldHaveSingleItem().Email.ShouldBe("new@example.com");
         selections.Last!.Value.Email.ShouldBe("new@example.com");
     }
 
     [Fact]
-    public async Task An_already_provisioned_409_recovers_by_linking_the_existing_workspace()
+    public async Task An_already_provisioned_409_recovers_by_selecting_the_existing_workspace()
     {
         var handler = new StubHttpMessageHandler(_ =>
-            ClientTestHarness.JsonRaw(HttpStatusCode.Conflict, """{"title":"free_tenant_exists","status":409,"tenantId":"t-existing"}"""));
-        var (service, links, selections) = ServiceFor(handler);
+            ClientTestHarness.JsonRaw(HttpStatusCode.Conflict, """{"title":"free_tenant_exists","status":409,"tenantId":"ws-existing"}"""));
+        var (service, selections) = ServiceFor(handler);
 
         var result = await service.ProvisionAsync(_email, null);
 
         result.Outcome.ShouldBe(PortalProvisionOutcome.AlreadyProvisioned);
-        result.TenantId.ShouldBe("t-existing");
-        links.KeylessUpserts.ShouldHaveSingleItem().ShouldBe((_email, "t-existing")); // recovered the link to the existing workspace
-        selections.Last.ShouldBe((_email, "t-existing"));
+        result.TenantId.ShouldBe("ws-existing");
+        selections.Last.ShouldBe((_email, "ws-existing")); // recovered + selected the existing workspace
     }
 
     [Theory]
@@ -71,36 +68,34 @@ public class PortalProvisioningServiceTests
     public async Task A_409_with_no_recoverable_tenant_id_is_a_clean_failure(string body)
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.JsonRaw(HttpStatusCode.Conflict, body));
-        var (service, links, selections) = ServiceFor(handler);
+        var (service, selections) = ServiceFor(handler);
 
         var result = await service.ProvisionAsync(_email, null);
 
         result.Outcome.ShouldBe(PortalProvisionOutcome.Failed);
         result.TenantId.ShouldBeNull();
-        links.KeylessUpserts.ShouldBeEmpty(); // nothing linked when we can't identify the workspace
-        selections.Last.ShouldBeNull();
+        selections.Last.ShouldBeNull(); // nothing selected when we can't identify the workspace
     }
 
     [Fact]
     public async Task Any_other_api_error_is_a_clean_failure()
     {
         var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Empty(HttpStatusCode.TooManyRequests));
-        var (service, links, _) = ServiceFor(handler);
+        var (service, selections) = ServiceFor(handler);
 
         (await service.ProvisionAsync(_email, null)).Outcome.ShouldBe(PortalProvisionOutcome.Failed);
-        links.KeylessUpserts.ShouldBeEmpty();
+        selections.Last.ShouldBeNull();
     }
 
     [Fact]
-    public async Task Stored_key_mode_reports_unavailable_and_links_nothing()
+    public async Task Unconfigured_console_reports_unavailable_and_selects_nothing()
     {
-        var (service, links, selections) = ServiceFor(handler: null, consoleMode: false);
+        var (service, selections) = ServiceFor(handler: null, consoleMode: false);
 
         var result = await service.ProvisionAsync(_email, null);
 
         result.Outcome.ShouldBe(PortalProvisionOutcome.Unavailable);
         result.TenantId.ShouldBeNull();
-        links.KeylessUpserts.ShouldBeEmpty();
         selections.Last.ShouldBeNull();
     }
 
@@ -109,11 +104,10 @@ public class PortalProvisioningServiceTests
         await Should.ThrowAsync<ArgumentException>(() =>
             ServiceFor(handler: null, consoleMode: false).Service.ProvisionAsync("  ", null));
 
-    private static (PortalProvisioningService Service, RecordingLinkStore Links, RecordingSelectionStore Selections) ServiceFor(
+    private static (PortalProvisioningService Service, RecordingSelectionStore Selections) ServiceFor(
         HttpMessageHandler? handler,
         bool consoleMode = true)
     {
-        var links = new RecordingLinkStore();
         var selections = new RecordingSelectionStore();
         ConsoleClientFactory? consoleClients = null;
         if (consoleMode)
@@ -124,7 +118,7 @@ public class PortalProvisioningServiceTests
             consoleClients = new ConsoleClientFactory(new StubHandlerFactory(handler!), new FakeTokenSource("entra-token"), config);
         }
 
-        return (new PortalProvisioningService(links, selections, consoleClients), links, selections);
+        return (new PortalProvisioningService(selections, consoleClients), selections);
     }
 
     private sealed class StubHandlerFactory(HttpMessageHandler handler) : IHttpMessageHandlerFactory
@@ -135,23 +129,6 @@ public class PortalProvisioningServiceTests
     private sealed class FakeTokenSource(string token) : IConsoleTokenSource
     {
         public ValueTask<string> GetTokenAsync(CancellationToken cancellationToken) => ValueTask.FromResult(token);
-    }
-
-    private sealed class RecordingLinkStore : IPortalTenantLinkStore
-    {
-        public List<(string Email, string TenantId)> KeylessUpserts { get; } = [];
-
-        public Task<PortalTenantLink?> GetAsync(string email, CancellationToken cancellationToken = default) =>
-            Task.FromResult<PortalTenantLink?>(null);
-
-        public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("provisioning is keyless (console-mode)");
-
-        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default)
-        {
-            KeylessUpserts.Add((email, tenantId));
-            return Task.FromResult(new PortalTenantLink { Email = email, TenantId = tenantId, ProtectedApiKey = null });
-        }
     }
 
     private sealed class RecordingSelectionStore : IPortalWorkspaceSelectionStore

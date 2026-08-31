@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
 using Bunit;
 using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
@@ -123,22 +122,26 @@ public class AppLayoutTests : BunitContext
         cut.Find("[data-testid=sign-out]").ShouldNotBeNull();
     }
 
-    // ---- workspace switcher (issue #119 PR6) ----------------------------------------------------------------------
+    // ---- workspace switcher (issue #119 — single-workspace-first) -------------------------------------------------
 
     [Fact]
-    public void The_switcher_shows_the_single_workspace_as_static_text_in_stored_key_mode()
+    public void A_single_workspace_shows_no_switcher_chrome()
     {
-        // Stored-key mode is single-workspace: the switcher shows the workspace name as text, with no switch dropdown.
-        var handler = ApiReturning(new TenantProfileResponse("tenant-alpha", "Alpha Co", "Team", 5, 100),
-            new UsageResponse(new UsageSlots(0, 5), new UsageQueueStats(0, 0, 0), 0, new UsageEvents(0, 0, 0, 0)));
-        var cut = RenderShell(context: LinkedContext(handler));
+        // Single-workspace-first: with exactly one workspace the shell shows NO switcher chrome at all (the name lives on
+        // Account). GET /workspaces returns one row → the >1 gate is not met → no switcher.
+        var handler = ApiReturningWorkspaces(
+            new TenantProfileResponse("tenant-alpha", "Alpha Co", "Team", 5, 100),
+            new UsageResponse(new UsageSlots(0, 5), new UsageQueueStats(0, 0, 0), 0, new UsageEvents(0, 0, 0, 0)),
+            new WorkspaceList([new("tenant-alpha", "Alpha Co", MembershipRole.Owner)]));
+        var cut = RenderShell(context: ConsoleContext("tenant-alpha", handler));
 
-        cut.Find("[data-testid=workspace-current]").TextContent.ShouldContain("Alpha Co"); // the profile display name
-        cut.FindAll("[data-testid=workspace-menu]").ShouldBeEmpty();                        // no dropdown for one workspace
+        cut.FindAll("[data-testid=workspace-switcher]").ShouldBeEmpty(); // no switcher chrome for a solo workspace
+        // The usage widget still loads independently.
+        cut.Find("[data-testid=usage-slots]").TextContent.Replace(" ", "", StringComparison.Ordinal).ShouldBe("0/5");
     }
 
     [Fact]
-    public void The_switcher_lists_workspaces_and_switch_forms_in_console_mode()
+    public void The_switcher_lists_workspaces_and_switch_forms_for_a_multi_workspace_user()
     {
         var handler = ApiReturningWorkspaces(
             new TenantProfileResponse("tenant-alpha", "Alpha Co", "Team", 5, 100),
@@ -155,18 +158,18 @@ public class AppLayoutTests : BunitContext
     }
 
     [Fact]
-    public void A_console_workspace_list_failure_falls_back_to_the_single_workspace()
+    public void A_workspace_list_failure_shows_no_switcher_and_never_breaks_the_shell()
     {
-        // In console mode, if GET /workspaces fails the switcher degrades to the active workspace (from the profile), never
-        // breaking the shell. The usage widget still loads independently.
+        // If GET /workspaces fails the switcher is simply hidden (single-workspace-first default), never breaking the shell.
+        // The usage widget still loads independently.
         var handler = new StubHttpMessageHandler(req =>
             req.Path.EndsWith("workspaces", StringComparison.Ordinal) ? ClientTestHarness.Empty(HttpStatusCode.InternalServerError)
             : req.Path.EndsWith("usage", StringComparison.Ordinal) ? ClientTestHarness.Json(new UsageResponse(new UsageSlots(0, 5), new UsageQueueStats(0, 0, 0), 0, new UsageEvents(0, 0, 0, 0)))
             : ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "Alpha Co", "Team", 5, 100)));
         var cut = RenderShell(context: ConsoleContext("tenant-alpha", handler));
 
-        cut.Find("[data-testid=workspace-current]").TextContent.ShouldContain("Alpha Co"); // the single active workspace
-        cut.FindAll("[data-testid=workspace-menu]").ShouldBeEmpty();
+        cut.FindAll("[data-testid=workspace-switcher]").ShouldBeEmpty();
+        cut.Find("[data-testid=usage-slots]").TextContent.Replace(" ", "", StringComparison.Ordinal).ShouldBe("0/5");
     }
 
     [Fact]
@@ -187,7 +190,7 @@ public class AppLayoutTests : BunitContext
     [Fact]
     public void An_unresolvable_tenant_context_leaves_the_chrome_bare_without_a_switcher()
     {
-        // The tenant context throwing (e.g. a rotated key ring) must not break the shell: no switcher, quiet usage placeholder.
+        // The tenant context throwing (e.g. a transient store error) must not break the shell: no switcher, quiet placeholder.
         var cut = RenderShell(context: new ThrowingTenantContext());
 
         cut.FindAll("[data-testid=workspace-switcher]").ShouldBeEmpty();
@@ -201,7 +204,7 @@ public class AppLayoutTests : BunitContext
     private static FakePortalTenantContext ConsoleContext(string activeTenant, StubHttpMessageHandler handler) =>
         new(new PortalTenant(activeTenant, new CrawldadClient(
             new HttpClient(handler) { BaseAddress = ClientTestHarness.BaseUrl },
-            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey }), PortalAuthMode.Console));
+            new CrawldadClientOptions { BaseUrl = ClientTestHarness.BaseUrl, ApiKey = ClientTestHarness.ApiKey })));
 
     // A console-mode stub answering the shell's three reads: GET /workspaces → the switcher list, GET /usage → usage, else profile.
     private static StubHttpMessageHandler ApiReturningWorkspaces(TenantProfileResponse profile, UsageResponse usage, WorkspaceList workspaces) =>
@@ -217,10 +220,14 @@ public class AppLayoutTests : BunitContext
             ? ClientTestHarness.Json(usage)
             : ClientTestHarness.Json(profile));
 
+    // A tenant context whose resolve faults unexpectedly (e.g. a transient store error): the shell must catch it and
+    // degrade to the quiet placeholder, never break the chrome.
     private sealed class ThrowingTenantContext : IPortalTenantContext
     {
+        public bool ConsoleConfigured => true;
+
         public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) =>
-            Task.FromException<PortalTenant?>(new CryptographicException("ring rotated"));
+            Task.FromException<PortalTenant?>(new InvalidOperationException("resolve faulted"));
 
         public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

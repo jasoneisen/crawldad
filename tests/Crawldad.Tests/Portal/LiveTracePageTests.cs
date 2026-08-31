@@ -52,7 +52,7 @@ public class LiveTracePageTests : BunitContext
         var cut = Render<LiveTrace>(p => p.Add(x => x.RunId, _runId));
 
         cut.Find("[data-testid=not-linked]").ShouldNotBeNull();
-        cut.Markup.ShouldContain("No workspace linked");
+        cut.Markup.ShouldContain("No workspace yet");
         cut.FindAll("[data-testid=status-header]").ShouldBeEmpty(); // nothing streamed
     }
 
@@ -165,12 +165,23 @@ public class LiveTracePageTests : BunitContext
     }
 
     [Fact]
-    public void An_unauthorized_key_shows_a_friendly_relink_error()
+    public void An_unauthorized_stream_shows_the_workspace_unavailable_error()
     {
         var cut = RenderLive(_ => ClientTestHarness.Empty(HttpStatusCode.Unauthorized));
 
         cut.WaitForAssertion(() => cut.Find("[data-testid=stream-error]").ShouldNotBeNull(), _wait);
-        cut.Find("[data-testid=error-message]").TextContent.ShouldContain("Re-link your workspace");
+        cut.Find("[data-testid=error-message]").TextContent.ShouldContain("workspace is unavailable");
+    }
+
+    [Fact]
+    public void A_forbidden_stream_shows_the_workspace_unavailable_error()
+    {
+        // A stale/suspended active-workspace selection: the console gate 403s the SSE stream. The friendly error points at
+        // Account (re-select / claim), never leaking key material.
+        var cut = RenderLive(_ => ClientTestHarness.Empty(HttpStatusCode.Forbidden));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid=stream-error]").ShouldNotBeNull(), _wait);
+        cut.Find("[data-testid=error-message]").TextContent.ShouldContain("your account");
     }
 
     [Fact]

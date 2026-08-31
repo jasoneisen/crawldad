@@ -130,6 +130,8 @@ public class MembersEndpointsTests
 
     private sealed class FakeContext(PortalTenant? tenant) : IPortalTenantContext
     {
+        public bool ConsoleConfigured => true;
+
         public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant);
 
         public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) => Task.FromResult(tenant!);

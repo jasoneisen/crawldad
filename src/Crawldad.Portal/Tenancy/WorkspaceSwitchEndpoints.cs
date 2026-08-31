@@ -6,12 +6,12 @@ using Microsoft.AspNetCore.Routing;
 
 namespace Crawldad.Portal.Tenancy;
 
-/// <summary>The workspace switcher's form handler (issue #119 PR6): the shell's switcher posts the target workspace here,
-/// and this persists it as the account's active-workspace selection, then redirects (the same antiforgery-protected
+/// <summary>The workspace switcher's form handler (issue #119): the shell's switcher posts the target workspace here, and
+/// this persists it as the account's active-workspace selection, then redirects (the same antiforgery-protected
 /// POST-then-redirect shape as sign-out / billing). The selection is a preference, not authority — it is stored only for a
 /// workspace the user is actually a member of (the switcher only offers those, and the API's membership gate backstops a
-/// crafted post: a non-member selection simply fails the console gate on the next read, never leaks). In stored-key mode
-/// there is a single workspace, so a switch is a no-op unless it names that one link.</summary>
+/// crafted post: a non-member selection simply fails the console gate on the next read, never leaks). The switcher chrome
+/// only ever renders for a multi-workspace user, so this is reached only when there is a real choice to make.</summary>
 internal static class WorkspaceSwitchEndpoints
 {
     /// <summary>Where a successful switch lands — the dashboard, now scoped to the newly active workspace.</summary>
@@ -53,20 +53,14 @@ internal static class WorkspaceSwitchEndpoints
         return Results.LocalRedirect(DashboardPath);
     }
 
-    // Whether the resolved account is a member of the target workspace. Console-mode consults the authoritative API list
-    // (GET /workspaces, keyed on the account's own identity — independent of the currently-active workspace); stored-key mode
-    // has exactly one workspace (the account's single link).
+    // Whether the resolved account is a member of the target workspace, from the authoritative API list (GET /workspaces,
+    // keyed on the account's own identity — independent of the currently-active workspace). Console is the only mode.
     private static async Task<bool> IsMemberOfAsync(PortalTenant tenant, string workspace, CancellationToken ct)
     {
-        if (tenant.AuthMode != PortalAuthMode.Console)
-        {
-            return string.Equals(workspace, tenant.TenantId, StringComparison.Ordinal);
-        }
-
         try
         {
             var workspaces = await tenant.Client.ListMyWorkspacesAsync(ct);
-            return workspaces.Workspaces.Any(w => string.Equals(w.TenantId, workspace, StringComparison.Ordinal));
+            return (workspaces.Workspaces ?? []).Any(w => string.Equals(w.TenantId, workspace, StringComparison.Ordinal));
         }
         catch (Exception ex) when (ex is CrawldadException or HttpRequestException)
         {

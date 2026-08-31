@@ -35,15 +35,7 @@
 @if (_notLinked)
 {
     <div class="card mt-3">
-        <div class="empty" data-testid="not-linked">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet. Link one from your Account to see its payloads here.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 else if (_notFound)
@@ -383,6 +375,7 @@ else if (_loaded)
 
     private bool _notLinked;
     private bool _notFound;
+    private bool _workspaceUnavailable; // resolved-but-forbidden workspace (stale/suspended selection → 403) → Account escape
     private bool _loaded;
     private Guid _payloadGuid;
     private PayloadResponse? _payload;
@@ -402,10 +395,10 @@ else if (_loaded)
         // and a null-ref when rendering the empty form).
         Editor ??= new();
 
-        var tenant = await Tenant.TryResolveForPageAsync();
+        var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
-            _notLinked = true; // unlinked, or an undecryptable key (rotated ring) — re-link from Account
+            _notLinked = true; // no active workspace / console unconfigured — the empty state points at Account
             return;
         }
 
@@ -422,6 +415,14 @@ else if (_loaded)
         catch (CrawldadNotFoundException)
         {
             _notFound = true;
+            return;
+        }
+        catch (CrawldadException)
+        {
+            // Any non-404 read failure — dominantly a stale/suspended selection the console gate 403s, else a transient API
+            // error. Degrade to the honest "unavailable" state (points at Account) — never a 500.
+            _notLinked = true;
+            _workspaceUnavailable = true;
             return;
         }
 

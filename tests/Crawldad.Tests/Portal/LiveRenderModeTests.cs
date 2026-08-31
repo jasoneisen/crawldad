@@ -47,17 +47,19 @@ public class LiveRenderModeTests(PortalFixture fixture)
         using var client = fixture.NewClient();
         await PortalHttp.SignInAsync(client, fixture.App.Email, email);
 
-        // Unlinked: the circuit-safe resolver reads the signed-in user (via AuthenticationStateProvider), finds no link,
-        // and the page renders the friendly not-linked state — never a client with an empty key.
+        // No active workspace: the circuit-safe resolver reads the signed-in user (via AuthenticationStateProvider), finds no
+        // selection, and the page renders the friendly empty state — never a client with no credential.
         var unlinked = await GetHtmlAsync(client, $"/app/live/{_runId}");
-        unlinked.ShouldContain("No workspace linked");
+        unlinked.ShouldContain("No workspace yet");
 
-        // Link the account, then the same prerender resolves the tenant and streams (a connecting state, not not-linked).
-        await fixture.App.Services.GetRequiredService<IPortalTenantLinkStore>()
-            .UpsertAsync(email, "tenant-live", "sk_fake_prerender_key");
+        // Give the account an active workspace, then the same prerender resolves it (console-mode) and streams (a connecting
+        // state, not the empty state). Prerender only RESOLVES the workspace — the SSE stream starts on the circuit — so no
+        // live API is needed here.
+        await fixture.App.Services.GetRequiredService<IPortalWorkspaceSelectionStore>()
+            .SetAsync(email, "tenant-live");
 
         var linked = await GetHtmlAsync(client, $"/app/live/{_runId}");
-        linked.ShouldNotContain("No workspace linked"); // the resolver found the tenant on the prerender pass
+        linked.ShouldNotContain("No workspace yet"); // the resolver found the active workspace on the prerender pass
         linked.ShouldContain("Connecting to the live trace");
     }
 }

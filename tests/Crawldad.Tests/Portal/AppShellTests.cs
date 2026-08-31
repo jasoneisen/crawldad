@@ -15,11 +15,11 @@ public class AppShellTests(PortalFixture fixture)
     private static readonly (string Route, string Marker)[] _sections =
     [
         ("/app", "Welcome to Crawldad"),
-        ("/app/runs", "No workspace linked"),
-        ("/app/live", "No workspace linked"), // the live picker now resolves the tenant; unlinked → not-linked state
-        ("/app/payloads", "No workspace linked"),
-        ("/app/webhooks", "No workspace linked"),
-        ("/app/account", "API keys"),
+        ("/app/runs", "No workspace yet"),
+        ("/app/live", "No workspace yet"), // the live picker now resolves the tenant; unlinked → not-linked state
+        ("/app/payloads", "No workspace yet"),
+        ("/app/webhooks", "No workspace yet"),
+        ("/app/account", "Create your free workspace"), // zero-workspace account → the get-started affordance
     ];
 
     public static TheoryData<string> Routes()

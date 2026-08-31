@@ -35,17 +35,8 @@
 
 @if (_tenant is null)
 {
-    <div class="card mt-3" data-testid="not-linked">
-        <div class="empty">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet, so there's no live trace to stream. Link a
-                workspace from your account to watch runs here.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+    <div class="card mt-3">
+        <WorkspaceEmptyState Configured="Resolver.ConsoleConfigured" />
     </div>
 }
 else if (_phase == Phase.NotFound)
@@ -386,10 +377,12 @@ else
         }
     }
 
-    // A user-facing reason with no key material — an unauthorized key gets a re-link hint, anything else a generic retry.
+    // A user-facing reason with no key material. A forbidden/unauthorized console read means the active workspace is
+    // unavailable (removed or suspended) — point at Account, where re-select/claim live; anything else is a generic retry.
     private static string FriendlyError(CrawldadException ex) => ex switch
     {
-        CrawldadUnauthorizedException => "This workspace's API key was rejected. Re-link your workspace from your account.",
+        CrawldadUnauthorizedException or { StatusCode: StatusCodes.Status403Forbidden } =>
+            "This workspace is unavailable — you may have been removed from it, or an operator suspended it. Re-select or claim a workspace from your account.",
         _ => "The live trace is temporarily unavailable. Try reconnecting in a moment.",
     };
 

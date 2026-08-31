@@ -5,13 +5,14 @@
        Crawldad.Api — it only ever reaches the API over HTTP through the typed Crawldad.Client SDK below. -->
 
   <ItemGroup>
-    <!-- Document storage for the portal's own users, OTP challenges, and tenant links. Marten is used standalone
-         here (no Wolverine/event-store): the portal is a thin auth+shell host, not part of the API's pipeline. -->
+    <!-- Document storage for the portal's own users, OTP challenges, and active-workspace selections. Marten is used
+         standalone here (no Wolverine/event-store): the portal is a thin auth+shell host, not part of the API's pipeline. -->
     <PackageReference Include="Marten" />
     <!-- Persist the portal's Data Protection key ring to a blob wrapped by a Key Vault key (issue #119),
-         authenticated with the app's managed identity — so auth cookies AND the Data-Protected tenant API keys stored
-         on PortalTenantLink survive a container restart/replace. Wired only when Crawldad:Portal:DataProtection is
-         configured; absent config keeps the framework's default local ring (dev/tests untouched). Mirrors the API. -->
+         authenticated with the app's managed identity — so auth cookies + antiforgery tokens survive a container
+         restart/replace (the retired stored-key path means the ring no longer protects any tenant API key). Wired only
+         when Crawldad:Portal:DataProtection is configured; absent config keeps the framework's default local ring
+         (dev/tests untouched). Mirrors the API. -->
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" />
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Keys" />
     <PackageReference Include="Azure.Identity" />
@@ -19,7 +20,7 @@
 
   <ItemGroup>
     <!-- The typed .NET SDK the data pages call the Crawldad API through (pulls in Crawldad.Contracts transitively).
-         The per-request client is built by IPortalTenantContext with the signed-in tenant's API key. -->
+         The per-request client is built by IPortalTenantContext as the portal's first-party console identity (no tenant key). -->
     <ProjectReference Include="..\Crawldad.Client\Crawldad.Client.csproj" />
   </ItemGroup>
 

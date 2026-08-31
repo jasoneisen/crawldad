@@ -5,8 +5,8 @@ namespace Crawldad.Portal.Infrastructure.Security;
 /// <summary>The boot-time guard for the portal key-ring knobs (bound from <c>Crawldad:Portal:DataProtection</c>,
 /// registered with <c>ValidateOnStart</c>). It rejects a half-configured pair — one of the two set without the other —
 /// because that would silently fall back to the ephemeral key ring and re-introduce the exact
-/// undecryptable-after-redeploy bug this section fixes (rotated auth cookies AND unreadable Data-Protected tenant API
-/// keys). When both are set they must be absolute URIs. Mirrors the API's
+/// undecryptable-after-redeploy bug this section fixes (rotated auth cookies + antiforgery tokens on every redeploy). When
+/// both are set they must be absolute URIs. Mirrors the API's
 /// <c>Crawldad.Api.Infrastructure.Security.DataProtectionOptionsValidator</c>.</summary>
 public sealed class DataProtectionOptionsValidator : IValidateOptions<DataProtectionOptions>
 {

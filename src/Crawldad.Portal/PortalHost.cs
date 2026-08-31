@@ -36,12 +36,13 @@ public static class PortalHost
         builder.Services.AddScoped<IPortalAuthService, PortalAuthService>();
         EmailModule.AddEmailSending(builder.Services, builder.Configuration, builder.Environment);
 
-        // The durable Data-Protection key ring underlies BOTH the auth cookie and the tenant API key protector below,
-        // so register it once, up front. Configured (Azure) => persisted + Key-Vault-wrapped so it survives redeploys;
-        // unconfigured (dev/tests) => the framework's default local ring. Mirrors the API's DataProtectionModule.
+        // The durable Data-Protection key ring underlies the portal's auth cookie + antiforgery tokens (the tenant-key
+        // protector it used to also back is gone — issue #119 retired the stored-key path). Registered once, up front.
+        // Configured (Azure) => persisted + Key-Vault-wrapped so cookies survive redeploys; unconfigured (dev/tests) => the
+        // framework's default local ring. Mirrors the API's DataProtectionModule.
         DataProtectionModule.AddKeyRingProtection(builder.Services, builder.Configuration);
 
-        AddTenantLinking(builder);
+        AddWorkspaceResolution(builder);
 
         AddCookieAuthentication(builder);
 
@@ -96,8 +97,11 @@ public static class PortalHost
         return app;
     }
 
-    // The portal's Marten document model, in the isolated "portal" schema. Each identity is the normalized email, so a
-    // user, their tenant link, and their active-workspace selection (issue #119 PR6) all line up 1:1 per account.
+    // The portal's Marten document model, in the isolated "portal" schema. Each identity is the normalized email, so a user
+    // and their active-workspace selection line up 1:1 per account. There is NO portal-side tenant link anymore (issue #119
+    // simplification): the API's membership store is the sole authority for which workspaces a user may act as; the portal
+    // keeps only the active-workspace pointer below. Any legacy PortalTenantLink rows from the retired stored-key path are
+    // simply ignored — the document type is no longer mapped, so nothing ever loads them (cleanest, no migration).
     private static void ConfigurePortalMarten(StoreOptions options, string connectionString)
     {
         options.Connection(connectionString);
@@ -106,7 +110,6 @@ public static class PortalHost
         // Email is the account identity → unique by construction, and case-insensitive because we always store it
         // lower-invariant.
         options.Schema.For<PortalUser>().Identity(u => u.Email);
-        options.Schema.For<PortalTenantLink>().Identity(l => l.Email);
         options.Schema.For<PortalWorkspaceSelection>().Identity(s => s.Email);
 
         // Optimistic concurrency on the challenge: parallel verify attempts serialize on the document version, so the
@@ -135,59 +138,48 @@ public static class PortalHost
         builder.Services.AddAuthorization();
     }
 
-    // Portal → Crawldad tenant link + the per-request typed API client (Crawldad.Client). The signed-in user's link
-    // (normalized email → tenant id + Data-Protection-encrypted API key) is resolved per request by
-    // IPortalTenantContext, which hands the data pages a CrawldadClient authenticated as that tenant — or a clean
-    // NotLinkedException when the request is unauthenticated or the account has no link.
-    private static void AddTenantLinking(WebApplicationBuilder builder)
+    // Portal → Crawldad workspace resolution + the per-request typed API client (Crawldad.Client). The portal is
+    // console-mode only (issue #119): the signed-in user's ACTIVE workspace (normalized email → tenant id, a preference
+    // pointer) is resolved per request by IPortalTenantContext, which hands the data pages a CrawldadClient authenticated as
+    // the portal's first-party CONSOLE identity for that workspace — or a clean null/NotLinkedException when the request is
+    // unauthenticated, has no active workspace, or console access is unconfigured. There is NO stored tenant key.
+    private static void AddWorkspaceResolution(WebApplicationBuilder builder)
     {
-        // The at-rest key cipher for the tenant API key rides on the shared Data-Protection key ring registered up
-        // front in AddCrawldadPortal (DataProtectionModule.AddKeyRingProtection) — durable + Key-Vault-wrapped when
-        // configured, so a redeploy never orphans the stored keys. The purpose-bound protector is created from that
-        // ring by PortalTenancy.ApiKeyProtector on both the write and read sides.
         builder.Services.AddHttpContextAccessor();
-        builder.Services.AddSingleton<IPortalTenantLinkStore, MartenPortalTenantLinkStore>();
-        builder.Services.AddSingleton<IPortalWorkspaceSelectionStore, MartenPortalWorkspaceSelectionStore>(); // active-workspace preference (PR6)
+        // The active-workspace pointer (email → tenant id): the console-resolution bootstrap and the switcher preference.
+        // It is only a preference — the API's membership store decides which workspaces a user may actually act as.
+        builder.Services.AddSingleton<IPortalWorkspaceSelectionStore, MartenPortalWorkspaceSelectionStore>();
         builder.Services.AddScoped<IPortalTenantContext, PortalTenantContext>();
 
-        // The circuit-safe resolver the interactive live-trace page uses: same link → same tenant client as the
+        // The circuit-safe resolver the interactive live-trace page uses: same active workspace → same console client as the
         // per-request context, but sourced from AuthenticationStateProvider instead of the (circuit-null) HttpContext.
         builder.Services.AddScoped<ICircuitTenantResolver, CircuitTenantResolver>();
 
-        // The account area's real link-creation path: validates a submitted key against the live API before persisting,
-        // so a wrong key is never stored. Stateless over the store + the same pooled API HttpClient.
+        // The account area's "claim an existing workspace" path: validates a submitted key against the live API, records the
+        // account's Owner membership, and ALWAYS discards the key (never stored). Stateless over the pooled API HttpClient.
         builder.Services.AddScoped<IWorkspaceLinker, WorkspaceLinker>();
 
-        // Self-serve free-workspace provisioning (issue #119 PR7): calls the API's console-only provisioning endpoint and,
-        // on success, links + selects the new workspace. Its ConsoleClientFactory dependency is present only in console-mode
-        // (optional ctor param → null in stored-key mode), which is exactly when the service reports "unavailable".
+        // Self-serve free-workspace provisioning (issue #119): calls the API's console-only provisioning endpoint and, on
+        // success, selects the new workspace. Its ConsoleClientFactory dependency is present only in console-mode (optional
+        // ctor param → null when console access is unconfigured), which is exactly when the service reports "unavailable".
         builder.Services.AddScoped<IPortalProvisioningService, PortalProvisioningService>();
 
-        // The public signup flow's post-verification landing decision (issue #119 PR8): a zero-workspace account is
-        // provisioned its free workspace and lands on the first-run dashboard; a returning account lands like a /login. Scoped
-        // because it depends on the scoped provisioning service; the signup page is the only caller.
+        // The public signup flow's post-verification landing decision: a zero-workspace account is provisioned its free
+        // workspace and lands on the first-run dashboard; a returning account lands like a /login. Scoped because it depends
+        // on the scoped provisioning service; the signup page is the only caller.
         builder.Services.AddScoped<ISignupLanding, SignupLanding>();
 
         // One pooled HttpClient the SDK rides on, base address from config (validated at boot so a missing/malformed
-        // URL fails loudly here, not on the first API call). The per-request API key is applied by the context — the
-        // client is never registered with a baked-in or empty key.
+        // URL fails loudly here, not on the first API call). The per-request console credential is applied by the client.
         var apiBaseUrl = PortalTenancy.ResolveApiBaseUrl(builder.Configuration);
         builder.Services.AddHttpClient(PortalTenancy.ApiHttpClientName, client => client.BaseAddress = apiBaseUrl);
 
-        // Console-mode (issue #119 PR4): when Crawldad:ConsoleAuth is configured, register the managed-identity token
-        // source + console client factory so dashboard reads ride the portal's first-party console credential (with the
-        // stored key as fallback). Unconfigured (dev/tests/today) => nothing registered => the byte-identical stored-key
-        // path above. Registered after the pooled HttpClient it wraps.
+        // Console-mode (issue #119): when Crawldad:ConsoleAuth is configured, register the managed-identity token source +
+        // console client factory so dashboard reads/writes ride the portal's first-party console credential. Unconfigured
+        // (an operator misconfig) => nothing registered => IPortalTenantContext resolves its honest "console access not
+        // configured" state. Dev/CI configure the section with a test/fake token source (the same DI-replacement pattern the
+        // tests use). Registered after the pooled HttpClient it wraps.
         PortalConsoleAuthModule.AddConsoleAuth(builder.Services, builder.Configuration);
-
-        // Development-only: seed/refresh one tenant link from Portal:DevTenantLink at startup. Registered AFTER
-        // Marten's schema-apply-on-startup, so the "portal" tables exist when it writes; a no-op when the section is
-        // absent or partial (production boots with no link, exactly as here).
-        if (builder.Environment.IsDevelopment())
-        {
-            builder.Services.Configure<DevTenantLinkOptions>(builder.Configuration.GetSection(PortalTenancy.DevTenantLinkSection));
-            builder.Services.AddHostedService<DevTenantLinkSeeder>();
-        }
     }
 
 }

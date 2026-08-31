@@ -2,17 +2,17 @@ using System.Net;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>Real-SSR behaviour of the account page over HTTP (Alba host, no live API): an authenticated but unlinked
-/// account renders every section without a 500 and exposes the antiforgery-protected workspace-link form; the
-/// post-link redirect flag renders the success confirmation; and a form post without a valid antiforgery token is
-/// rejected before any handler runs.</summary>
+/// <summary>Real-SSR behaviour of the account page over HTTP (Alba host, no live API): an authenticated zero-workspace
+/// account renders the get-started state (the create-a-free-workspace affordance + the tucked-away claim form) without a
+/// 500 and exposes the antiforgery-protected claim form; the post-claim redirect flag renders the success confirmation; and
+/// a claim post without a valid antiforgery token is rejected before any handler runs.</summary>
 [Collection(PortalCollection.Name)]
 public class AccountPageTests(PortalFixture fixture)
 {
     private static string NewEmail() => $"account-{Guid.NewGuid():N}@example.com";
 
     [Fact]
-    public async Task Unlinked_account_renders_every_section_and_the_link_form_without_a_500()
+    public async Task Zero_workspace_account_renders_the_get_started_state_and_the_claim_form_without_a_500()
     {
         using var client = fixture.NewClient();
         await PortalHttp.SignInAsync(client, fixture.App.Email, NewEmail());
@@ -21,17 +21,16 @@ public class AccountPageTests(PortalFixture fixture)
 
         resp.StatusCode.ShouldBe(HttpStatusCode.OK);
         var html = await resp.Content.ReadAsStringAsync();
-        html.ShouldContain("Not linked");         // profile status
-        html.ShouldContain("No usage yet");        // usage empty state
-        html.ShouldContain("Link your workspace to manage billing"); // billing card, unlinked state
-        html.ShouldContain("API keys");            // operator-managed info card
-        html.ShouldContain("id=\"link-form\"");    // the workspace-link form is present
-        html.ShouldContain("__RequestVerificationToken"); // ...antiforgery-protected
-        html.ShouldNotContain("Workspace linked."); // no success banner on a plain GET
+        html.ShouldContain("No workspace yet");                   // profile status (console-mode, no active workspace)
+        html.ShouldContain("data-testid=\"provision-form\"");      // the ONE create-a-free-workspace affordance
+        html.ShouldContain("Create your free workspace");
+        html.ShouldContain("id=\"link-form\"");                    // the tucked-away claim form is present
+        html.ShouldContain("__RequestVerificationToken");          // ...antiforgery-protected
+        html.ShouldNotContain("Workspace ready.");                 // no success banner on a plain GET
     }
 
     [Fact]
-    public async Task The_post_link_redirect_flag_renders_the_success_confirmation()
+    public async Task The_post_claim_redirect_flag_renders_the_success_confirmation()
     {
         using var client = fixture.NewClient();
         await PortalHttp.SignInAsync(client, fixture.App.Email, NewEmail());
@@ -40,7 +39,7 @@ public class AccountPageTests(PortalFixture fixture)
 
         resp.StatusCode.ShouldBe(HttpStatusCode.OK);
         var html = await resp.Content.ReadAsStringAsync();
-        html.ShouldContain("Workspace linked.");
+        html.ShouldContain("Workspace ready.");
     }
 
     [Fact]

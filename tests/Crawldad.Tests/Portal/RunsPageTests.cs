@@ -36,8 +36,22 @@ public class RunsPageTests : BunitContext
         var cut = Render<Runs>();
 
         cut.Find("[data-testid=not-linked]").ShouldNotBeNull();
-        cut.Markup.ShouldContain("No workspace linked");
+        cut.Markup.ShouldContain("No workspace yet");
         cut.Find("a[href=\"/app/account\"]").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void A_forbidden_read_shows_the_workspace_unavailable_state_not_a_500()
+    {
+        // A stale/suspended active-workspace selection: the console gate 403s the list read (and GET /workspaces too, so no
+        // in-page switch). The page degrades to the honest "unavailable" state pointing at Account — never a 500.
+        var handler = new StubHttpMessageHandler(_ => ClientTestHarness.Empty(System.Net.HttpStatusCode.Forbidden));
+        Services.AddSingleton<IPortalTenantContext>(new FakePortalTenantContext(PortalRunsTestSupport.TenantOver(handler)));
+
+        var cut = Render<Runs>();
+
+        cut.Find("[data-testid=workspace-unavailable]").ShouldNotBeNull();
+        cut.Find("a[href=\"/app/account\"]").ShouldNotBeNull(); // the escape to Account (re-select / claim)
     }
 
     [Fact]

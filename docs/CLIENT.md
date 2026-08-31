@@ -281,7 +281,7 @@ var crawldad = new CrawldadClient(http, options);
 
 // POST /provisioning/tenants — creates the free workspace and records the caller as its Owner (no API key is minted).
 WorkspaceSummary workspace = await crawldad.ProvisionTenantAsync(displayName: "My workspace");
-// workspace.TenantId is a t-<guid>; select it, then act as it via a normal ConsoleCredential(token, user, workspace).
+// workspace.TenantId is an opaque bare GUID; select it, then act as it via a normal ConsoleCredential(token, user, workspace).
 ```
 
 **One free workspace per email, EVER.** A second call is a `409 free_tenant_exists` (a `CrawldadApiException`) whose

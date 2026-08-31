@@ -1,11 +1,9 @@
 using Crawldad.Portal.Tenancy;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>Unit tests for the tenancy wiring helpers: the API base-URL config validation (fail-fast at boot) and the
-/// purpose-bound key protector both the store and the context share.</summary>
+/// <summary>Unit tests for the tenancy wiring helpers: the API base-URL config validation (fail-fast at boot).</summary>
 public class PortalTenancyTests
 {
     private static IConfiguration Config(string? baseUrl)
@@ -33,16 +31,5 @@ public class PortalTenancyTests
     public void ResolveApiBaseUrl_rejects_a_missing_or_malformed_url(string? raw)
     {
         Should.Throw<InvalidOperationException>(() => PortalTenancy.ResolveApiBaseUrl(Config(raw)));
-    }
-
-    [Fact]
-    public void ApiKeyProtector_round_trips_under_the_pinned_purpose()
-    {
-        var protector = PortalTenancy.ApiKeyProtector(new EphemeralDataProtectionProvider());
-
-        var cipher = protector.Protect("sk_secret_value");
-
-        cipher.ShouldNotBe("sk_secret_value");
-        protector.Unprotect(cipher).ShouldBe("sk_secret_value");
     }
 }

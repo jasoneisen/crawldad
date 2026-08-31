@@ -29,15 +29,7 @@
 @if (_notLinked)
 {
     <div class="card mt-3">
-        <div class="empty" data-testid="not-linked">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet. Link one from your Account to create payloads here.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" />
     </div>
 }
 else
@@ -96,10 +88,10 @@ else
         // user's own text, which must be preserved even when it failed to parse or validate).
         Editor ??= new();
 
-        var tenant = await Tenant.TryResolveForPageAsync();
+        var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
-            _notLinked = true; // unlinked, or an undecryptable key (rotated ring) — re-link from Account
+            _notLinked = true; // no active workspace / console unconfigured — the empty state points at Account
             return;
         }
 

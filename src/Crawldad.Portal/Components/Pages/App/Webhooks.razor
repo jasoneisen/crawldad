@@ -19,10 +19,6 @@
 <div class="page-header d-print-none">
     <div class="row g-2 align-items-center">
         <div class="col">
-            @if (_notLinked is false)
-            {
-                <div class="page-pretitle text-secondary" data-testid="tenant">@_tenantId</div>
-            }
             <h2 class="page-title">Webhooks</h2>
         </div>
     </div>
@@ -31,15 +27,7 @@
 @if (_notLinked)
 {
     <div class="card mt-3">
-        <div class="empty" data-testid="not-linked">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet. Link one from your Account to register webhook endpoints.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 else
@@ -256,7 +244,7 @@ else
     public DeleteWebhookInput Removal { get; set; } = default!;
 
     private bool _notLinked;
-    private string _tenantId = "";
+    private bool _workspaceUnavailable; // resolved-but-forbidden workspace (stale/suspended selection → 403) → Account escape
     private IReadOnlyList<WebhookSummary> _webhooks = [];
     private string? _selectedEndpoint;
     private IReadOnlyList<WebhookDeliveryItem>? _deliveries;
@@ -270,15 +258,25 @@ else
         Register ??= new();
         Removal ??= new();
 
-        var tenant = await Tenant.TryResolveForPageAsync();
+        var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
-            _notLinked = true; // unlinked, or an undecryptable key (rotated ring) — re-link from Account
+            _notLinked = true; // no active workspace / console unconfigured — the empty state points at Account
             return;
         }
 
-        _tenantId = tenant.TenantId;
-        _webhooks = (await tenant.Client.ListWebhooksAsync()).Webhooks;
+        try
+        {
+            _webhooks = (await tenant.Client.ListWebhooksAsync()).Webhooks;
+        }
+        catch (CrawldadException)
+        {
+            // The active workspace can't be read — dominantly a stale/suspended selection the console gate 403s, else a
+            // transient API error. Degrade to the honest "unavailable" state (points at Account) — never a 500.
+            _notLinked = true;
+            _workspaceUnavailable = true;
+            return;
+        }
 
         // Default the deliveries panel to the first endpoint; ?endpoint=name overrides. A selected name we don't know
         // is surfaced as "no such endpoint" rather than a failed read.

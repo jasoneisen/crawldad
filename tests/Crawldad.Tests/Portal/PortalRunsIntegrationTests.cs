@@ -22,7 +22,7 @@ public class PortalRunsIntegrationTests(PortalFixture fixture)
 
         resp.StatusCode.ShouldBe(HttpStatusCode.OK);
         var html = await resp.Content.ReadAsStringAsync();
-        html.ShouldContain("No workspace linked"); // the unlinked user's clean empty state, never a 500
+        html.ShouldContain("No workspace yet"); // the unlinked user's clean empty state, never a 500
     }
 
     [Fact]

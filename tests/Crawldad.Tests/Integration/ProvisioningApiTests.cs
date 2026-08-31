@@ -56,10 +56,11 @@ public sealed class ProvisioningApiTests(ProvisioningFixture fixture) : IAsyncLi
         var result = await ProvisionAsync(email);
         result.Context.Response.StatusCode.ShouldBe(StatusCodes.Status201Created);
 
-        // The response is the workspace shape: an API-assigned GUID id, the default name, and the creator's Owner role.
+        // The response is the workspace shape: an API-assigned BARE GUID id (no 't-' prefix — ids are opaque), the default
+        // name, and the creator's Owner role.
         var workspace = await result.ReadAsJsonAsync<WorkspaceSummary>();
-        workspace.TenantId.ShouldStartWith("t-");
-        Guid.TryParse(workspace.TenantId["t-".Length..], out _).ShouldBeTrue();
+        workspace.TenantId.ShouldNotStartWith("t-");
+        Guid.TryParse(workspace.TenantId, out _).ShouldBeTrue();
         workspace.DisplayName.ShouldBe(ProvisioningEndpoint.DefaultDisplayName);
         workspace.Role.ShouldBe(MembershipRole.Owner);
 

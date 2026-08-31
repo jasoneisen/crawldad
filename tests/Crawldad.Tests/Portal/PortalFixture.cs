@@ -1,6 +1,8 @@
 using System.Globalization;
 using Crawldad.Portal;
 using Crawldad.Portal.Auth;
+using Crawldad.Portal.Infrastructure.Security;
+using Crawldad.Portal.Tenancy;
 using Marten;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -9,6 +11,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Crawldad.Tests.Portal;
+
+/// <summary>The dev/CI console token source: a static fake token so the portal runs in console-mode without any Azure
+/// managed identity — exactly the "console-mode config with a test/fake token source" dev-loop the portal ships with
+/// (issue #119). Console API calls the tests don't stub simply fail against the unreachable API base URL and degrade to the
+/// pages' empty/error states; the states that matter (no active workspace, resolution) need no live API.</summary>
+internal sealed class FakeConsoleTokenSource : IConsoleTokenSource
+{
+    public ValueTask<string> GetTokenAsync(CancellationToken cancellationToken) => ValueTask.FromResult("fake-console-token");
+}
 
 /// <summary>Captures the OTP codes the auth service "sends" so a test can complete the flow, and records every
 /// send for assertions.</summary>
@@ -75,6 +86,16 @@ public sealed class PortalTestHost(string environment) : WebApplicationFactory<C
             services.AddSingleton<IEmailSender>(Email);
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(Clock);
+
+            // Run the portal in CONSOLE-MODE (issue #119): the portal is console-mode only for data, so the tests exercise the
+            // real dev/prod path. AddConsoleAuth is config-gated and reads config at build time (which WebApplicationFactory's
+            // config additions don't reach), so force the console wiring here: a dev/CI FAKE token source (no Azure identity)
+            // plus the ConsoleClientFactory the resolvers inject as their optional dependency — exactly the "console-mode with
+            // a test/fake token source" dev-loop. An unlinked user (no active-workspace selection) resolves to a clean
+            // "No workspace yet" with no live API call; console API calls the tests don't stub degrade to the empty/error states.
+            services.RemoveAll<IConsoleTokenSource>();
+            services.AddSingleton<IConsoleTokenSource>(new FakeConsoleTokenSource());
+            services.AddSingleton<ConsoleClientFactory>();
         });
     }
 

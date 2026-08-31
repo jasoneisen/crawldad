@@ -3,12 +3,13 @@ using Marten;
 
 namespace Crawldad.Portal.Tenancy;
 
-/// <summary>Which workspace (tenant) a portal account has <b>active</b> right now (issue #119 PR6), so a multi-workspace user
-/// stays on the workspace they picked across requests. Stored in the "portal" schema, keyed by the account's normalized email
-/// (the same identity as <see cref="PortalUser"/> and <see cref="PortalTenantLink"/>), so it lines up 1:1 with the account.
-/// It is a pure <b>preference</b> — never authority: the API's membership store still decides whether the account may act as
-/// the selected tenant, so a stale selection (a workspace the user has left) simply fails the console gate rather than leaking
-/// anything. Absent, resolution falls back to the account's <see cref="PortalTenantLink"/> tenant.</summary>
+/// <summary>Which workspace (tenant) a portal account has <b>active</b> right now (issue #119) — the sole portal-side
+/// account→workspace pointer. It is both the console-resolution <b>bootstrap</b> (the active workspace the console client is
+/// built for) and the multi-workspace switcher <b>preference</b>, written by signup / claim / switch. Stored in the "portal"
+/// schema, keyed by the account's normalized email (the same identity as <see cref="PortalUser"/>), so it lines up 1:1 with
+/// the account. It is a pure <b>preference</b> — never authority: the API's membership store still decides whether the account
+/// may act as the selected tenant, so a stale selection (a workspace the user has left) simply fails the console gate rather
+/// than leaking anything. Absent, the account has no active workspace yet (a clean not-linked-shaped state).</summary>
 public sealed class PortalWorkspaceSelection
 {
     /// <summary>The account's email — the document id, always normalized (matching <see cref="PortalUser"/>). Unique.</summary>
@@ -35,8 +36,8 @@ public interface IPortalWorkspaceSelectionStore
     Task SetAsync(string email, string tenantId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>The Marten-backed <see cref="IPortalWorkspaceSelectionStore"/>. Mirrors <see cref="MartenPortalTenantLinkStore"/>:
-/// its own session per call over the shared store, normalized-email identity.</summary>
+/// <summary>The Marten-backed <see cref="IPortalWorkspaceSelectionStore"/>: its own session per call over the shared store,
+/// normalized-email identity.</summary>
 internal sealed class MartenPortalWorkspaceSelectionStore(IDocumentStore store, TimeProvider clock) : IPortalWorkspaceSelectionStore
 {
     public async Task<PortalWorkspaceSelection?> GetAsync(string email, CancellationToken cancellationToken = default)

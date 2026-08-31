@@ -36,7 +36,7 @@ public class PayloadNewPageTests : BunitContext
 
         var cut = Render<PayloadNew>();
 
-        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace linked");
+        cut.Find("[data-testid=not-linked]").TextContent.ShouldContain("No workspace yet");
         cut.FindAll("[data-testid=create-form]").ShouldBeEmpty();
     }
 

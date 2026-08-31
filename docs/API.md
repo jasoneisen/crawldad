@@ -1490,7 +1490,7 @@ the **only** console endpoint reachable **without a membership** — a brand-new
 - **The acting user is the selector header**, never a body field: the verified `X-Crawldad-Console-User` (normalized) email.
   So a caller can only ever provision for **its own** verified identity. (The portal OTP-verifies that email before sending it.)
 
-**Behavior.** It creates a registry tenant with an **API-assigned GUID id** (`t-<guid>`), the **free-tier defaults** — **2**
+**Behavior.** It creates a registry tenant with an **API-assigned bare GUID id** (e.g. `6f9c1e2a-3b4d-4e6f-8a8b-9c0d1e2f3a4b`, dropping the former `t-` prefix — the id is **opaque**, and any existing `t-`-prefixed tenant remains valid with no migration), the **free-tier defaults** — **2**
 concurrent slots and tier `free` (queue depth defers to the platform default; the registry carries no per-tenant queue field)
 — records the creator as the workspace **Owner**, and mints **no API key** (a console user needs none — mint from `/tenant/keys`
 when a programmatic key is wanted). The response is the **workspace shape** (`{ tenantId, displayName, role }`, same as
@@ -1507,11 +1507,11 @@ link). Additional workspaces are created on a **paid plan** (a later surface), n
 | `POST /provisioning/tenants` | **Console scheme only** (no key, no membership) | `{ displayName? }` | `201 { tenantId, displayName, role: "owner" }` | `409 free_tenant_exists` (+ `tenantId` extension), `429 provisioning_rate_limited`, `400 actor_required` / display-name too long, `401` (no valid console token / a key caller) |
 
 ```jsonc
-// 201 — the created workspace (the workspace shape)
-{ "tenantId": "t-6f9c…", "displayName": "My workspace", "role": "owner" }
+// 201 — the created workspace (the workspace shape); tenantId is an opaque bare GUID
+{ "tenantId": "6f9c1e2a-3b4d-4e6f-8a8b-9c0d1e2f3a4b", "displayName": "My workspace", "role": "owner" }
 
 // 409 free_tenant_exists — one free tenant per email, ever; the existing workspace rides as a problem-details extension
-{ "title": "free_tenant_exists", "status": 409, "detail": "this account already has a free workspace…", "tenantId": "t-6f9c…" }
+{ "title": "free_tenant_exists", "status": 409, "detail": "this account already has a free workspace…", "tenantId": "6f9c1e2a-3b4d-4e6f-8a8b-9c0d1e2f3a4b" }
 ```
 
 Each attempt is **rate-limited** (per-account abuse insurance — a `429` before anything is created) and **audited** (a console

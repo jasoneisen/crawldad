@@ -14,8 +14,8 @@ internal interface ISignupLanding
     /// auth service, and proven controlled by the just-verified OTP). A <b>returning</b> account (already linked to a
     /// workspace) → the open-redirect-guarded <paramref name="returnUrl"/>, byte-identical to <c>/login</c>; a
     /// <b>zero-workspace</b> account → its one free-workspace provision, landing on the first-run dashboard on success, on the
-    /// account page in stored-key mode (nothing to provision with — honest), or on the account page carrying a safe error on a
-    /// transient failure.</summary>
+    /// account page when console access is unconfigured (nothing to provision with — honest), or on the account page carrying a
+    /// safe error on a transient failure.</summary>
     Task<string> ResolveAsync(string verifiedEmail, string? returnUrl, CancellationToken cancellationToken);
 }
 
@@ -27,27 +27,28 @@ internal sealed class SignupLanding : ISignupLanding
     /// <see cref="bool"/> query parameter (which parses <c>true</c>/<c>false</c>, never <c>1</c>).</summary>
     internal const string FirstRunDashboard = "/app?welcome=true";
 
-    /// <summary>Where a stored-key-mode signup (no console identity to provision with) or a failed provision lands — the
-    /// account page, whose zero-workspace state explains the operator-provisioned reality and offers the attach form. Matches
+    /// <summary>Where an unconfigured-console signup (no console identity to provision with) or a failed provision lands — the
+    /// account page, whose zero-workspace state explains the reality and offers the claim form. Matches
     /// <see cref="WorkspaceProvisionEndpoints.AccountPath"/> so the two provisioning entry points land consistently.</summary>
     internal const string AccountPath = "/app/account";
 
-    private readonly IPortalTenantLinkStore _links;
+    private readonly IPortalWorkspaceSelectionStore _selections;
     private readonly IPortalProvisioningService _provisioning;
 
-    public SignupLanding(IPortalTenantLinkStore links, IPortalProvisioningService provisioning)
+    public SignupLanding(IPortalWorkspaceSelectionStore selections, IPortalProvisioningService provisioning)
     {
-        _links = links;
+        _selections = selections;
         _provisioning = provisioning;
     }
 
     public async Task<string> ResolveAsync(string verifiedEmail, string? returnUrl, CancellationToken cancellationToken)
     {
-        // A returning account (already linked to a workspace) is a /login in disguise: never re-provision, and honour the
-        // return URL through the same same-site open-redirect guard the login page uses. Only the zero-workspace population —
-        // exactly who signup is for — is provisioned. (A console account that has a workspace at the API but lost its portal
-        // link is still handled: it has no link here, so it flows to ProvisionAsync, whose one-per-email 409 recovers it.)
-        if (await _links.GetAsync(verifiedEmail, cancellationToken) is not null)
+        // A returning account (one that already has an active workspace) is a /login in disguise: never re-provision, and
+        // honour the return URL through the same same-site open-redirect guard the login page uses. Only the zero-workspace
+        // population — exactly who signup is for — is provisioned. (An account that has a workspace at the API but lost its
+        // active-workspace pointer is still handled: it has no selection here, so it flows to ProvisionAsync, whose
+        // one-per-email 409 recovers the existing workspace and re-selects it.)
+        if (await _selections.GetAsync(verifiedEmail, cancellationToken) is not null)
         {
             return SafeRedirect.ToLocalOrApp(returnUrl);
         }
@@ -57,8 +58,8 @@ internal sealed class SignupLanding : ISignupLanding
         {
             // Created, or one-per-email-ever recovered — either way the account now has its free workspace active.
             PortalProvisionOutcome.Provisioned or PortalProvisionOutcome.AlreadyProvisioned => FirstRunDashboard,
-            // Stored-key mode: there is no console identity to create a workspace with. Honest — the account page's
-            // zero-workspace state explains the operator-provisioned reality and offers the attach form.
+            // Console access unconfigured on this deployment: there is no console identity to create a workspace with. Honest —
+            // the account page's zero-workspace state explains it and offers the "claim an existing workspace" action.
             PortalProvisionOutcome.Unavailable => AccountPath,
             // A transient provision failure (API unreachable / rate-limited): surface the safe message on the account page,
             // where the one-click "create your free workspace" affordance lets the user retry.

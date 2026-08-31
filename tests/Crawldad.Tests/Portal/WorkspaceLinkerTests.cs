@@ -1,31 +1,22 @@
 using System.Net;
-using Crawldad.Client;
 using Crawldad.Contracts.Tenancy;
-using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
 using Crawldad.Tests.Client;
-using Microsoft.Extensions.Options;
 
 namespace Crawldad.Tests.Portal;
 
-/// <summary>Unit tests for <see cref="WorkspaceLinker"/> in isolation (stub API handler + recording store): the key is
-/// always validated against the live API BEFORE anything is written, so a valid+matching key is the only path that
-/// upserts (with the authoritative tenant id), and a rejected key, a wrong-tenant key, an API error, and a transport
-/// failure each leave the store untouched. No outcome message ever contains the submitted key.</summary>
+/// <summary>Unit tests for <see cref="WorkspaceLinker"/> in isolation (stub API handler): the submitted key is always
+/// validated against the live API BEFORE anything is recorded, and the key is ALWAYS discarded — there is no stored key
+/// anywhere (issue #119). A valid+matching key records the account's Owner membership (Claimed); a rejected key, a
+/// wrong-tenant key, an operator-configured (env) tenant, an API error, and a transport failure each record nothing. No
+/// outcome message ever contains the submitted key.</summary>
 public class WorkspaceLinkerTests
 {
     private const string _email = "owner@example.com";
     private const string _apiKey = "sk_live_probe_0123456789";
 
-    private static (WorkspaceLinker Linker, RecordingLinkStore Store) LinkerFor(HttpMessageHandler handler, bool consoleMode = false)
-    {
-        var factory = new StubHttpClientFactory(handler, new Uri("https://api.crawldad.test/"));
-        var store = new RecordingLinkStore();
-        var options = Options.Create(consoleMode
-            ? new PortalConsoleAuthOptions { TenantId = Guid.NewGuid().ToString(), Audience = "api://crawldad-test" }
-            : new PortalConsoleAuthOptions());
-        return (new WorkspaceLinker(factory, store, options), store);
-    }
+    private static WorkspaceLinker LinkerFor(HttpMessageHandler handler) =>
+        new(new StubHttpClientFactory(handler, new Uri("https://api.crawldad.test/")));
 
     // A path-branching handler: GET /tenant returns the profile; POST /tenant/memberships records an owner membership.
     private static StubHttpMessageHandler LinkedHandler(string tenantId = "tenant-alpha") =>
@@ -34,17 +25,18 @@ public class WorkspaceLinkerTests
             : ClientTestHarness.Json(new TenantProfileResponse(tenantId, "alpha@crawldad.test", "pro", 5, 20)));
 
     [Fact]
-    public async Task Valid_key_whose_tenant_matches_is_linked_and_records_the_owner_membership()
+    public async Task Valid_key_whose_tenant_matches_records_the_owner_membership_and_discards_the_key()
     {
         var handler = LinkedHandler();
-        var (linker, store) = LinkerFor(handler);
+        var linker = LinkerFor(handler);
 
-        // Enter the id in a different casing to prove the stored id is the profile's, not the raw entry.
+        // Enter the id in a different casing/padding to prove the match is case-insensitive and trimmed.
         var result = await linker.LinkAsync(_email, "  Tenant-Alpha  ", _apiKey);
 
-        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
+        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Claimed);
 
-        // The key was probed (GET /tenant), then the owner membership was recorded (POST /tenant/memberships) with the key.
+        // The key was probed (GET /tenant), then the owner membership was recorded (POST /tenant/memberships) with the key —
+        // and the key is never stored (there is no store).
         handler.Requests.Count.ShouldBe(2);
         handler.Requests[0].Path.ShouldBe("/tenant");
         handler.Requests[0].Authorization.ShouldBe($"Bearer {_apiKey}");
@@ -52,128 +44,86 @@ public class WorkspaceLinkerTests
         handler.Requests[1].Path.ShouldBe("/tenant/memberships");
         handler.Requests[1].Authorization.ShouldBe($"Bearer {_apiKey}");
         handler.Requests[1].Body.ShouldContain(_email);
-
-        var upsert = store.Upserts.ShouldHaveSingleItem();
-        upsert.Email.ShouldBe(_email);
-        upsert.TenantId.ShouldBe("tenant-alpha"); // authoritative id from the profile, not the entered casing/padding
-        upsert.ApiKey.ShouldBe(_apiKey);
+        result.Message.ShouldNotContain(_apiKey);
     }
 
     [Fact]
-    public async Task Console_mode_records_the_membership_and_discards_the_key()
+    public async Task An_operator_configured_env_tenant_cannot_be_claimed_and_keeps_no_key()
     {
-        // Verify-then-discard (issue #119 PR5): console-mode verifies the key, records the membership, then stores the link
-        // WITHOUT the key — the console credential authenticates from here on, so no per-tenant key is kept at rest.
-        var handler = LinkedHandler();
-        var (linker, store) = LinkerFor(handler, consoleMode: true);
-
-        var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
-
-        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
-        handler.Requests.Select(r => r.Path).ShouldBe(["/tenant", "/tenant/memberships"]); // verified, then membership recorded
-        var keyless = store.KeylessUpserts.ShouldHaveSingleItem();
-        keyless.ShouldBe((_email, "tenant-alpha")); // stored as the authoritative email→tenant mapping, no key
-        store.Upserts.ShouldBeEmpty();              // the key was never stored
-    }
-
-    [Fact]
-    public async Task Console_mode_keeps_the_key_when_the_membership_cannot_be_recorded()
-    {
-        // An env tenant has no membership surface (400 self_service_unavailable). Console-mode cannot discard the key with no
-        // membership to authenticate — it falls back to storing the key so the account is never locked out.
+        // An env tenant has no membership surface (400 self_service_unavailable). It can't be claimed as a workspace — and,
+        // crucially, NO key is kept (the old stored-key fallback is gone). The message says so clearly.
         var handler = new StubHttpMessageHandler(req => string.Equals(req.Path, "/tenant/memberships", StringComparison.Ordinal)
             ? ClientTestHarness.JsonRaw(HttpStatusCode.BadRequest, "{\"title\":\"self_service_unavailable\"}")
             : ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "a@crawldad.test", null, 3, 10)));
-        var (linker, store) = LinkerFor(handler, consoleMode: true);
+        var linker = LinkerFor(handler);
 
         var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
 
-        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
-        store.KeylessUpserts.ShouldBeEmpty();               // not discarded — nothing to authenticate with
-        store.Upserts.ShouldHaveSingleItem().ApiKey.ShouldBe(_apiKey); // the key was kept as the fallback
+        result.Outcome.ShouldBe(WorkspaceLinkOutcome.OperatorManaged);
+        result.Message.ShouldContain("operator-configured");
+        result.Message.ShouldNotContain(_apiKey);
     }
 
     [Fact]
-    public async Task An_env_tenant_membership_refusal_is_swallowed_and_the_link_still_succeeds()
+    public async Task A_membership_transport_failure_is_unverifiable()
     {
-        // The membership surface is registry-only; an env tenant returns 400 self_service_unavailable — which must NOT
-        // block linking (the stored key still authenticates every call).
-        var handler = new StubHttpMessageHandler(req => string.Equals(req.Path, "/tenant/memberships", StringComparison.Ordinal)
-            ? ClientTestHarness.JsonRaw(HttpStatusCode.BadRequest, "{\"title\":\"self_service_unavailable\"}")
-            : ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "a@crawldad.test", null, 3, 10)));
-        var (linker, store) = LinkerFor(handler);
-
-        var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
-
-        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
-        store.Upserts.ShouldHaveSingleItem(); // the link was still persisted
-    }
-
-    [Fact]
-    public async Task A_membership_transport_failure_is_swallowed_and_the_link_still_succeeds()
-    {
-        // GET /tenant succeeds; the membership POST throws a transport fault — swallowed, the link persists.
+        // GET /tenant succeeds; the membership POST throws a transport fault — nothing is recorded, no key is kept.
         var handler = new StubHttpMessageHandler(req => string.Equals(req.Path, "/tenant/memberships", StringComparison.Ordinal)
             ? throw new HttpRequestException("connection reset")
             : ClientTestHarness.Json(new TenantProfileResponse("tenant-alpha", "a@crawldad.test", null, 3, 10)));
-        var (linker, store) = LinkerFor(handler);
+        var linker = LinkerFor(handler);
 
         var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
 
-        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Linked);
-        store.Upserts.ShouldHaveSingleItem();
+        result.Outcome.ShouldBe(WorkspaceLinkOutcome.Unverifiable);
     }
 
     [Fact]
-    public async Task A_rejected_key_is_invalid_and_never_upserts_and_never_echoes_the_key()
+    public async Task A_rejected_key_is_invalid_and_never_echoes_the_key()
     {
         var handler = ClientTestHarness.Always(() => ClientTestHarness.Empty(HttpStatusCode.Unauthorized));
-        var (linker, store) = LinkerFor(handler);
+        var linker = LinkerFor(handler);
 
         var result = await linker.LinkAsync(_email, "tenant-alpha", "totally-wrong-key");
 
         result.Outcome.ShouldBe(WorkspaceLinkOutcome.InvalidKey);
         result.Message.ShouldNotContain("totally-wrong-key");
-        store.Upserts.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task A_valid_key_for_a_different_tenant_is_a_mismatch_and_never_upserts()
+    public async Task A_valid_key_for_a_different_tenant_is_a_mismatch()
     {
         var handler = new StubHttpMessageHandler(_ =>
             ClientTestHarness.Json(new TenantProfileResponse("tenant-beta", "beta@crawldad.test", null, 3, 10)));
-        var (linker, store) = LinkerFor(handler);
+        var linker = LinkerFor(handler);
 
         var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
 
         result.Outcome.ShouldBe(WorkspaceLinkOutcome.TenantMismatch);
         result.Message.ShouldContain("tenant-beta"); // names the tenant the key actually authenticates
         result.Message.ShouldNotContain(_apiKey);
-        store.Upserts.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task An_api_error_is_unverifiable_and_never_upserts()
+    public async Task An_api_error_on_the_probe_is_unverifiable()
     {
         var handler = ClientTestHarness.Always(() => ClientTestHarness.Empty(HttpStatusCode.InternalServerError));
-        var (linker, store) = LinkerFor(handler);
+        var linker = LinkerFor(handler);
 
         var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
 
         result.Outcome.ShouldBe(WorkspaceLinkOutcome.Unverifiable);
-        store.Upserts.ShouldBeEmpty();
     }
 
     [Fact]
-    public async Task A_transport_failure_is_unverifiable_and_never_upserts()
+    public async Task A_transport_failure_on_the_probe_is_unverifiable()
     {
         var handler = new ThrowingHttpMessageHandler(new HttpRequestException("connection refused"));
-        var (linker, store) = LinkerFor(handler);
+        var linker = LinkerFor(handler);
 
         var result = await linker.LinkAsync(_email, "tenant-alpha", _apiKey);
 
         result.Outcome.ShouldBe(WorkspaceLinkOutcome.Unverifiable);
-        store.Upserts.ShouldBeEmpty();
     }
 
     private sealed class StubHttpClientFactory(HttpMessageHandler handler, Uri baseAddress) : IHttpClientFactory
@@ -185,27 +135,5 @@ public class WorkspaceLinkerTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             throw ex;
-    }
-
-    private sealed class RecordingLinkStore : IPortalTenantLinkStore
-    {
-        public List<(string Email, string TenantId, string ApiKey)> Upserts { get; } = [];
-
-        public List<(string Email, string TenantId)> KeylessUpserts { get; } = [];
-
-        public Task<PortalTenantLink?> GetAsync(string email, CancellationToken cancellationToken = default) =>
-            Task.FromResult<PortalTenantLink?>(null);
-
-        public Task<PortalTenantLink> UpsertAsync(string email, string tenantId, string apiKey, CancellationToken cancellationToken = default)
-        {
-            Upserts.Add((email, tenantId, apiKey));
-            return Task.FromResult(new PortalTenantLink { Email = email, TenantId = tenantId, ProtectedApiKey = "ciphertext" });
-        }
-
-        public Task<PortalTenantLink> UpsertKeylessAsync(string email, string tenantId, CancellationToken cancellationToken = default)
-        {
-            KeylessUpserts.Add((email, tenantId));
-            return Task.FromResult(new PortalTenantLink { Email = email, TenantId = tenantId });
-        }
     }
 }

@@ -1,6 +1,7 @@
 @page "/app/live"
 @layout AppLayout
 @attribute [Authorize]
+@using Crawldad.Client
 @using Crawldad.Contracts.Runs
 @using Crawldad.Portal.Runs
 @using Crawldad.Portal.Tenancy
@@ -24,17 +25,8 @@
 
 @if (_active is null)
 {
-    <div class="card mt-3" data-testid="not-linked">
-        <div class="empty">
-            <p class="empty-title">No workspace linked</p>
-            <p class="empty-subtitle text-secondary">
-                This account isn't linked to a Crawldad workspace yet, so there's nothing running to watch. Link a
-                workspace from your account to follow live runs here.
-            </p>
-            <div class="empty-action">
-                <a href="/app/account" class="btn btn-primary">Go to Account</a>
-            </div>
-        </div>
+    <div class="card mt-3">
+        <WorkspaceEmptyState Configured="Tenant.ConsoleConfigured" Unavailable="_workspaceUnavailable" />
     </div>
 }
 else if (_active.Count == 0)
@@ -115,19 +107,29 @@ else
     // Null once resolved => the account is not linked to a tenant (the not-linked empty state); otherwise the running +
     // queued runs (possibly empty => the "nothing running" state).
     private IReadOnlyList<RunListItem>? _active;
+    private bool _workspaceUnavailable; // resolved-but-forbidden workspace (stale/suspended selection → 403) → Account escape
 
     protected override async Task OnInitializedAsync()
     {
-        var tenant = await Tenant.TryResolveForPageAsync();
+        var tenant = await Tenant.TryResolveAsync();
         if (tenant is null)
         {
-            return; // unlinked, or an undecryptable key (rotated ring) => not-linked empty state (re-link from Account)
+            return; // no active workspace / console unconfigured => the empty state (points at Account)
         }
 
         // Running first, then queued — the two live dispositions, each a separate status filter (GET /runs?status=…).
         // size:100 takes the whole active set in one page (the concurrent-run + queue-depth caps keep it small).
-        var running = await tenant.Client.ListRunsAsync(status: RunStatus.Running, size: 100);
-        var queued = await tenant.Client.ListRunsAsync(status: RunStatus.Queued, size: 100);
-        _active = [.. running.Runs, .. queued.Runs];
+        try
+        {
+            var running = await tenant.Client.ListRunsAsync(status: RunStatus.Running, size: 100);
+            var queued = await tenant.Client.ListRunsAsync(status: RunStatus.Queued, size: 100);
+            _active = [.. running.Runs, .. queued.Runs];
+        }
+        catch (CrawldadException)
+        {
+            // The active workspace can't be read — dominantly a stale/suspended selection the console gate 403s, else a
+            // transient API error. Degrade to the honest "unavailable" state (points at Account) — never a 500.
+            _workspaceUnavailable = true;
+        }
     }
 }

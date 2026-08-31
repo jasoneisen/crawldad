@@ -5,35 +5,34 @@ namespace Crawldad.Tests.Portal;
 
 /// <summary>Test doubles for rendering the payloads/webhooks data pages under bUnit: a programmable
 /// <see cref="IPortalTenantContext"/> that resolves to a <see cref="PortalTenant"/> whose <c>CrawldadClient</c> rides a
-/// stub HTTP handler (canned API responses, keyed by path/method), or to the not-linked state (null). Named for this
-/// feature so it never collides with a sibling page task's own doubles.</summary>
+/// stub HTTP handler (canned API responses, keyed by path/method), or to the no-workspace (null) state — with or without
+/// console access configured. Named for this feature so it never collides with a sibling page task's own doubles.</summary>
 internal sealed class PayloadsWebhooksTenantContext : IPortalTenantContext
 {
     private readonly PortalTenant? _tenant;
-    private readonly Exception? _fault;
 
-    private PayloadsWebhooksTenantContext(PortalTenant? tenant, Exception? fault = null)
+    private PayloadsWebhooksTenantContext(PortalTenant? tenant, bool configured)
     {
         _tenant = tenant;
-        _fault = fault;
+        ConsoleConfigured = configured;
     }
 
-    /// <summary>A context that resolves to a tenant whose client is backed by <paramref name="handler"/>.</summary>
+    public bool ConsoleConfigured { get; }
+
+    /// <summary>A context that resolves to a workspace whose client is backed by <paramref name="handler"/>.</summary>
     public static PayloadsWebhooksTenantContext LinkedTo(StubHttpMessageHandler handler, string tenantId = "meridian-title") =>
-        new(new PortalTenant(tenantId, ClientTestHarness.ClientFor(handler)));
+        new(new PortalTenant(tenantId, ClientTestHarness.ClientFor(handler)), configured: true);
 
-    /// <summary>A context that resolves to the not-linked state (unauthenticated or unlinked).</summary>
-    public static PayloadsWebhooksTenantContext NotLinked() => new(tenant: null);
+    /// <summary>A context that resolves to the no-workspace state (console configured, but no active workspace).</summary>
+    public static PayloadsWebhooksTenantContext NotLinked() => new(tenant: null, configured: true);
 
-    /// <summary>A context whose resolve throws — e.g. a rotated Data-Protection ring surfacing as
-    /// <see cref="System.Security.Cryptography.CryptographicException"/> from inside Unprotect.</summary>
-    public static PayloadsWebhooksTenantContext Throwing(Exception fault) => new(tenant: null, fault);
+    /// <summary>A context where console access is not configured on the deployment (the honest unconfigured state).</summary>
+    public static PayloadsWebhooksTenantContext NotConfigured() => new(tenant: null, configured: false);
 
     public Task<PortalTenant?> TryResolveAsync(CancellationToken cancellationToken = default) =>
-        _fault is not null ? Task.FromException<PortalTenant?>(_fault) : Task.FromResult(_tenant);
+        Task.FromResult(_tenant);
 
     public Task<PortalTenant> RequireAsync(CancellationToken cancellationToken = default) =>
-        _fault is not null ? Task.FromException<PortalTenant>(_fault)
-        : _tenant is not null ? Task.FromResult(_tenant)
-        : throw new NotLinkedException("The current portal user is not linked to a Crawldad tenant.");
+        _tenant is not null ? Task.FromResult(_tenant)
+        : throw new NotLinkedException("The current portal user has no active workspace.");
 }

@@ -1,0 +1,57 @@
+@*
+    The shared empty state a data page renders when it has no usable workspace (issue #119 simplification). The portal is
+    console-mode only for data, so there are three honest reasons a page has nothing to show, and this tells them apart:
+
+      • console access isn't CONFIGURED on this deployment (an operator misconfig) — nothing the user can do; or
+      • the account's active workspace is UNAVAILABLE — the console gate 403s it (the user was removed from it, or an operator
+        suspended it), and the stale selector 403s GET /workspaces too, so we can't offer an in-page switch — point at Account,
+        where claim/create live, and never a 500; or
+      • the account simply has no active workspace yet — create a free one or claim an existing one from Account.
+
+    Kept as one component so every data page renders the identical, honest empty state (no per-page "linked" language). The
+    stable data-testid="not-linked" is retained so the existing page tests keep finding this block wherever a page wraps it.
+*@
+<div class="empty" data-testid="not-linked">
+    @if (!Configured)
+    {
+        <p class="empty-title" data-testid="console-unconfigured">Console access isn't configured</p>
+        <p class="empty-subtitle text-secondary">
+            This deployment isn't configured for console access, so workspace data can't be shown here. Contact your operator.
+        </p>
+    }
+    else if (Unavailable)
+    {
+        <p class="empty-title" data-testid="workspace-unavailable">This workspace is unavailable</p>
+        <p class="empty-subtitle text-secondary">
+            You may have been removed from it, an operator may have suspended it, or it's temporarily unreachable. Go to your
+            account to claim a workspace you have access to, or contact your operator.
+        </p>
+        <div class="empty-action">
+            <a href="/app/account" class="btn btn-primary">Go to Account</a>
+        </div>
+    }
+    else
+    {
+        <p class="empty-title">No workspace yet</p>
+        <p class="empty-subtitle text-secondary">
+            This account has no active Crawldad workspace yet. Create a free workspace or claim an existing one from your
+            account to get started.
+        </p>
+        <div class="empty-action">
+            <a href="/app/account" class="btn btn-primary">Go to Account</a>
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Whether console access is configured on this deployment (from the tenant context / circuit resolver). False
+    /// renders the honest "console access isn't configured" state with no user action.</summary>
+    [Parameter]
+    public bool Configured { get; set; }
+
+    /// <summary>Whether the account HAS an active workspace but the console gate forbids it (a stale/suspended selection — a
+    /// <c>403</c> on the data read). True renders the "workspace unavailable" state with an Account escape; false (with
+    /// Configured true) renders the "no workspace yet" state. Ignored when Configured is false.</summary>
+    [Parameter]
+    public bool Unavailable { get; set; }
+}

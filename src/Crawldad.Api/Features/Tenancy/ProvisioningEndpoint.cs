@@ -34,7 +34,7 @@ public static class ProvisioningEndpoint
 
     // The rate-limiter partition for provisioning attempts. Provisioning has no tenant yet, so it cannot ride the
     // per-(email, tenant) console-write partition; it keys on (email, THIS sentinel) instead. The sentinel is not a valid
-    // tenant slug (it starts with '~', which TenantRules.IsValidId rejects and a t-<guid> id never contains), so it can never
+    // tenant slug (it starts with '~', which TenantRules.IsValidId rejects and a bare-GUID id never contains), so it can never
     // collide with a real tenant's console-write partition for the same email.
     private const string _rateLimitPartition = "~free-provision";
 
@@ -80,7 +80,7 @@ public static class ProvisioningEndpoint
         var now = clock.GetUtcNow();
         var tenant = new RegistryTenant
         {
-            Id = $"t-{Guid.NewGuid()}",                                   // API-assigned GUID id (registry convention)
+            Id = Guid.NewGuid().ToString(),                               // API-assigned bare GUID id (opaque; no prefix)
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? DefaultDisplayName : displayName.Trim(),
             Actor = email,                                                // a personal free workspace: its creator is the key-path actor
             Tier = FreeTier,
