@@ -17,7 +17,7 @@ public sealed record PayloadSummary(
 
 /// <summary>Folds a payload's events into its <see cref="PayloadSummary"/> row. Registered on the shared, config-driven
 /// projection lifecycle (Inline under the test switch, Async in production) alongside the aggregate snapshot.</summary>
-public sealed partial class PayloadSummaryProjection : SingleStreamProjection<PayloadSummary, Guid>
+public sealed class PayloadSummaryProjection : SingleStreamProjection<PayloadSummary, Guid>
 {
     /// <summary>Creates the row on the drafting event (revision 1).</summary>
     public PayloadSummary Create(PayloadDrafted drafted) =>

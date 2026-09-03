@@ -65,7 +65,7 @@ public sealed record RunSummary
 /// only — the opener, the queue promotion, the session-open (region), and the three terminals — and ignores the fine
 /// step trace the <see cref="RunTimelineProjection"/> curates, so the summary stays cheap to build and small to query.
 /// Registered on the shared, config-driven projection lifecycle (Inline under the test switch, Async in production).</summary>
-public sealed partial class RunSummaryProjection : SingleStreamProjection<RunSummary, Guid>
+public sealed class RunSummaryProjection : SingleStreamProjection<RunSummary, Guid>
 {
     /// <summary>Opens the row on a run started immediately under the cap.</summary>
     public RunSummary Create(RunStarted started) => new()
