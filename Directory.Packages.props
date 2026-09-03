@@ -7,21 +7,24 @@
   </PropertyGroup>
 
   <ItemGroup Label="Critter Stack (Marten + Wolverine)">
-    <PackageVersion Include="Marten" Version="9.30.0" />
-    <PackageVersion Include="WolverineFx.Http" Version="6.32.0" />
-    <PackageVersion Include="WolverineFx.Marten" Version="6.32.0" />
-    <PackageVersion Include="WolverineFx.Http.FluentValidation" Version="6.32.0" />
+    <PackageVersion Include="Marten" Version="9.31.2" />
+    <PackageVersion Include="WolverineFx.Http" Version="6.33.0" />
+    <PackageVersion Include="WolverineFx.Marten" Version="6.33.0" />
+    <PackageVersion Include="WolverineFx.Http.FluentValidation" Version="6.33.0" />
     <!-- Wolverine 6 moved the runtime Roslyn compiler out of core; this re-enables dynamic codegen.
          Production can instead pre-generate code (codegen write) and set TypeLoadMode.Static. -->
-    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.32.0" />
+    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.33.0" />
     <!-- JasperFx (the db-*/projections/codegen CLI) and FluentValidation arrive transitively via the packages
          above; pinned explicitly so the versions are visible and so the slices that already consume them — the
          AbstractValidator<T>s under Features/ — compile without any project choosing a version of its own.
-         JasperFx tracks the spine Wolverine resolves (Weasel rides along transitively). -->
-    <PackageVersion Include="JasperFx" Version="2.59.0" />
-    <!-- Rides along transitively only where Wolverine 6.32 pulls it up: the Portal hosts standalone Marten with no
-         Wolverine, so unpinned it resolves Marten 9.30's own floor (2.56.0) while Api/Tests resolve 2.59.0. -->
-    <PackageVersion Include="JasperFx.Events" Version="2.59.0" />
+         JasperFx tracks the spine Marten/Wolverine resolve (Weasel rides along transitively). -->
+    <PackageVersion Include="JasperFx" Version="2.61.0" />
+    <!-- Pinned so all three projects resolve one events runtime. The Portal hosts standalone Marten with no
+         Wolverine, so unpinned each project would take whichever floor its own graph declares — and which package
+         floors it highest flips refresh to refresh: at Marten 9.30 / Wolverine 6.32 the Portal fell back to Marten's
+         2.56.0 while Api/Tests rode Wolverine to 2.59.0; at Marten 9.31.2 / Wolverine 6.33 the direction reverses
+         (Marten floors 2.61.0, Wolverine only 2.60.0). The pin holds Api/Portal/Tests together either way. -->
+    <PackageVersion Include="JasperFx.Events" Version="2.61.0" />
     <PackageVersion Include="FluentValidation" Version="12.0.0" />
   </ItemGroup>
 
