@@ -7,17 +7,18 @@
   </PropertyGroup>
 
   <ItemGroup Label="Critter Stack (Marten + Wolverine)">
-    <PackageVersion Include="Marten" Version="9.11.0" />
-    <PackageVersion Include="WolverineFx.Http" Version="6.15.0" />
-    <PackageVersion Include="WolverineFx.Marten" Version="6.15.0" />
-    <PackageVersion Include="WolverineFx.Http.FluentValidation" Version="6.15.0" />
+    <PackageVersion Include="Marten" Version="9.30.0" />
+    <PackageVersion Include="WolverineFx.Http" Version="6.32.0" />
+    <PackageVersion Include="WolverineFx.Marten" Version="6.32.0" />
+    <PackageVersion Include="WolverineFx.Http.FluentValidation" Version="6.32.0" />
     <!-- Wolverine 6 moved the runtime Roslyn compiler out of core; this re-enables dynamic codegen.
          Production can instead pre-generate code (codegen write) and set TypeLoadMode.Static. -->
-    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.15.0" />
+    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.32.0" />
     <!-- JasperFx (the db-*/projections/codegen CLI) and FluentValidation arrive transitively via the packages
-         above; pinned explicitly so the versions are visible and a later slice can reference them directly
-         (e.g. FluentValidation for AbstractValidator<T> in a Validators.cs) without choosing a version. -->
-    <PackageVersion Include="JasperFx" Version="2.16.0" />
+         above; pinned explicitly so the versions are visible and so the slices that already consume them — the
+         AbstractValidator<T>s under Features/ — compile without any project choosing a version of its own.
+         JasperFx tracks the spine Wolverine resolves (JasperFx.Events/Weasel ride along transitively). -->
+    <PackageVersion Include="JasperFx" Version="2.59.0" />
     <PackageVersion Include="FluentValidation" Version="12.0.0" />
   </ItemGroup>
 
