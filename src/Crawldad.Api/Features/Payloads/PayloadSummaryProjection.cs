@@ -3,9 +3,13 @@ using Marten.Events.Aggregation;
 
 namespace Crawldad.Api.Features.Payloads;
 
-/// <summary>Async listing read model: one summary per payload, distinct from the <see cref="Payload"/> snapshot used for
-/// read-your-writes (lag is tolerated here). Metadata only — no script body, never a credential-leak vector. Revision
-/// advances on every event; only revise changes the script hash. Exposed via <see cref="PayloadListItem"/>, never this type.</summary>
+/// <summary>Async listing read model: one summary per payload — lag is tolerated here. It is <b>not</b> the
+/// read-your-writes view, and neither is the <see cref="Payload"/> snapshot: both ride the same config-driven lifecycle
+/// (Async in production, Inline only under the test switch), and no production path reads the snapshot document at all.
+/// Every single-payload read — <c>GET /payloads/{id}</c>, revise, rename, archive, drift — folds the stream live with
+/// <c>Events.AggregateStreamAsync&lt;Payload&gt;</c>, which is race-immune and reads its own writes. Metadata only — no
+/// script body, never a credential-leak vector. Revision advances on every event; only revise changes the script hash.
+/// Exposed via <see cref="PayloadListItem"/>, never this type.</summary>
 public sealed record PayloadSummary(
     Guid Id,
     string Name,
