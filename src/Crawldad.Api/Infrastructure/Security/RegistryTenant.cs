@@ -1,14 +1,19 @@
 namespace Crawldad.Api.Infrastructure.Security;
 
 /// <summary>A registry tenant's lifecycle state. A <see cref="Suspended"/> tenant's keys still exist but no longer
-/// authenticate — a suspended tenant is rejected at the auth boundary exactly like an unknown key (no existence oracle).</summary>
+/// authenticate — a suspended tenant is rejected at the auth boundary exactly like an unknown key (no existence oracle).
+/// <para><b>Stored as its ordinal.</b> With no Marten serializer override the default <c>EnumStorage.AsInteger</c> is in
+/// force, so the integers below — not the names — are what sits in the <see cref="RegistryTenant"/> document that gates
+/// authentication. The explicit values are an append-only contract: add a member with the next free value, <b>never
+/// renumber</b> (a renumber would silently re-map every stored tenant's status), and retire one as a tombstone that
+/// keeps its value. Pinned member-by-member in <c>EnumOrdinalContractTests</c>.</para></summary>
 public enum TenantStatus
 {
     /// <summary>The tenant is live: its non-revoked keys authenticate and its runs are admitted.</summary>
-    Active,
+    Active = 0,
 
     /// <summary>The tenant is suspended: every key is rejected at auth until the tenant is reactivated.</summary>
-    Suspended,
+    Suspended = 1,
 }
 
 /// <summary>The DB-backed, registry-owned tenant record — the durable counterpart to a <see cref="TenantDescriptor"/>
