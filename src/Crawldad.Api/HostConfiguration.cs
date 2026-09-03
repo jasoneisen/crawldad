@@ -158,11 +158,18 @@ public static class HostConfiguration
             [.. sp.GetRequiredService<IOptions<TenantOptions>>().Value.Tenants.Select(tenant => tenant.ApiKey)])));
     }
 
-    // The Wolverine message pipeline: transactional outbox, durable local queues (so the executor saga's messages
-    // survive restarts), bus-side validation, and the resume-not-dead-letter policy for an interrupted run.
+    // The Wolverine message pipeline: transactional outbox, durable local queues, and bus-side validation. There is
+    // deliberately NO failure policy here — an interrupted run is resumed by RunRecoveryService (Features/Runs/
+    // RunExecutor.cs), an IHostedService that scans for runs still marked Running at boot and re-publishes ExecuteRun
+    // for each (plus PromoteQueued for a tenant with queued runs). That covers a run caught mid-flight; it does not
+    // cover a lost queue/finalize/webhook envelope, which is what the durable queues below are for.
     private static void ConfigureWolverine(WolverineOptions options)
     {
         options.Policies.AutoApplyTransactions();
+
+        // Load-bearing: local queues default to BufferedInMemory, so without this an envelope enqueued and not yet
+        // handled is lost on an unclean stop, with no dead-letter row and no log. This backs them with the Postgres
+        // message store IntegrateWithWolverine() registers. Pinned by DurableLocalQueueConfigurationTests.
         options.Policies.UseDurableLocalQueues();
 
         // Validate on the bus too (only for message types that HAVE a validator), so in-process callers get the same
