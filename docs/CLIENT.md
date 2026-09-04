@@ -29,7 +29,7 @@ services.AddCrawldadClient(options =>
 });
 ```
 
-Then inject `CrawldadClient` anywhere:
+Then inject `CrawldadClient` anywhere — with one exception, called out below:
 
 ```csharp
 public sealed class ScrapeService(CrawldadClient crawldad)
@@ -40,6 +40,36 @@ public sealed class ScrapeService(CrawldadClient crawldad)
 
 The call returns the underlying `IHttpClientBuilder`, so you can layer message handlers (retries, logging) onto the
 client. To construct one without DI, `new CrawldadClient(httpClient, new CrawldadClientOptions { BaseUrl = …, ApiKey = … })`.
+
+> **In a Wolverine host, never inject `CrawldadClient` into a message handler or a `Wolverine.Http` endpoint.**
+> `AddCrawldadClient` registers a *typed* client (`AddHttpClient<CrawldadClient>`), which is an opaque **transient
+> factory** registration that Wolverine's codegen cannot inline — the generated chain falls back to service location,
+> and Wolverine 6's default `ServiceLocationPolicy.NotAllowed` answers that with `InvalidServiceLocationException`.
+> Under the default **dynamic** runtime codegen, chains compile lazily, so this throws on the **first live message** in
+> production: not at startup, and not in tests that register a fake `CrawldadClient` as an *instance* singleton (codegen
+> inlines those, so the opaque factory never reaches the compiled graph). Plain ASP.NET Core and Blazor hosts — this
+> repo's own Portal among them — are unaffected: there, `AddCrawldadClient` plus constructor injection is correct.
+>
+> Register a **named** client and your own **singleton** wrapper over `IHttpClientFactory` instead — a shape codegen
+> can inline:
+>
+> ```csharp
+> const string name = "Crawldad.Api";
+> var options = new CrawldadClientOptions { BaseUrl = new Uri("https://api.crawldad.io/"), ApiKey = apiKey };
+> options.Validate(); // AddCrawldadClient does this for you — keep the startup fail-fast
+>
+> services.AddHttpClient(name); // layer retry/logging handlers here exactly as before
+> services.AddSingleton(sp => new CrawldadClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient(name), options));
+> ```
+>
+> The `CrawldadClient` constructor applies and normalizes `options.BaseUrl` onto the client, so the named registration
+> needs no base address of its own. The **singleton** lifetime is the load-bearing part: an opaque *transient* factory is
+> what codegen refuses, while a singleton is resolved once and cached into the chain. One consequence — that client then
+> holds a single handler for the process lifetime, so if you need DNS rotation configure `PooledConnectionLifetime` on
+> the named client's primary handler rather than relying on `SetHandlerLifetime`. The alternative is to keep resolving
+> `CrawldadClient` **outside** the handler chain — from a hosted service, a startup task, or a plain MVC/minimal-API
+> endpoint — and pass the result into the message. See the "never inject a typed `AddHttpClient<T>` client into a
+> Wolverine handler" note in the idiomatic Critter Stack reference (`AGENTS.md`, gotcha #23).
 
 ## Authentication
 
