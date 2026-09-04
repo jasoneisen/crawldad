@@ -297,10 +297,13 @@ resource dbApplyJob 'Microsoft.App/jobs@2024-03-01' = {
 // would rotate the ring — signing users out AND orphaning the Data-Protected tenant API keys it stores (the "relink
 // needed" path). The ring is isolated from the API's by a distinct application discriminator, purpose, blob, and key.
 //
-// Schema: the portal has no out-of-band db-apply command, and a normal start applies schema only in Development, so in
-// Staging/Production it relies on Marten's default runtime auto-create (AutoCreate.CreateOrUpdate) on first document
-// use. The anonymous marketing "/" route touches no database, so the app boots and serves before any schema exists —
-// which is what the ingress probes + the deploy smoke-test target.
+// Schema: the portal has no out-of-band db-apply command, so EVERY environment provisions the "portal" schema during
+// startup (PortalHost calls ApplyAllDatabaseChangesOnStartup unconditionally). It used to rely instead on Marten's
+// default runtime auto-create (AutoCreate.CreateOrUpdate) at first document use, but this app scales to maxReplicas
+// (3 in prod) and that first-touch DDL races between replicas, failing a real sign-in. Marten serialises concurrent
+// startup appliers on a Postgres advisory lock; a replica that cannot attain it fails its boot and Container Apps
+// restarts it into the provisioned schema. The anonymous marketing "/" route still touches no database, which is what
+// the ingress probes + the deploy smoke-test target.
 //
 // Portal email (issue #119): the OTP mailer (Postmark) is wired ONLY when a server-token secret name is passed — all
 // three Crawldad__Portal__Email__* env vars appear together (ServerToken by KV reference, FromAddress + MessageStream

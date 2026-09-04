@@ -17,16 +17,7 @@ public static class PortalHost
 {
     public static WebApplicationBuilder AddCrawldadPortal(this WebApplicationBuilder builder)
     {
-        // The portal's OWN Marten store on the shared Postgres. Connection-string convention mirrors the API
-        // ("marten"); DatabaseSchemaName "portal" keeps it fully isolated from the API's "crawldad" schema.
-        var connection = builder.Configuration.GetConnectionString("marten")!;
-        var marten = builder.Services.AddMarten(options => ConfigurePortalMarten(options, connection));
-
-        // Dev convenience only: diff/apply the schema on boot. Prod/CI would apply it out-of-band.
-        if (builder.Environment.IsDevelopment())
-        {
-            marten.ApplyAllDatabaseChangesOnStartup();
-        }
+        AddPortalMartenStore(builder);
 
         // Time is a DI seam — the integration tests swap in a controllable clock to drive code expiry.
         builder.Services.AddSingleton(TimeProvider.System);
@@ -95,6 +86,35 @@ public static class PortalHost
             .AddInteractiveServerRenderMode();
 
         return app;
+    }
+
+    // The portal's OWN Marten store on the shared Postgres, plus its boot-time schema provisioning. Connection-string
+    // convention mirrors the API ("marten"); DatabaseSchemaName "portal" keeps it fully isolated from the API's
+    // "crawldad" schema.
+    private static void AddPortalMartenStore(WebApplicationBuilder builder)
+    {
+        var connection = builder.Configuration.GetConnectionString("marten")!;
+        var marten = builder.Services.AddMarten(options => ConfigurePortalMarten(options, connection));
+
+        // Provision the "portal" schema at boot in EVERY environment — unconditionally, unlike the API, which gates this
+        // on Development because it has an out-of-band `dotnet run -- db-apply`. The portal has no such verb: Program.cs
+        // only ever serves (Dockerfile.portal's entrypoint takes no CLI arguments), so without this line Staging and
+        // Production would fall back to Marten's default AutoCreate.CreateOrUpdate materialising the three portal tables
+        // lazily on FIRST DOCUMENT USE. That first-touch DDL races: production runs 1-3 replicas, so two replicas serving
+        // their first OTP request concurrently can collide mid-create (42P01 "relation does not exist" / a duplicate-object
+        // error) and a real customer's sign-in fails.
+        //
+        // The startup apply is NOT a race of its own — verified by decompiling Marten 9.31.2 + Weasel 9.30.0.
+        // ApplyAllDatabaseChangesOnStartup() registers the MartenActivator hosted service, which implements
+        // IGlobalLock<NpgsqlConnection> and passes ITSELF to the LOCKED
+        // DatabaseBase.ApplyAllConfiguredChangesToDatabaseAsync(IGlobalLock<T>, ...) overload — so concurrent appliers
+        // serialise on a Postgres advisory lock keyed by StoreOptions.ApplyChangesLockId (four attempts, 0/50/100/250 ms).
+        // The winner applies; a replica that still cannot attain it fails its own boot (Weasel throws under the default
+        // ResourceMigrationFailureMode.FailFast) and Container Apps restarts it into a schema the winner has by then
+        // applied. A boot that fails and is restarted into a provisioned schema is a far better failure mode than a
+        // customer's login 500ing on a half-created table. Steady-state boots are cheap: Weasel short-circuits on a
+        // matching schema fingerprint before it ever reaches for the lock.
+        marten.ApplyAllDatabaseChangesOnStartup();
     }
 
     // The portal's Marten document model, in the isolated "portal" schema. Each identity is the normalized email, so a user
