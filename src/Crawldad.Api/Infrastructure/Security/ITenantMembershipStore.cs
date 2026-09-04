@@ -65,8 +65,9 @@ public interface ITenantMembershipStore
     Task<IReadOnlyList<TenantMembership>> ListForEmailAsync(string email, CancellationToken ct);
 
     /// <summary>True when the tenant has at least one active <see cref="MembershipRole.Owner"/> membership — the human
-    /// OTP→console recovery path that makes revoking the tenant's last API key safe (issue #119 PR5). Owners are counted in
-    /// memory so the check never depends on enum-in-LINQ translation.</summary>
+    /// OTP→console recovery path that makes revoking the tenant's last API key safe (issue #119 PR5). A tenant's active
+    /// memberships are a handful of rows, so the implementation reads that set and folds the Owner count in memory rather
+    /// than pushing a second predicate down.</summary>
     Task<bool> HasActiveOwnerAsync(string tenantId, CancellationToken ct);
 
     /// <summary>Revokes the tenant's active membership <paramref name="membershipId"/>, stamping <paramref name="now"/> —
@@ -158,7 +159,7 @@ internal sealed class MartenTenantMembershipStore(IDocumentStore store) : ITenan
         var active = await session.Query<TenantMembership>()
             .Where(m => m.TenantId == tenantId && m.RevokedAt == null)
             .ToListAsync(ct);
-        return active.Any(m => m.Role == MembershipRole.Owner); // count in memory — never depend on enum-in-LINQ translation
+        return active.Any(m => m.Role == MembershipRole.Owner); // a handful of rows per tenant — folding Owner in memory is free
     }
 
     public async Task<MembershipRevokeOutcome> RevokeAsync(string tenantId, Guid membershipId, DateTimeOffset now, CancellationToken ct)
@@ -177,8 +178,9 @@ internal sealed class MartenTenantMembershipStore(IDocumentStore store) : ITenan
             return MembershipRevokeOutcome.NotFound; // unknown, another tenant's, or already revoked — idempotent no-op
         }
 
-        // Anti-orphan invariant: never remove the tenant's last active Owner. Count owners in memory (membership sets are
-        // small) so the guard never depends on enum-in-LINQ translation.
+        // Anti-orphan invariant: never remove the tenant's last active Owner. A tenant's active memberships are a handful of
+        // rows, so the guard reads that set once and folds the Owner count in memory — the count includes the membership being
+        // revoked, which is what makes <= 1 the right test.
         if (membership.Role == MembershipRole.Owner)
         {
             var activeOwners = await session.Query<TenantMembership>()
@@ -217,7 +219,8 @@ internal sealed class MartenTenantMembershipStore(IDocumentStore store) : ITenan
         }
 
         // Anti-orphan invariant: a downgrade from Owner to Member removes an active Owner — refuse if it is the last one.
-        // Count owners in memory (membership sets are small) so the guard never depends on enum-in-LINQ translation.
+        // Same shape as the revoke guard: one read of the tenant's (few) active memberships, Owner count folded in memory —
+        // the count includes the membership being downgraded, hence <= 1.
         if (membership.Role == MembershipRole.Owner && newRole == MembershipRole.Member)
         {
             var activeOwners = await session.Query<TenantMembership>()
