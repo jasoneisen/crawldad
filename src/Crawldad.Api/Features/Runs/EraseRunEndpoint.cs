@@ -7,9 +7,10 @@ namespace Crawldad.Api.Features.Runs;
 
 /// <summary><c>DELETE /runs/{id}</c>: on-demand erasure of a <b>finished</b> run — the tenant's right-to-erasure path for
 /// a run whose result carried PII (issue #71). Tenant-scoped like every run endpoint. Hard-deletes, in one transaction,
-/// the run's stored result (<see cref="RunProgress"/>), its derived read models (the <see cref="Run"/> snapshot and the
-/// <see cref="RunTimeline"/>), and its event stream — erasing both the bulk result body and the incidental PII a scrubbed
-/// timeline can still hold (a <c>LogEmitted</c> message, a <c>Navigated</c> URL).
+/// the run's stored result (<see cref="RunProgress"/>), its three derived read models (the <see cref="Run"/> snapshot, the
+/// <see cref="RunTimeline"/>, and the <see cref="RunSummary"/> row <c>GET /runs</c> lists), and its event stream — erasing
+/// the bulk result body, the headline metadata a listing would still show, and the incidental PII a scrubbed timeline can
+/// still hold (a <c>LogEmitted</c> message, a <c>Navigated</c> URL).
 ///
 /// <para><c>204</c> when a terminal run was erased; <c>404</c> when this tenant has no such run — an unknown, foreign,
 /// already-erased, or purely-synchronous run (which persists no progress row) — so there is no existence oracle and a
@@ -43,11 +44,14 @@ public static class EraseRunEndpoint
                 statusCode: StatusCodes.Status409Conflict);
         }
 
-        // Terminal: erase the result document and both derived read models, and hard-delete the event stream, all in one
-        // tenant-scoped transaction — so GET /runs/{id}, /timeline, /drift, and /events all 404 afterwards, coherently.
+        // Terminal: erase the result document and all three derived read models, and hard-delete the event stream, all in
+        // one tenant-scoped transaction — so GET /runs/{id}, /timeline, /drift, and /events all 404 afterwards, coherently.
+        // RunSummary goes with them: it is the row GET /runs lists, and it holds the run's headline metadata (payload name,
+        // status, stats, failure class/code, timestamps), so leaving it behind would keep an erased run in every listing.
         session.Delete(progress);
         session.Delete<Run>(id);
         session.Delete<RunTimeline>(id);
+        session.Delete<RunSummary>(id);
         EraseEventStream(session, store, id);
         await session.SaveChangesAsync(ct);
 

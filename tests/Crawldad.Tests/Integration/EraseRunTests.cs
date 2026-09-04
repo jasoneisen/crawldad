@@ -10,10 +10,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Crawldad.Tests.Integration;
 
-/// <summary>On-demand erasure (issue #71): <c>DELETE /runs/{id}</c> hard-erases a finished run's result document, its
-/// derived read models, and its event stream — <c>204</c> on success, idempotent <c>404</c> after, and a <c>409</c>
-/// <c>run_still_active</c> refusal for a run that has not finished. Tenant-scoping is proven separately in
-/// <c>TenantIsolationTests</c>.</summary>
+/// <summary>On-demand erasure (issue #71): <c>DELETE /runs/{id}</c> hard-erases a finished run's result document, all
+/// three derived read models (including the <c>RunSummary</c> row <c>GET /runs</c> lists — issue #160), and its event
+/// stream — <c>204</c> on success, idempotent <c>404</c> after, and a <c>409</c> <c>run_still_active</c> refusal for a
+/// run that has not finished. Tenant-scoping is proven separately in <c>TenantIsolationTests</c>.</summary>
 public class EraseRunTests
 {
     [Fact]
@@ -23,14 +23,18 @@ public class EraseRunTests
         var runId = await RunAsyncToSucceededAsync(host);
         var store = host.Services.GetRequiredService<IDocumentStore>();
 
-        // Precondition: the run left an event stream + all three derived documents.
+        // Precondition: the run left an event stream, its stored result, and all three derived read models — and the
+        // RunSummary row is what puts it in the GET /runs listing.
         await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
             (await session.Events.FetchStreamAsync(runId)).ShouldNotBeEmpty();
             (await session.LoadAsync<RunProgress>(runId)).ShouldNotBeNull();
             (await session.LoadAsync<Run>(runId)).ShouldNotBeNull();
             (await session.LoadAsync<RunTimeline>(runId)).ShouldNotBeNull();
+            (await session.LoadAsync<RunSummary>(runId)).ShouldNotBeNull();
         }
+
+        (await ListedRunIdsAsync(host)).ShouldContain(runId);
 
         // 204 with no body — the erased content is never echoed back.
         var response = await host.Scenario(x =>
@@ -40,13 +44,14 @@ public class EraseRunTests
         });
         (await response.ReadAsTextAsync()).ShouldBeEmpty();
 
-        // The result body, the derived read models, AND the event stream (its incidental PII) are all gone.
+        // The result body, all three derived read models, AND the event stream (its incidental PII) are all gone.
         await using (var session = store.LightweightSession(TestTenants.PrimaryId))
         {
             (await session.Events.FetchStreamAsync(runId)).ShouldBeEmpty();
             (await session.LoadAsync<RunProgress>(runId)).ShouldBeNull();
             (await session.LoadAsync<Run>(runId)).ShouldBeNull();
             (await session.LoadAsync<RunTimeline>(runId)).ShouldBeNull();
+            (await session.LoadAsync<RunSummary>(runId)).ShouldBeNull();
         }
 
         // Every read surface 404s coherently, and a repeat DELETE is idempotent (404, no oracle for an erased run).
@@ -58,6 +63,9 @@ public class EraseRunTests
             x.Delete.Url($"/runs/{runId}");
             x.StatusCodeShouldBe(404);
         });
+
+        // ...and the listing agrees: an erased run's headline metadata no longer surfaces in GET /runs.
+        (await ListedRunIdsAsync(host)).ShouldNotContain(runId);
     }
 
     [Fact]
@@ -143,6 +151,19 @@ public class EraseRunTests
         var root = await result.ReadAsJsonAsync<JsonElement>();
         root.GetProperty("status").GetString().ShouldBe("succeeded");
         return root.GetProperty("runId").GetGuid();
+    }
+
+    // The run ids GET /runs currently lists for the test tenant — the RunSummary-backed listing, read over HTTP so the
+    // assertion is the surface a tenant actually sees rather than the document behind it.
+    private static async Task<IReadOnlyList<Guid>> ListedRunIdsAsync(IAlbaHost host)
+    {
+        var listed = await host.Scenario(x =>
+        {
+            x.Get.Url("/runs");
+            x.StatusCodeShouldBeOk();
+        });
+        var body = await listed.ReadAsJsonAsync<JsonElement>();
+        return [.. body.GetProperty("runs").EnumerateArray().Select(row => row.GetProperty("runId").GetGuid())];
     }
 
     private static async Task ExpectGetAsync(IAlbaHost host, string url, int status) =>
