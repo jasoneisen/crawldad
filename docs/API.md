@@ -546,12 +546,14 @@ What expires is the **body only**, not the run: after expiry `GET /runs/{id}` st
 `status` and `stats`, no `result`/`partial`, and a `resultExpiredAt` marker (see [§5](#5-polling--get-runsid)) — never
 a surprising `404`. The immutable event timeline is untouched by this sweep; erase it on demand with `DELETE` below.
 
-### `DELETE /runs/{id}` — erase result & timeline
+### `DELETE /runs/{id}` — erase a finished run
 
 On-demand right-to-erasure for a **finished** run: hard-deletes, in one tenant-scoped transaction, the run's stored
-result (`RunProgress`), its `Run` snapshot and timeline read models, and its **event stream** — so both the bulk
-result body and the incidental PII a scrubbed timeline can still hold (a `LogEmitted` message, a `Navigated` URL) are
-gone, not merely archived. The response is `204` with no body (the erased content is never echoed).
+result (`RunProgress`), all three of its derived read models — the `Run` snapshot, the `RunTimeline`, and the
+`RunSummary` row that backs the runs list ([§21](#21-dashboard-read-apis--runs-list-webhook-deliveries-tenant--usage)) —
+and its **event stream**, so the bulk result body, the headline metadata a list row would still show, and the
+incidental PII a scrubbed timeline can hold (a `LogEmitted` message, a `Navigated` URL) are all gone, not merely
+archived. The response is `204` with no body (the erased content is never echoed).
 
 - **`404`** when this tenant has no such run — unknown, another tenant's, already-erased, or a purely-synchronous run
   (which never wrote a progress row). No existence oracle, so a **repeated `DELETE` is idempotent** (`204` then `404`),
@@ -560,14 +562,15 @@ gone, not merely archived. The response is `204` with no body (the erased conten
   an executor (or a queue entry) writing to it, so it is not erasable — **cancel it first** ([§7](#7-cancel--post-runsidcancel)),
   then delete the settled run.
 
-After a successful erase, `GET /runs/{id}`, `/timeline`, `/drift`, and `/events` all `404` — the run is gone
-coherently, and unlike a not-yet-projected timeline ([above](#get-runsidtimeline)) that `404` is permanent.
+After a successful erase, `GET /runs/{id}`, `/timeline`, `/drift`, and `/events` all `404`, and `GET /runs` no longer
+lists the run — it is gone coherently, from the per-run surfaces and the listing alike; unlike a not-yet-projected
+timeline ([above](#get-runsidtimeline)) that `404` is permanent.
 
 **Scope — what this does not delete.** The run's **blob artifacts** (its `screenshot`/`download`/`capture` files) are
 *not* removed by `DELETE`; they age out on their own retention (screenshots/downloads on `ScreenshotTtl`/`DownloadTtl` via
 the blob janitor, or never if that TTL is `0`; captures live in the tenant's own storage under the tenant's own retention).
-This erases the run's stored **result body and event/timeline state**; blob-level on-demand erasure is separate
-(THREAT_MODEL.md, future work).
+This erases the run's stored **result body, its read models (snapshot, timeline, list row), and its event stream**;
+blob-level on-demand erasure is separate (THREAT_MODEL.md, future work).
 
 ---
 
@@ -1209,7 +1212,9 @@ this page), and `hasMore`. Each row (`RunListItem`):
 ```
 
 A running/queued row omits the terminal-only fields (`durationMs`, `stats`, `failure`) and `region`. (In production the
-`RunSummary` projection is async and folds forward for new runs; a projection rebuild backfills history.)
+`RunSummary` projection is async and folds forward for new runs; a projection rebuild backfills history.) A run erased
+with `DELETE /runs/{id}` ([§9](#9-drift-timeline-screenshots--erasure)) drops out of this list — its summary row is
+erased with the rest of the run.
 
 ### `GET /webhooks/{name}/deliveries` — delivery history
 
@@ -1273,6 +1278,9 @@ a recent-window sample, not a billing ledger.
   recorded per-run queue waits, and `sampled` is how many waits it was computed over.
 - `events` compares the mean/peak event count over the most recent runs (a bounded window) against the
   `max-events-per-run` guardrail ([§15.4](#154-server-limits-and-their-config-knobs)) — headroom before a run trips the cap.
+- `runsStartedThisMonth` counts the same `RunSummary` rows the runs list reads, so a run **erased** with
+  `DELETE /runs/{id}` ([§9](#9-drift-timeline-screenshots--erasure)) stops counting — one more reason this reading is a
+  headroom signal, not a billing ledger.
 
 ### Run-detail shape notes (design clarifications, issue #119)
 
