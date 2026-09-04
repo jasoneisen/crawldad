@@ -90,8 +90,9 @@ public class SlotQueueTests
             x.StatusCodeShouldBe(202);
         });
 
-    // Drives every run to a terminal state so a test leaves its schema clean (no saga-backed run the next run's recovery scan
-    // would re-drive) — the durable tests' discipline that keeps a reused schema from carrying state between runs.
+    // Drives every run to a terminal state so the host is torn down with nothing mid-flight. It no longer has to leave the
+    // schema clean for the NEXT suite run — TestDefaults drops the schema before every host boots, so no leftover saga-backed
+    // run can be resumed by a later recovery scan whether or not this test finishes.
     private static async Task DrainAsync(IAlbaHost host, params Guid[] runIds)
     {
         foreach (var id in runIds)

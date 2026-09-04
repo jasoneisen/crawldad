@@ -15,7 +15,7 @@ public class PortalWiringTests
     [Fact]
     public async Task Development_registers_the_logging_email_sender()
     {
-        await using var host = await AlbaHost.For<Crawldad.Portal.Program>(b => b.UseEnvironment("Development"));
+        await using var host = await AlbaHost.For<Crawldad.Portal.Program>(b => b.UseEnvironment("Development").UsePortalTestSchema());
 
         host.Services.GetRequiredService<IEmailSender>().ShouldBeOfType<LoggingEmailSender>();
     }
@@ -23,7 +23,7 @@ public class PortalWiringTests
     [Fact]
     public async Task Production_fails_closed_and_still_serves_the_public_home()
     {
-        await using var host = await AlbaHost.For<Crawldad.Portal.Program>(b => b.UseEnvironment("Production"));
+        await using var host = await AlbaHost.For<Crawldad.Portal.Program>(b => b.UseEnvironment("Production").UsePortalTestSchema());
 
         // Fail-closed sender: no codes leak until a real provider is wired.
         host.Services.GetRequiredService<IEmailSender>().ShouldBeOfType<UnconfiguredEmailSender>();

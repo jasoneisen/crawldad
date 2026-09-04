@@ -2,6 +2,7 @@ using Crawldad.Portal;
 using Crawldad.Portal.Auth;
 using Crawldad.Portal.Infrastructure.Security;
 using Crawldad.Portal.Tenancy;
+using Crawldad.Tests.Support;
 using Marten;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -73,6 +74,33 @@ public sealed class ControllableTimeProvider(DateTimeOffset start) : TimeProvide
     }
 }
 
+/// <summary>The portal's test-host wiring, shared by <see cref="PortalTestHost"/> and by the environment-conditional
+/// wiring tests that boot the portal through Alba — so every portal host in the suite lands on the same TEST schema.</summary>
+internal static class PortalTesting
+{
+    /// <summary>The portal suite's Marten schema. The portal ships on the production-named <c>portal</c> schema; on the
+    /// shared developer Postgres that is the API's "run against the real schema" problem in miniature — the suite's rows
+    /// and a developer's local portal data land in the same tables. A test-owned name keeps them apart AND makes the
+    /// schema droppable (<see cref="TestSchema.EnsureDroppable"/> refuses <c>portal</c> outright).</summary>
+    public const string SchemaName = "crawldad_portal_test";
+
+    /// <summary>Points a portal host at <see cref="SchemaName"/>, dropping it first when <paramref name="resetData"/> —
+    /// the same drop-before-boot the API hosts get (<c>TestDefaults.UseCrawldadTestDefaults</c>). Only the collection
+    /// fixture's host resets: the extra hosts the wiring tests build share the live fixture's schema, so a drop there
+    /// would pull the tables out from under the rest of the collection.</summary>
+    public static IWebHostBuilder UsePortalTestSchema(this IWebHostBuilder builder, bool resetData = false)
+    {
+        if (resetData)
+        {
+            TestSchema.Drop(SchemaName, typeof(Crawldad.Portal.Program));
+        }
+
+        // ConfigureTestServices runs after the app's own AddMarten, so this IConfigureMarten wins — the same seam the API
+        // suite uses to isolate each fixture on its own schema.
+        return builder.ConfigureTestServices(services => services.ConfigureMarten(options => options.DatabaseSchemaName = SchemaName));
+    }
+}
+
 /// <summary>The portal host under test. Boots the real <see cref="PortalHost"/> wiring in the given environment,
 /// then swaps in the capturing email sender and controllable clock (via ConfigureTestServices, which runs after
 /// the app's own registrations and therefore wins).</summary>
@@ -93,6 +121,7 @@ public sealed class PortalTestHost(string environment) : WebApplicationFactory<C
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(environment);
+        builder.UsePortalTestSchema(resetData: true); // the collection's one shared host: start from a provably empty schema
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IEmailSender>();
@@ -124,8 +153,8 @@ public sealed class PortalFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        // Force the host to build + start (Development boot applies the "portal" schema), then belt-and-suspenders
-        // apply it explicitly so a query in any test finds its tables.
+        // Force the host to build + start (the drop-before-boot runs here, and the Development boot then applies the test
+        // schema), then belt-and-suspenders apply it explicitly so a query in any test finds its tables.
         using var _ = App.CreateClient();
         await App.Store.Storage.ApplyAllConfiguredChangesToDatabaseAsync();
     }
