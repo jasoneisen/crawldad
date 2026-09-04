@@ -4,16 +4,21 @@ namespace Crawldad.Contracts.Tenancy;
 
 /// <summary>A portal user's role in a workspace (tenant). The console membership store maps a verified email to a tenant
 /// through one of these; the role gates future member-management (invites/removal), and the <see cref="Owner"/> role is
-/// the one the workspace can never be left without.</summary>
+/// the one the workspace can never be left without.
+/// <para><b>Stored as its ordinal.</b> The wire is camelCase names, but the store is not: with no Marten serializer
+/// override the default <c>EnumStorage.AsInteger</c> is in force, so the integers below — not the names — are what sits
+/// in the <c>TenantMembership</c> document the anti-orphan Owner invariant is evaluated over. The explicit values are an
+/// append-only contract: add a member with the next free value, <b>never renumber</b>, and retire one as a tombstone
+/// that keeps its value. Pinned member-by-member in <c>EnumOrdinalContractTests</c>.</para></summary>
 public enum MembershipRole
 {
     /// <summary>Full control of the workspace — the signup creator, and the role a self-service attach records. A tenant's
     /// last active <see cref="Owner"/> membership can never be removed or downgraded (the anti-orphan invariant).</summary>
-    Owner,
+    Owner = 0,
 
     /// <summary>A non-owner member (a future invitee). Reserved for later member-management; the attach flow records
     /// <see cref="Owner"/> today.</summary>
-    Member,
+    Member = 1,
 }
 
 /// <summary>The <c>POST /tenant/memberships</c> request body: record (idempotently) a membership for

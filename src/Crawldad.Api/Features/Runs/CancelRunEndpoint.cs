@@ -69,8 +69,11 @@ public static class CancelRunEndpoint
     // Durably appends the RunCancellationRequested breadcrumb, resilient to a concurrent lock-free append on the same run
     // stream (the async executor's live trace events; the sync-upgrade finaliser is ordered AFTER this by the caller, so it
     // never contends). AppendOptimistic pins the stream's expected version up front and Marten guards it at commit, so a
-    // lost race throws EventStreamUnexpectedMaxEventIdException (Postgres MT003) rather than corrupting the stream — we
-    // swallow it and retry from a fresh session (a failed commit poisons the session).
+    // lost race throws EventStreamUnexpectedMaxEventIdException rather than corrupting the stream. Two SQLSTATEs feed that
+    // one exception: under quick-append (Marten's default, in force here) mt_quick_append_events raises Marten's custom
+    // MT003 on the expected-version mismatch, and a raced same-version insert hits pk_mt_events_stream_and_version as a
+    // raw 23505 — the catch below matches the exception type, never either token. We swallow it and retry from a fresh
+    // session (a failed commit poisons the session).
     //
     // Staging the append BEFORE re-reading RunProgress is deliberate — it pins the version first, so the terminal-status
     // read that follows is consistent with that pin: a terminal event committed by a self-finalising executor in the

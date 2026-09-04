@@ -78,7 +78,7 @@ public sealed record RunTimeline
 /// <summary>Folds a run's trace events into its <see cref="RunTimeline"/>. Reacts only to the events it curates —
 /// <c>StepStarted</c> spines the step list, <c>Extracted</c>/<c>Downloaded</c>/<c>Screenshotted</c>/<c>Captured</c> collect
 /// artifacts, terminals close durations — and ignores the finer <c>Navigated</c>/<c>Clicked</c>/<c>Waited</c> events (those serve the live SSE tail).</summary>
-public sealed partial class RunTimelineProjection : SingleStreamProjection<RunTimeline, Guid>
+public sealed class RunTimelineProjection : SingleStreamProjection<RunTimeline, Guid>
 {
     /// <summary>Opens the timeline on the run's opening event (a run started immediately, under the cap).</summary>
     public RunTimeline Create(RunStarted started) => new()
