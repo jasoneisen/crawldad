@@ -1,4 +1,3 @@
-using System.Globalization;
 using Crawldad.Portal;
 using Crawldad.Portal.Auth;
 using Crawldad.Portal.Infrastructure.Security;
@@ -57,14 +56,21 @@ public sealed class CapturingEmailSender : IEmailSender
     }
 }
 
-/// <summary>A hand-cranked <see cref="TimeProvider"/> so tests can drive code expiry deterministically.</summary>
+/// <summary>A hand-cranked <see cref="TimeProvider"/> so tests can drive code expiry deterministically. "Now" only ever
+/// moves FORWARD — see <see cref="PortalTestHost.Clock"/> for why rewinding (or starting in the past) is not safe here.</summary>
 public sealed class ControllableTimeProvider(DateTimeOffset start) : TimeProvider
 {
     private DateTimeOffset _now = start;
 
     public override DateTimeOffset GetUtcNow() => _now;
 
-    public void Advance(TimeSpan by) => _now = _now.Add(by);
+    /// <summary>Moves "now" forward by <paramref name="by"/>. Rejects a negative step: rewinding would push the auth
+    /// cookie's <c>Expires</c> back toward (or past) real time — the failure <see cref="PortalTestHost.Clock"/> describes.</summary>
+    public void Advance(TimeSpan by)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(by, TimeSpan.Zero);
+        _now = _now.Add(by);
+    }
 }
 
 /// <summary>The portal host under test. Boots the real <see cref="PortalHost"/> wiring in the given environment,
@@ -74,8 +80,15 @@ public sealed class PortalTestHost(string environment) : WebApplicationFactory<C
 {
     public CapturingEmailSender Email { get; } = new();
 
-    public ControllableTimeProvider Clock { get; } =
-        new(DateTimeOffset.Parse("2026-08-27T12:00:00Z", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal));
+    /// <summary>The host's clock. It starts at the REAL "now" and must NEVER be pinned to a hard-coded instant. The portal
+    /// signs in with <c>AuthenticationProperties.IsPersistent</c>, and ASP.NET Core's cookie handler resolves its clock from
+    /// the DI <see cref="TimeProvider"/> — this one — so <c>Set-Cookie</c> carries <c>expires = clock-now + ExpireTimeSpan</c>
+    /// (7 days, PortalHost.AddCookieAuthentication). The test client's <see cref="System.Net.CookieContainer"/> judges that
+    /// expiry against the REAL clock and silently DROPS an already-expired cookie, so a fixed start instant is a dormant time
+    /// bomb: every authenticated portal test turns red — unauthenticated, 302 to /login — the day real time passes it by more
+    /// than ExpireTimeSpan, with nothing in the repo having changed. Tests only ever use this clock RELATIVELY (Advance, and
+    /// comparisons against GetUtcNow()), so tracking real time costs no determinism and cannot rot.</summary>
+    public ControllableTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
