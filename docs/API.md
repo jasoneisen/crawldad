@@ -1136,7 +1136,7 @@ tenant-reachable config. It is compared, never logged.
 
 | Method + route | Body | Success | Errors |
 |---|---|---|---|
-| `POST /management/tenants` | `{ id, displayName, actor?, tier?, slotAllowance? }` | `201` tenant | `400` invalid field, `409 tenant_exists` |
+| `POST /management/tenants` | `{ id, displayName, tier?, slotAllowance? }` | `201` tenant | `400` invalid field, `409 tenant_exists` |
 | `GET /management/tenants/{id}` | — | `200` tenant | `404 tenant_not_found` |
 | `POST /management/tenants/{id}/suspend` | — | `200` tenant (`status: "suspended"`) | `404 tenant_not_found` |
 | `POST /management/tenants/{id}/reactivate` | — | `200` tenant (`status: "active"`) | `404 tenant_not_found` |
@@ -1145,6 +1145,10 @@ tenant-reachable config. It is compared, never logged.
 | `DELETE /management/tenants/{id}/keys/{keyId}` | — | `204` | `404 key_not_found` |
 
 All requests require the management bearer key ([§20.1](#201-enabling--authentication)); absent/wrong ⇒ `401`. The
+tenant's **`actor`** — the identity issued as the actor claim on every API-key call and stamped into payload mutation
+events as `by` — is **derived from `id`** at creation and is **not** a request field: the create body has no `actor`
+parameter, so an `actor` property sent in it is unmapped, ignored, and cannot forge attribution. Reads (`201`/`200`
+tenant bodies) still return it. The
 issue-key `201` body is the **only** time the raw `apiKey` is returned — store it immediately. The list endpoint returns
 **prefixes only**, never a raw key or its hash. Revoke is **idempotent**: a second revoke of the same key, a key that
 belongs to another tenant, or an unknown key id is `404 key_not_found`.

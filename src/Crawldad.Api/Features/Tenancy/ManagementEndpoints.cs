@@ -25,7 +25,9 @@ internal static class ManagementEndpoints
         {
             Id = request.Id,
             DisplayName = request.DisplayName,
-            Actor = string.IsNullOrWhiteSpace(request.Actor) ? request.Id : request.Actor,
+            // Derived from the id, never from the request body: this value is issued as the auth principal's actor claim
+            // and stamped into mutation events as `by`, so a caller-supplied one would be forged attribution.
+            Actor = request.Id,
             Tier = request.Tier ?? "",
             SlotAllowance = request.SlotAllowance,
             Status = TenantStatus.Active,

@@ -2,14 +2,19 @@ using Crawldad.Api.Infrastructure.Security;
 
 namespace Crawldad.Api.Features.Tenancy;
 
-/// <summary>Create a registry tenant. <see cref="Actor"/> defaults to the id when omitted; <see cref="Tier"/> defaults to
-/// empty; <see cref="SlotAllowance"/> null defers to the global concurrent-run default.</summary>
-/// <param name="Id">The tenant id slug (partition key + billing subject).</param>
+/// <summary>Create a registry tenant. <see cref="Tier"/> defaults to empty; <see cref="SlotAllowance"/> null defers to the
+/// global concurrent-run default.
+/// <para>There is deliberately <b>no</b> <c>actor</c> field. The stored <see cref="RegistryTenant.Actor"/> is
+/// identity-bearing — <c>TenantDirectory</c> issues it as the actor claim on every API-key call, payload mutations stamp
+/// it into their events as <c>by</c>, and the workspaces endpoint keys membership lookups on it — so it must never be
+/// client-supplied. It is derived from <see cref="Id"/> at creation (a stable, non-forgeable derivative), which is what
+/// the removed field defaulted to anyway. An <c>actor</c> property in the request body is unmapped and silently ignored
+/// by System.Text.Json; it changes nothing.</para></summary>
+/// <param name="Id">The tenant id slug (partition key + billing subject), and the source of the stored actor.</param>
 /// <param name="DisplayName">The human-facing display name.</param>
-/// <param name="Actor">The actor stamped on the tenant's mutation events (defaults to <paramref name="Id"/>).</param>
 /// <param name="Tier">The plan tier moniker.</param>
 /// <param name="SlotAllowance">The per-tenant concurrent-run override, or null for the global default.</param>
-public sealed record CreateTenantRequest(string Id, string DisplayName, string? Actor = null, string? Tier = null, int? SlotAllowance = null);
+public sealed record CreateTenantRequest(string Id, string DisplayName, string? Tier = null, int? SlotAllowance = null);
 
 /// <summary>A registry tenant, as returned by the management endpoints. Carries no secret.</summary>
 /// <param name="Id">The tenant id.</param>

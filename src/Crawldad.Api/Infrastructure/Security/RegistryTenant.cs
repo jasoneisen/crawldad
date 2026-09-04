@@ -30,8 +30,11 @@ public sealed class RegistryTenant
     /// <summary>The human-facing display name (portal/label only; never load-bearing for identity or scoping).</summary>
     public string DisplayName { get; set; } = "";
 
-    /// <summary>The actor/display identity stamped on this tenant's mutation events — issued into the auth principal,
-    /// never taken from a request body (parity with <see cref="TenantDescriptor.Actor"/>).</summary>
+    /// <summary>The actor/display identity stamped on this tenant's mutation events and issued as the actor claim of the
+    /// authenticated principal. <b>Never client-supplied:</b> on the management create path it is derived from
+    /// <see cref="Id"/>, and on the self-serve provisioning path from the console-verified email — <c>CreateTenantRequest</c>
+    /// carries no <c>actor</c> field to forge (parity with <see cref="TenantDescriptor.Actor"/>, which comes from host
+    /// config).</summary>
     public string Actor { get; set; } = "";
 
     /// <summary>The tenant's lifecycle state. A suspended tenant is rejected at the auth boundary.</summary>
