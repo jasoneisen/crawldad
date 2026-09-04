@@ -5,13 +5,26 @@ using Wolverine;
 
 namespace Crawldad.Tests.Support;
 
-/// <summary>The determinism core every integration host shares: Inline projections need no async-daemon wait, an
-/// isolated Marten schema keeps parallel test classes from racing, and Marten + Wolverine run single-node. Call
-/// sites layer their own extras on top (a fake clock, a Production environment).</summary>
+/// <summary>The determinism core every integration host shares: the schema is dropped before the host boots, Inline
+/// projections need no async-daemon wait, an isolated Marten schema keeps parallel test classes from racing, and Marten +
+/// Wolverine run single-node. Call sites layer their own extras on top (a fake clock, a Production environment).</summary>
 public static class TestDefaults
 {
-    public static IWebHostBuilder UseCrawldadTestDefaults(this IWebHostBuilder builder, string schemaName)
+    /// <summary>Applies the shared defaults, and — unless <paramref name="resetData"/> says otherwise — drops the schema
+    /// first, so the host boots on an empty one. This is the ONE seam every API test host passes through, which is why the
+    /// drop lives here rather than at ~20 build sites: a new fixture inherits the guarantee by construction. It runs
+    /// synchronously and, critically, from the host-builder callback — invoked while the host is being BUILT — so it
+    /// precedes every startup recovery path (see <see cref="TestSchema"/>).</summary>
+    /// <param name="schemaName">The host's isolated Marten schema.</param>
+    /// <param name="resetData">Whether the host starts from an empty schema (the default). Pass false for the SECOND host
+    /// of a kill-and-restart, which must inherit the first host's persisted state on the same schema.</param>
+    public static IWebHostBuilder UseCrawldadTestDefaults(this IWebHostBuilder builder, string schemaName, bool resetData = true)
     {
+        if (resetData)
+        {
+            TestSchema.Drop(schemaName, typeof(Program));
+        }
+
         builder.UseSetting(HostConfiguration.ProjectionLifecycleKey, "Inline");
 
         // Select the in-memory blob provider: the fake download sink + in-memory screenshot store, so the hermetic
