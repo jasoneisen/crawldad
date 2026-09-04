@@ -165,6 +165,25 @@ public static class HostConfiguration
     // cover a lost queue/finalize/webhook envelope, which is what the durable queues below are for.
     private static void ConfigureWolverine(WolverineOptions options)
     {
+        // Discovery must never depend on Wolverine's stack-walk heuristic. AddWolverine builds WolverineOptions with no
+        // assembly name, which leaves ApplicationAssembly NULL until bootstrap; if it is still null then, Wolverine walks
+        // the call stack for the first assembly that is not System*/Microsoft*/a test runner/JasperFx*/dynamic (else
+        // Assembly.GetEntryAssembly(), i.e. testhost) and caches the answer in the process-wide STATIC
+        // WolverineOptions.RememberedApplicationAssembly, which every later host in the process then reuses — divergence
+        // is only ever a logged warning (GH-3521). Both graphs discover from the one collection that value fills,
+        // HandlerGraph.Discovery.Assemblies, which Wolverine.Http's HttpGraph also reads as options.Assemblies — so a
+        // single wrong answer means zero message handlers AND zero HTTP endpoints. CI run 33843310346 hit exactly that on
+        // a docs-only PR with unchanged product code: IndeterminateRoutesException for StartRun, 383 failures, every
+        // endpoint 404, from the first host boot on. The suite is serial (maxParallelThreads 1), so it was stack-walk
+        // ordering nondeterminism, not a thread race.
+        //
+        // Setting it here is both early enough and total: this callback is invoked synchronously inside AddWolverine,
+        // BEFORE the bootstrap that would run the heuristic (WolverineOptions.ReadJasperFxOptions, at DI resolution), and
+        // that bootstrap is guarded by `if (_applicationAssembly == null)` — so the heuristic never runs and no stale
+        // assembly is ever filled alongside this one. The setter also hands the assembly to CodeGeneration. This is
+        // Wolverine's own prescription for a test harness, quoted in its divergence warning.
+        options.ApplicationAssembly = typeof(HostConfiguration).Assembly;
+
         options.Policies.AutoApplyTransactions();
 
         // Load-bearing: local queues default to BufferedInMemory, so without this an envelope enqueued and not yet
