@@ -503,10 +503,21 @@ public class SlotQueueTests
         // production behaviour.
         var injector = new StreamLockInjector();
         await using var host = await DurableHost.BuildAsync(
-            "crawldad_slotq_locked", new GatedFakeBackend(Runner.FixturesRoot, new GateHolder()),
+            "crawldad_slotq_locked", new GatedFakeBackend(Runner.FixturesRoot, new GateHolder()), settings: Settings(),
             configureServices: services => services.ConfigureMarten(options => options.Listeners.Add(injector)));
         var store = host.Services.GetRequiredService<IDocumentStore>();
         var clock = host.Services.GetRequiredService<TimeProvider>();
+        var gate = (RunAdmissionGate)host.Services.GetRequiredService<IRunAdmissionGate>();
+
+        // Occupy the cap-1 tenant's only slot before seeding, so NO promotion can admit while this test runs — the same
+        // white-box gate handling the cancel/promotion race test above uses. The assertions below are all "nothing was
+        // committed", and promotion is the one other writer that can legitimately move this run; any stray PromoteQueued
+        // (a durable envelope still in flight, or one published by startup recovery) would flip it to `running` and fail
+        // them for a reason unrelated to the branch under test. Holding the slot makes PromoteOldestAsync's TryAdmit fail
+        // closed and leave the run queued, so the outcome depends only on the cancel — not on what else the schema or the
+        // message store happens to be carrying.
+        var slotHolder = Guid.NewGuid();
+        gate.TryAdmit(TestTenants.PrimaryId, slotHolder).ShouldBeTrue();
 
         var runId = await SeedQueuedAsync(store, clock, RunStatus.Queued);
         injector.Arm(runId);
@@ -527,8 +538,15 @@ public class SlotQueueTests
         // still there, and no terminal event was appended.
         (await StateAsync(host, runId)).GetProperty("status").GetString().ShouldBe("queued");
         (await EventTypesAsync(host, runId)).ShouldNotContain(typeof(RunCancelled));
-        await using var session = store.QuerySession(TestTenants.PrimaryId);
-        (await session.LoadAsync<QueuedRun>(runId)).ShouldNotBeNull();
+        await using (var session = store.QuerySession(TestTenants.PrimaryId))
+        {
+            (await session.LoadAsync<QueuedRun>(runId)).ShouldNotBeNull();
+        }
+
+        // Cleanup — this white-box run has no executor to finish it, so drop its queue row and free the held slot
+        // instead of leaving residue on the schema for the next run, mirroring the race test above.
+        await DeleteQueuedAsync(store, runId);
+        gate.Release(TestTenants.PrimaryId, slotHolder);
     }
 
     // Throws the StreamLockedException Marten's AppendExclusive would raise, exactly once, and only out of the queued
