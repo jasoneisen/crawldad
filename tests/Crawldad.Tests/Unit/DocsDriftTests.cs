@@ -101,13 +101,16 @@ public class DocsDriftTests
     {
         var apiReference = File.ReadAllText(ApiReference);
 
-        // The two central, growth-prone slug registries plus the two queue-admission codes: if a new interpreter/expression
-        // code ships without a row in the wire-code table, this fails — cheap insurance against the table rotting away
-        // from the contracts. (Endpoint string-literal codes and open-ended `fail`/`guard` codes have no central registry.)
+        // The two central, growth-prone slug registries plus the queue-admission codes and the run-lifecycle conflict
+        // codes: if a new interpreter/expression code ships without a row in the wire-code table, this fails — cheap
+        // insurance against the table rotting away from the contracts. (Open-ended `fail`/`guard` codes, and endpoint
+        // string-literal codes with no `const`, have no central registry to enumerate.)
         var enumerated = SlugConstantsOf(typeof(InterpreterErrorCodes))
             .Concat(SlugConstantsOf(typeof(ExpressionErrorCodes)))
             .Append(RunQueue.QueueDepthExceededCode)
             .Append(RunQueue.QueueWaitExceededCode)
+            .Append(EraseRunEndpoint.RunStillActiveCode)
+            .Append(CancelRunEndpoint.RunClaimContendedCode)
             .Distinct(StringComparer.Ordinal)
             .ToList();
 

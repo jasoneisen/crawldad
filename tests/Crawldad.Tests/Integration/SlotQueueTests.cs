@@ -5,6 +5,7 @@ using Crawldad.Api.Features.Runs;
 using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Marten;
+using Marten.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
 using Wolverine;
 
@@ -482,6 +483,78 @@ public class SlotQueueTests
         gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(1); // held by the legitimately-running run — NOT leaked by a cancelled zombie
 
         gate.Release(TestTenants.PrimaryId, runId); // cleanup (no executor drives this white-box run)
+    }
+
+    // ----- a contended stream lock on the cancel path is a 409, never a 500 ---------
+
+    [Fact]
+    public async Task A_cancel_that_cannot_take_the_queued_runs_stream_lock_is_a_409_not_a_500()
+    {
+        // The OTHER outcome of the claim path, distinct from the lost race above. There, AppendExclusive takes the lock
+        // and the loser simply re-reads a no-longer-queued run and commits nothing (still 202). Here it cannot take the
+        // lock at all — Marten raises StreamLockedException, which derives from MartenException and NOT from
+        // JasperFx.ConcurrencyException (StreamLockedExceptionContractTests), so nothing generic maps it; Wolverine.Http
+        // gives an endpoint no failure policies either. Untreated, the customer sees a raw 500.
+        //
+        // Driven WITHOUT threads (reference #14): rather than really contending a Postgres row lock — which is timing
+        // dependent and would need a command timeout to elapse — a one-shot Marten session listener throws the exact
+        // exception Marten would, out of the claim's own commit. The endpoint's catch cannot tell the difference, and
+        // the rollback that follows is the same, so the assertions below (409 body AND nothing committed) are the real
+        // production behaviour.
+        var injector = new StreamLockInjector();
+        await using var host = await DurableHost.BuildAsync(
+            "crawldad_slotq_locked", new GatedFakeBackend(Runner.FixturesRoot, new GateHolder()),
+            configureServices: services => services.ConfigureMarten(options => options.Listeners.Add(injector)));
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        var clock = host.Services.GetRequiredService<TimeProvider>();
+
+        var runId = await SeedQueuedAsync(store, clock, RunStatus.Queued);
+        injector.Arm(runId);
+
+        var rejected = await host.Scenario(x =>
+        {
+            x.Post.Json(new JsonObject()).ToUrl($"/runs/{runId}/cancel");
+            x.StatusCodeShouldBe(409);
+        });
+
+        injector.Fired.ShouldBeTrue(); // the claim really reached its commit — the branch was exercised, not skipped
+
+        var body = (await rejected.ReadAsJsonAsync<RunRejection>()).ShouldNotBeNull();
+        body.Code.ShouldBe(CancelRunEndpoint.RunClaimContendedCode);
+        body.Message.ShouldContain(runId.ToString()); // the caller can tell WHICH run to retry
+
+        // Nothing was committed, which is what makes "retry" honest advice: the run is still queued, its queue row is
+        // still there, and no terminal event was appended.
+        (await StateAsync(host, runId)).GetProperty("status").GetString().ShouldBe("queued");
+        (await EventTypesAsync(host, runId)).ShouldNotContain(typeof(RunCancelled));
+        await using var session = store.QuerySession(TestTenants.PrimaryId);
+        (await session.LoadAsync<QueuedRun>(runId)).ShouldNotBeNull();
+    }
+
+    // Throws the StreamLockedException Marten's AppendExclusive would raise, exactly once, and only out of the queued
+    // cancel's own unit of work — identified by the RunCancelled event staged on the target run's stream. Every other
+    // save in the host (the seeding session, Wolverine's outbox, the endpoint's own empty commit) passes straight
+    // through, so the injection is surgical and the test needs no threads, no timing, and no real lock contention.
+    private sealed class StreamLockInjector : DocumentSessionListenerBase
+    {
+        private Guid _runId;
+        private int _fired;
+
+        public bool Fired => Volatile.Read(ref _fired) == 1;
+
+        public void Arm(Guid runId) => _runId = runId;
+
+        public override Task BeforeSaveChangesAsync(IDocumentSession session, CancellationToken token)
+        {
+            var claimsTheRun = session.PendingChanges.Streams()
+                .Any(s => s.Id == _runId && s.Events.Any(e => e.Data is RunCancelled));
+            if (!claimsTheRun || Interlocked.Exchange(ref _fired, 1) == 1)
+            {
+                return Task.CompletedTask; // one-shot, and never any save but the claim's own
+            }
+
+            throw new StreamLockedException(_runId, new InvalidOperationException("held by a concurrent transition"));
+        }
     }
 
     // ----- queue-service edge branches (white-box) ---------------------------------

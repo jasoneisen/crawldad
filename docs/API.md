@@ -406,6 +406,14 @@ A **queued** run is dequeued straight to `cancelled` without ever consuming a sl
 Returns `202` with the **pre-cancel** state snapshot (and `Location: /runs/{id}`); `404` for an unknown run.
 Cancelling an already-finished run is a no-op.
 
+**`409 run_claim_contended`** (a `RunRejection` body) is the one other outcome, and only for a **queued** run.
+Promotion, cancel, and the queue-wait timeout all serialise on the run stream's exclusive lock so that exactly one
+of them drives a queued run terminal. Normally a cancel that *loses* that race simply finds the run already
+promoted and leaves it alone (still `202`). But if the lock cannot be **taken** at all — a concurrent transition
+held it past the database command timeout — nothing is committed and the request answers `409` instead of a
+`500`. Retry the cancel: it either wins the claim, or finds a run that has since reached a terminal state, where
+cancel is the ordinary no-op.
+
 ---
 
 ## 8. Replay — `POST /runs/{id}/replay`
@@ -853,6 +861,7 @@ validation** (`400` on `/payloads`), and **run failures** (`failure.code`, `HTTP
 | `inline_not_replayable` | 400 | `POST /runs/{id}/replay` | the run executed an inline payload (no stored revision to replay) |
 | `queue_depth_exceeded` | 429 | `POST /runs`, `/replay` | the tenant's admission queue is at its depth cap |
 | `run_still_active` | 409 | `DELETE /runs/{id}` | the run is still `running`/`queued`, so it cannot be erased — cancel it first |
+| `run_claim_contended` | 409 | `POST /runs/{id}/cancel` | a concurrent transition holds the queued run's stream lock, so the cancel could not claim it — nothing was committed, retry |
 
 There is **no** `concurrent_runs_exceeded` — at the concurrent-run cap a run **queues** (`202`), it is not
 rejected. `queue_depth_exceeded` is the only `429`. (A malformed request body — both/neither payload source,
@@ -1042,7 +1051,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 |---|---|---|---|---|
 | `POST /runs` | ✔ | `StartRunRequest` | `200 RunResponse` / `202 RunStateResponse` | `400`, `429 queue_depth_exceeded` |
 | `GET /runs/{id}` | ✔ | — | `200 RunStateResponse` | `404` |
-| `POST /runs/{id}/cancel` | ✔ | — | `202 RunStateResponse` | `404` |
+| `POST /runs/{id}/cancel` | ✔ | — | `202 RunStateResponse` | `404`, `409 run_claim_contended` |
 | `DELETE /runs/{id}` | ✔ | — | `204` | `404`, `409 run_still_active` |
 | `GET /runs/{id}/events` | ✔ | — (SSE) | `200 text/event-stream` | `404` |
 | `POST /runs/{id}/replay` | ✔ | `ReplayRunRequest` | `200 RunResponse` / `202 RunStateResponse` | `404`, `400 inline_not_replayable` |
