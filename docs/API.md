@@ -347,7 +347,8 @@ The state of a background (async / upgraded / queued) run, from the executor-own
 
 `404` when there is no such background run — including a purely synchronous run, which never writes a progress
 row (its result was returned inline). Read-your-writes: this reflects the latest committed state, not the
-lagging cross-run projection.
+lagging cross-run projection — which is also what makes it the existence check that tells a not-yet-projected
+timeline `404` from an unknown run ([§9](#9-drift-timeline-screenshots--erasure)).
 
 **After result retention expires the body** (see [§9](#9-drift-timeline-screenshots--erasure)), the poll stays
 coherent rather than 404-ing: the run keeps its terminal `status` and `stats`, the `result`/`partial` body is gone,
@@ -490,8 +491,19 @@ blob refs (never bytes), the `missedSelectors` (the run's distinct extraction se
 per-run drift signal [`GET /payloads/{id}/drift-status`](#get-payloadsiddrift-status) folds), the terminal failure +
 its screenshot and capture refs, the pinned revision + script hash, and the backend region. Everything derives from
 already-scrubbed trace events, so no raw credential or bulk PII surfaces.
-`404` for an unknown run. Each `screenshotRef` here (and `failure.screenshotRef`) is fetched as an actual PNG
-via [`GET /runs/{id}/screenshots/{ref}`](#get-runsidscreenshotsref) below.
+Each `screenshotRef` here (and `failure.screenshotRef`) is fetched as an actual PNG via
+[`GET /runs/{id}/screenshots/{ref}`](#get-runsidscreenshotsref) below.
+
+> **A `404` here is not proof the run is unknown.** `RunTimeline` is built by the **async projection daemon** in
+> production, so it is eventually consistent with the run's event stream: fetch the timeline right after the `202`
+> from [`POST /runs`](#3-running-a-payload--post-runs) and you can get a `404` for a run that certainly exists — and
+> a timeline read while the daemon is catching up can be a *partial* fold of a run the poll already reports terminal.
+> [`GET /runs/{id}`](#5-polling--get-runsid) tells the two apart: it reads the executor-owned progress model with
+> read-your-writes, so for a background run it is the authoritative existence check. A `200` there means the timeline
+> is merely lagging — **poll again** (with backoff); a `404` there too means the run is unknown to this tenant, or was
+> [erased](#delete-runsid--erase-result--timeline). A purely **synchronous** run writes no progress row, so the poll
+> `404`s for it by design ([§5](#5-polling--get-runsid)) and cannot disambiguate — its timeline is projected
+> asynchronously all the same, so retry there too before concluding a run has no timeline.
 
 `captures[]` lists the documents a `capture` node (or `config.captureOnFailure`) streamed to the tenant's **BYO**
 storage — `{ blobRef, size, sha256 }`, never the HTML. Unlike screenshots, captured bytes live in the customer's
@@ -549,7 +561,7 @@ gone, not merely archived. The response is `204` with no body (the erased conten
   then delete the settled run.
 
 After a successful erase, `GET /runs/{id}`, `/timeline`, `/drift`, and `/events` all `404` — the run is gone
-coherently.
+coherently, and unlike a not-yet-projected timeline ([above](#get-runsidtimeline)) that `404` is permanent.
 
 **Scope — what this does not delete.** The run's **blob artifacts** (its `screenshot`/`download`/`capture` files) are
 *not* removed by `DELETE`; they age out on their own retention (screenshots/downloads on `ScreenshotTtl`/`DownloadTtl` via
@@ -1032,7 +1044,7 @@ schema in CI, so they never drift). Five are lifted verbatim from the tested acc
 | `GET /runs/{id}/events` | ✔ | — (SSE) | `200 text/event-stream` | `404` |
 | `POST /runs/{id}/replay` | ✔ | `ReplayRunRequest` | `200 RunResponse` / `202 RunStateResponse` | `404`, `400 inline_not_replayable` |
 | `GET /runs/{id}/drift` | ✔ | — | `200 RunDriftResponse` | `404` |
-| `GET /runs/{id}/timeline` | ✔ | — | `200 RunTimelineResponse` | `404` |
+| `GET /runs/{id}/timeline` | ✔ | — | `200 RunTimelineResponse` | `404` (unknown run, or not yet projected) |
 | `GET /runs/{id}/screenshots/{ref}` | ✔ | — | `200 image/png` | `404` (unknown run / ref, or expired) |
 | `GET /runs/queue-stats` | ✔ | — | `200 QueueStatsResponse` | — |
 | `POST /payloads` | ✔ | `SavePayloadRequest` | `200 PayloadResponse` | `400 PayloadValidationProblem` |

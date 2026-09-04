@@ -185,7 +185,11 @@ public static class OpenApiSpec
         new("get", "/runs/{id}/drift", "getRunDrift", "Report a run's payload drift.", _runs, Anonymous: false, [Id], null,
             [new("200", "The run's pinned revision vs the payload head.", Component: nameof(RunDriftResponse)), NotFound("run")]),
         new("get", "/runs/{id}/timeline", "getRunTimeline", "The run observability timeline.", _runs, Anonymous: false, [Id], null,
-            [new("200", "The run's ordered steps, extracts, downloads, screenshots, captures, and failure.", Component: nameof(RunTimelineResponse)), NotFound("run")]),
+            [
+                new("200", "The run's ordered steps, extracts, downloads, screenshots, captures, and failure.", Component: nameof(RunTimelineResponse)),
+                new("404", "No such run for this tenant (unknown, foreign, or erased) — OR the run exists but its timeline is not yet projected. Poll GET /runs/{id} to tell the two apart, and retry the timeline while it still reports the run."),
+            ],
+            Description: "The run's observability read model: ordered steps with durations, redacted input key names, extract/download/screenshot/capture refs (never values or bytes), the missed selectors, the terminal failure with its artifact refs, the pinned revision + script hash, and the backend region. Built by the ASYNC projection daemon in production, so it is eventually consistent with the run's event stream: fetched right after the 202 from POST /runs it can 404 (or return a partial fold) for a run that certainly exists. GET /runs/{id} reads the executor-owned progress model with read-your-writes and is the authoritative existence check for a background run — a 200 there means the timeline is merely lagging, so poll again; a 404 there too means the run is unknown to this tenant or was erased."),
         new("get", "/runs/{id}/screenshots/{reference}", "getRunScreenshot", "Retrieve a run's captured screenshot.", _runs, Anonymous: false, [Id, Reference], null,
             [
                 new("200", "The captured screenshot as PNG bytes (content-addressed, so privately cacheable with a digest ETag).", MediaType: "image/png", Schema: BinarySchema),
