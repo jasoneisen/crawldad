@@ -12,9 +12,11 @@
 # targetPort (same as the API image).
 #
 # Schema: unlike the API, the portal has NO out-of-band `db-apply` command — its Program.cs always serves and takes no
-# CLI verbs. Development applies the schema on startup; every other environment relies on Marten's default runtime
-# auto-create (AutoCreate.CreateOrUpdate) to materialize the "portal" schema on first document use. The anonymous
-# marketing "/" route touches no database, so the container boots and serves before any schema exists.
+# CLI verbs. So EVERY environment provisions the "portal" schema during startup (PortalHost calls
+# ApplyAllDatabaseChangesOnStartup unconditionally), rather than leaving Marten's default runtime auto-create
+# (AutoCreate.CreateOrUpdate) to materialize it lazily on first document use — that first-touch DDL raced across
+# replicas. Marten serialises concurrent appliers on a Postgres advisory lock, so a replica either applies, finds the
+# work already done, or fails its own boot and is restarted into the provisioned schema.
 
 # syntax=docker/dockerfile:1
 

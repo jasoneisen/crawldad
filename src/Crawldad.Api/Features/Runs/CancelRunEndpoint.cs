@@ -1,6 +1,7 @@
 using Crawldad.Contracts.Runs;
 using JasperFx.Events;
 using Marten;
+using Marten.Exceptions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Wolverine;
@@ -13,6 +14,10 @@ namespace Crawldad.Api.Features.Runs;
 /// dequeued straight to <c>cancelled</c> without consuming a slot, so nothing is promoted.</summary>
 public static class CancelRunEndpoint
 {
+    /// <summary>The typed conflict code when a cancel cannot take the queued run's stream lock because a concurrent
+    /// transition (promotion, or the queue-wait timeout) is holding it — the caller should simply retry.</summary>
+    public const string RunClaimContendedCode = "run_claim_contended";
+
     /// <summary>Handles <c>POST /runs/{id}/cancel</c>.</summary>
     [WolverinePost("/runs/{id}/cancel")]
     public static async Task<IResult> Handle(
@@ -56,7 +61,25 @@ public static class CancelRunEndpoint
             // Cancel-while-queued: dequeue and drive to cancelled under the run stream's exclusive lock. The run held no
             // slot, so nothing is freed or promoted. A lost claim (the run promoted in the race between load and claim)
             // leaves the now-running run alone — the caller may re-cancel it.
-            await queue.CancelQueuedAsync(session.TenantId!, id, ct);
+            try
+            {
+                await queue.CancelQueuedAsync(session.TenantId!, id, ct);
+            }
+            catch (StreamLockedException)
+            {
+                // A LOST claim is a clean `false` above; this is the different, harsher outcome — AppendExclusive could
+                // not TAKE the lock at all, because a concurrent promotion or queue-wait timeout held it past Npgsql's
+                // command timeout (or the transaction hit SQLSTATE 25P02). Marten's StreamLockedException derives from
+                // MartenException, not JasperFx.ConcurrencyException, so nothing generic maps it — and Wolverine.Http
+                // gives an endpoint no failure policies at all (HttpChain does not implement IWithFailurePolicies), so
+                // the handler-side retry in HostConfiguration.ConfigureWolverine cannot reach here either. Left alone it
+                // escapes as a raw 500. Answer honestly instead: 409, this run is mid-transition, retry. Nothing was
+                // committed, so a retry is safe — and the competing writer is about to drive the run terminal anyway, at
+                // which point a re-cancel is the ordinary no-op on a finished run.
+                return Results.Json(
+                    new RunRejection(RunClaimContendedCode, $"run {id} is being claimed by a concurrent transition; retry the cancel"),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
 
             // Notify downstream subscribers (webhook fan-out) that the queued run reached terminal. Off the execution
             // path; the subscriber reads the committed run state, so a lost-claim publish simply finds no terminal event.

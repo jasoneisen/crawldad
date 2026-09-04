@@ -13,11 +13,13 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using JasperFx.MultiTenancy;
 using Marten;
+using Marten.Exceptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Wolverine;
+using Wolverine.ErrorHandling;
 using Wolverine.FluentValidation;
 using Wolverine.Http;
 using Wolverine.Http.FluentValidation;
@@ -195,6 +197,28 @@ public static class HostConfiguration
         // guards as the HTTP API — not just its endpoints. ExplicitRegistration: validators are AddScoped in their slice
         // modules; letting Wolverine re-discover them would double-register each one and force the multi-validator path.
         options.UseFluentValidation(RegistrationBehavior.ExplicitRegistration);
+
+        // The queued-run claim path's one un-handled failure mode. RunQueue.TryClaimTerminalAsync serialises promotion,
+        // cancel and queue-wait-timeout on the run stream's exclusive lock (Events.AppendExclusive); when that FOR UPDATE
+        // read blocks past Npgsql's command timeout — or hits SQLSTATE 25P02 — Marten raises StreamLockedException, which
+        // derives from MartenException and NOT from JasperFx.ConcurrencyException, so no generic concurrency handling
+        // covers it (pinned by StreamLockedExceptionContractTests). Untreated, Wolverine's zero-retry default dead-letters
+        // the envelope, and since PromoteQueued is re-triggered only by a later run reaching terminal or by
+        // RunRecoveryService at boot, a single-slot tenant's queued run can then strand until the next restart.
+        //
+        // A bounded retry is safe here precisely because the claim is IDEMPOTENT: TryClaimTerminalAsync re-reads
+        // RunProgress under the lock and commits only while the run is still Queued, so a retry arriving after a
+        // competing writer won returns false and commits nothing — it cannot double-claim or double-terminate. Three
+        // attempts, then Wolverine's default dead-letter.
+        //
+        // This reaches the MESSAGE handlers only (PromoteQueuedHandler, QueueWaitDeadlineHandler). Wolverine.Http's
+        // HttpChain does not implement IWithFailurePolicies, so failure policies do not exist for an endpoint — the third
+        // caller of this path, POST /runs/{id}/cancel, therefore catches StreamLockedException itself and answers 409
+        // (CancelRunEndpoint). Note also that this registers on the GLOBAL HandlerGraph.Failures collection, not on any
+        // one chain: WolverineOptions.Policies is the options object itself, and its IWithFailurePolicies.Failures is
+        // HandlerGraph.Failures, which every chain's rules are combined with at runtime.
+        options.Policies.OnException<StreamLockedException>()
+            .RetryWithCooldown(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
     }
 
     // Route ALL log output through the credential scrubber: decorate the host's ILoggerFactory so every category's

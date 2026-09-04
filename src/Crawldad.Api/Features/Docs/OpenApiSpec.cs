@@ -163,7 +163,11 @@ public static class OpenApiSpec
             null,
             [new("200", "The run's current state (queued/running/terminal).", Component: nameof(RunStateResponse)), NotFound("run")]),
         new("post", "/runs/{id}/cancel", "cancelRun", "Cancel a run.", _runs, Anonymous: false, [Id], null,
-            [new("202", "Cancellation was accepted; the pre-cancel state is returned.", Component: nameof(RunStateResponse)), NotFound("run")]),
+            [
+                new("202", "Cancellation was accepted; the pre-cancel state is returned.", Component: nameof(RunStateResponse)),
+                NotFound("run"),
+                new("409", "The queued run is mid-transition: a concurrent promotion or queue-wait timeout holds its stream lock, so the cancel could not claim it (run_claim_contended). Nothing was committed — retry.", Component: nameof(RunRejection)),
+            ]),
         new("delete", "/runs/{id}", "eraseRun", "Erase a finished run's result, read models, and event stream.", _runs, Anonymous: false, [Id], null,
             [
                 new("204", "The finished run's result, all three of its read models (snapshot, timeline, and the runs-list summary row), and its event stream were erased."),

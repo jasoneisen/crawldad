@@ -6,9 +6,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Crawldad.Tests.Portal;
 
 /// <summary>Boots the portal host per environment to cover the environment-conditional wiring: Development
-/// registers the logging sender (and applies the schema + relaxes the cookie policy), while every other
-/// environment fails closed and adds the production error handler + HSTS. Shares the portal collection so it
-/// never races the shared host on Postgres.</summary>
+/// registers the logging sender (and relaxes the cookie policy), while every other environment fails closed and
+/// adds the production error handler + HSTS. The schema apply is <b>not</b> environment-conditional — every boot
+/// provisions the "portal" schema (<c>PortalHost</c>), which is why the Production host below reaches Postgres
+/// too. Shares the portal collection so it never races the shared host on Postgres.</summary>
 [Collection(PortalCollection.Name)]
 public class PortalWiringTests
 {

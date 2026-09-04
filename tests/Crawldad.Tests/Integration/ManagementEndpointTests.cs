@@ -49,11 +49,11 @@ public sealed class ManagementEndpointTests(ManagementFixture fixture) : IAsyncL
     public async Task Creates_a_tenant_and_reads_it_back()
     {
         var id = NewTenantId();
-        var created = await CreateTenantAsync(new { id, displayName = "Acme Corp", actor = "ops@acme", tier = "pro", slotAllowance = 12 }, StatusCodes.Status201Created);
+        var created = await CreateTenantAsync(new { id, displayName = "Acme Corp", tier = "pro", slotAllowance = 12 }, StatusCodes.Status201Created);
 
         created.GetProperty("id").GetString().ShouldBe(id);
         created.GetProperty("displayName").GetString().ShouldBe("Acme Corp");
-        created.GetProperty("actor").GetString().ShouldBe("ops@acme");
+        created.GetProperty("actor").GetString().ShouldBe(id); // derived from the id — reads still expose it, the request cannot set it
         created.GetProperty("status").GetString().ShouldBe("active");
         created.GetProperty("tier").GetString().ShouldBe("pro");
         created.GetProperty("slotAllowance").GetInt32().ShouldBe(12);
@@ -64,14 +64,35 @@ public sealed class ManagementEndpointTests(ManagementFixture fixture) : IAsyncL
     }
 
     [Fact]
-    public async Task Defaults_actor_to_the_id_and_leaves_slot_allowance_unset()
+    public async Task Derives_actor_from_the_id_and_leaves_slot_allowance_unset()
     {
         var id = NewTenantId();
         var created = await CreateTenantAsync(new { id, displayName = "No Frills" }, StatusCodes.Status201Created);
 
-        created.GetProperty("actor").GetString().ShouldBe(id); // actor defaults to the id
+        created.GetProperty("actor").GetString().ShouldBe(id); // the actor IS the id
         created.GetProperty("tier").GetString().ShouldBe("");
         created.GetProperty("slotAllowance").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task An_actor_in_the_request_body_is_inert_and_cannot_forge_the_stored_identity()
+    {
+        // The stored Actor is identity-bearing: TenantDirectory issues it as the principal's actor claim for every
+        // API-key call, payload mutations stamp it into their events as `by`, and GET /workspaces keys membership
+        // lookups on it. CreateTenantRequest therefore carries no `actor` parameter at all. This repo sets no
+        // JsonSerializerOptions.UnmappedMemberHandling (ContractsJson registers only the enum converter), so the
+        // System.Text.Json default applies and an unknown property is SKIPPED rather than rejected — the create still
+        // succeeds, and the proof that the field is inert is that the actor is the id, not the value sent.
+        var id = NewTenantId();
+        var created = await CreateTenantAsync(new { id, displayName = "Forged", actor = "ops@acme" }, StatusCodes.Status201Created);
+
+        created.GetProperty("actor").GetString().ShouldBe(id);
+
+        // ...and it is the STORED document that is unforged, not merely the echoed response — this is what the auth
+        // path actually reads when it mints the actor claim.
+        await using var session = Host.Services.GetRequiredService<IDocumentStore>().QuerySession();
+        var stored = await session.LoadAsync<RegistryTenant>(id, _ct);
+        stored.ShouldNotBeNull().Actor.ShouldBe(id);
     }
 
     [Fact]
