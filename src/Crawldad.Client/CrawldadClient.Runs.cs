@@ -147,11 +147,14 @@ public sealed partial class CrawldadClient
         ReplayRunAsync(runId, new ReplayRunRequest(inputs ?? default, async), ct);
 
     /// <summary>Fetches a run's timeline (<c>GET /runs/{id}/timeline</c>): the ordered step list with durations,
-    /// redacted input key names, extracted/blob refs, region, and the failure + its screenshot/capture refs.</summary>
+    /// redacted input key names, extracted/blob refs, region, and the failure + its screenshot/capture refs. The view is
+    /// built by the async projection daemon, so it lags the run's event stream: a fetch right after the <c>202</c> can
+    /// throw <see cref="CrawldadNotFoundException"/> for a run that exists (or return a partial fold). Use
+    /// <see cref="GetRunAsync"/> — read-your-writes — to tell "not yet projected" (retry) from an unknown run.</summary>
     /// <param name="runId">The run id.</param>
     /// <param name="ct">Cancels the request.</param>
     /// <returns>The run timeline.</returns>
-    /// <exception cref="CrawldadNotFoundException">No such run for this tenant (<c>404</c>).</exception>
+    /// <exception cref="CrawldadNotFoundException">No such run for this tenant, <b>or</b> the timeline is not yet projected (<c>404</c>).</exception>
     public Task<RunTimelineResponse> GetRunTimelineAsync(Guid runId, CancellationToken ct = default) =>
         GetAsync<RunTimelineResponse>($"runs/{runId}/timeline", ct);
 
