@@ -6,6 +6,8 @@ using Crawldad.Contracts.Runs;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Wolverine;
 
 namespace Crawldad.Api.Features.Runs;
@@ -31,6 +33,8 @@ public sealed class SyncRunSupervisor(
     RunEventSignals signals,
     IRunControlRegistry controls,
     IServiceScopeFactory scopeFactory,
+    IOptions<RunLimitsOptions> limits,
+    ILogger<SyncRunSupervisor> logger,
     TimeProvider clock) : IHostedService
 {
     /// <summary>The terminal failure code for an upgraded run whose interpreter faulted unexpectedly after the 202 (the sync
@@ -38,9 +42,9 @@ public sealed class SyncRunSupervisor(
     public const string InternalErrorCode = "internal_error";
 
     /// <summary>How long <see cref="StopAsync"/> waits for in-flight tails to finalise before letting the host dispose the
-    /// provider. Bounded so a run still executing at shutdown cannot hang teardown (left <c>running</c>, recovered on the
-    /// next host); comfortably under the host's default 30 s shutdown timeout, so the drain finishes gracefully.</summary>
-    private static readonly TimeSpan _drainTimeout = TimeSpan.FromSeconds(15);
+    /// provider, from <see cref="RunLimitsOptions.ShutdownDrainMs"/>. Bounded so a run still executing at shutdown cannot
+    /// hang teardown (left <c>running</c>, recovered on the next host).</summary>
+    private readonly TimeSpan _drainTimeout = TimeSpan.FromMilliseconds(limits.Value.ShutdownDrainMs);
 
     /// <summary>The adopted tails still driving a run to its terminal state, keyed by run id, so host shutdown can drain
     /// them. A run is added at <see cref="Adopt"/> and removes itself when its tail ends; since its interpreter provably
@@ -62,7 +66,7 @@ public sealed class SyncRunSupervisor(
         try
         {
             var outcome = await ResolveOutcomeAsync(handoff);
-            await FinalizeAsync(handoff, outcome);
+            await FinalizeToTerminalAsync(handoff, outcome);
             await PromoteAsync(handoff.TenantId);
         }
         finally
@@ -96,17 +100,50 @@ public sealed class SyncRunSupervisor(
         }
         catch (Exception)
         {
-            return new RunOutcome(
-                RunStatus.Failed,
-                null,
-                new RunFailureDetail("terminal", InternalErrorCode, "the run failed with an unexpected error after auto-upgrade", new RunStepRef(0, "run")),
-                null,
-                EmptyStats,
-                []);
+            return InternalErrorOutcome();
         }
     }
 
+    /// <summary>The minimal terminal disposition for an upgraded run that failed for a reason the run itself never
+    /// classified — an execution fault, or a finalisation that could not commit the real outcome. No result, no partial,
+    /// no buffered trace: the smallest thing that still leaves the run terminal on the async surface.</summary>
+    private static RunOutcome InternalErrorOutcome() =>
+        new(
+            RunStatus.Failed,
+            null,
+            new RunFailureDetail("terminal", InternalErrorCode, "the run failed with an unexpected error after auto-upgrade", new RunStepRef(0, "run")),
+            null,
+            EmptyStats,
+            []);
+
     private static RunStats EmptyStats => new(0, 0, 0, 0, 0, 0);
+
+    // Finalises the run and — if THAT throws — retries once with the minimal internal_error disposition, so the
+    // discipline ResolveOutcomeAsync applies to execution faults extends to the finalisation tail: an upgraded run has
+    // already returned 202, so it must end terminal on the async surface, never stuck "running". The retry runs on a
+    // FRESH session and deliberately drops the outcome's result body and buffered trace, so it cannot depend on whatever
+    // the first commit choked on. If the retry throws too, the store itself is unusable: the tail faults (StopAsync
+    // reports it against this run id) and RunProgress stays "running" with its saga intact — because the failed commit
+    // rolled back — which is exactly the state RunRecoveryService re-publishes ExecuteRun for at the next host start.
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Any commit fault (a null progress row, a Marten concurrency/stream-lock failure, an Npgsql fault, a disposed dependency during teardown) must still leave the already-202'd run terminal, so the first attempt's failure is caught and downgraded to the internal_error disposition rather than faulting the tail.")]
+    private async Task FinalizeToTerminalAsync(SyncRunHandoff handoff, RunOutcome outcome)
+    {
+        try
+        {
+            await FinalizeAsync(handoff, outcome);
+            return;
+        }
+        catch (Exception commitFault)
+        {
+            logger.LogError(
+                commitFault,
+                "Finalising upgraded run {RunId} failed; retrying with a terminal {FailureCode} disposition.",
+                handoff.RunId,
+                InternalErrorCode);
+        }
+
+        await FinalizeAsync(handoff, InternalErrorOutcome());
+    }
 
     private async Task FinalizeAsync(SyncRunHandoff handoff, RunOutcome outcome)
     {
@@ -140,19 +177,50 @@ public sealed class SyncRunSupervisor(
 
     /// <summary>Hosted-service stop = <b>drain</b>. Marks shutdown and awaits in-flight tails so their finalisation
     /// commits through the still-live singleton store <em>before</em> the host disposes the provider — the fix for the
-    /// fire-and-forget teardown race. Bounded by <see cref="_drainTimeout"/>, so a stuck run can never hang shutdown.</summary>
+    /// fire-and-forget teardown race. Bounded by <see cref="RunLimitsOptions.ShutdownDrainMs"/>, so a stuck run can
+    /// never hang shutdown, and every tail's outcome is <b>observed</b>: this returns quietly only when the drain
+    /// genuinely finished. Never throws — a hosted service that throws from stop aborts the rest of shutdown.</summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "A drained tail can fault with anything; the drain must report it against its run id and keep draining the rest rather than abort host shutdown (which a throw from a hosted service's StopAsync would do).")]
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _shuttingDown = true;
 
-        var draining = _inFlight.Values.ToArray();
+        var draining = _inFlight.ToArray();
         if (draining.Length == 0)
         {
             return; // nothing adopted is still in flight — the common teardown, and every host that ran no upgraded run
         }
 
-        using var drainWindow = new CancellationTokenSource();
-        await Task.WhenAny(Task.WhenAll(draining), Task.Delay(_drainTimeout, drainWindow.Token));
-        await drainWindow.CancelAsync(); // the drain finished first — stop the bounding timer (a no-op if the window already won)
+        // One real-time budget for the WHOLE drain (the injected TimeProvider is frozen under test and models run
+        // semantics, not wall-clock teardown). Each tail is then awaited IN TURN, so its outcome is observed: awaiting
+        // Task.WhenAny of a WhenAll — the shape this replaces — completes without ever surfacing a faulted or unfinished
+        // tail, which is how a run could be left `running` behind a "clean" stop (issue #167).
+        using var drainWindow = new CancellationTokenSource(_drainTimeout);
+        foreach (var (runId, tail) in draining)
+        {
+            try
+            {
+                await tail.WaitAsync(drainWindow.Token); // an already-completed tail reports its own outcome, cancelled or not
+            }
+            catch (Exception drainFault)
+            {
+                Report(runId, tail, drainFault);
+            }
+        }
+    }
+
+    // Why one tail did not drain cleanly, at the level an operator needs: a tail that ENDED badly is an error against
+    // this run id (its finalisation retry could not commit either, so the run is still `running` for the next host's
+    // recovery scan); a tail still running when the budget elapsed is a warning naming the run left behind. Run ids and
+    // the budget only — never payload, inputs, or run content.
+    private void Report(Guid runId, Task tail, Exception drainFault)
+    {
+        if (tail.IsCompleted)
+        {
+            logger.LogError(drainFault, "Run {RunId} faulted while draining at host shutdown and is still 'running'; the next host's startup recovery will re-drive it.", runId);
+            return;
+        }
+
+        logger.LogWarning("Run {RunId} was still in flight when the {DrainTimeout} shutdown drain elapsed; it stays 'running' until the next host's startup recovery re-drives it.", runId, _drainTimeout);
     }
 }

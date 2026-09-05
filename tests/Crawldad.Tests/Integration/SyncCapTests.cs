@@ -8,7 +8,9 @@ using Crawldad.Api.Infrastructure.Browser.Fake;
 using Crawldad.Api.Infrastructure.Security;
 using Crawldad.Tests.Support;
 using Marten;
+using Marten.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Crawldad.Tests.Integration;
 
@@ -345,17 +347,162 @@ public class SyncCapTests(SyncCapFixture fixture)
         gate.Release();
         await drain; // returns cleanly — the drain awaited the tail while the store/bus were live, so no ObjectDisposedException
 
-        // The tail finalised during the drain: a single GET (no poll — the drain guarantees it is already terminal) shows the
-        // golden terminal state, durably persisted. The queue-promotion nudge was skipped (durably recovered), not raced onto
-        // a stopping bus. The host itself was not stopped, so its endpoints still answer; `await using` tears it down cleanly.
-        var terminal = await host.Scenario(x =>
-        {
-            x.Get.Url($"/runs/{runId}");
-            x.StatusCodeShouldBe(200);
-        });
-        var state = (await terminal.ReadAsJsonAsync<JsonElement>()).Clone();
+        // The tail finalised during the drain: a single GET (no poll) shows the golden terminal state, durably persisted.
+        // The single read is honest because StopAsync now OBSERVES each tail rather than awaiting a WhenAny that returns
+        // whether the drain finished, faulted, or timed out (issue #167) — and a tail that ends at all ends TERMINAL, since
+        // a finalisation that cannot commit falls back to internal_error. The queue-promotion nudge was skipped (durably
+        // recovered), not raced onto a stopping bus. The host itself was not stopped, so its endpoints still answer.
+        var state = await StateAsync(host, runId);
         state.GetProperty("status").GetString().ShouldBe("succeeded");
         AssertMatchesFullGolden(state.GetProperty("result"));
+    }
+
+
+    // ----- a finalisation that cannot commit still ends the run -------------
+
+    [Fact]
+    public async Task An_upgraded_run_whose_finalisation_cannot_commit_still_ends_terminally()
+    {
+        // The mechanism behind issue #167: an upgraded run has already returned 202, so a fault in its finalisation TAIL
+        // (a null progress row, a Marten concurrency/stream-lock failure, an Npgsql fault at commit, a disposed dependency
+        // during teardown) must not leave it stuck `running` on the async surface. Driven WITHOUT threads (reference #14):
+        // a one-shot Marten session listener throws out of the supervisor's own finalisation commit, exactly as a real
+        // store fault would, so the retry path is exercised deterministically.
+        var holder = new GateHolder();
+        var gate = new RunGate("pg=2");
+        holder.Arm(gate);
+        var injector = new FinalizeCommitInjector(oneShot: true);
+        var logs = new CapturingLoggerProvider();
+        await using var host = await DurableHost.BuildAsync(
+            "crawldad_synccap_finalfault", new GatedFakeBackend(Runner.FixturesRoot, holder), settings: LowThreshold(),
+            configureServices: services =>
+            {
+                services.ConfigureMarten(options => options.Listeners.Add(injector));
+                services.AddSingleton<ILoggerProvider>(logs);
+            });
+
+        var runId = await UpgradeAsync(host, SearchBody("caphome-resume"));
+        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(20));
+        injector.Arm(runId);
+
+        var supervisor = host.Services.GetRequiredService<SyncRunSupervisor>();
+        var drain = supervisor.StopAsync(CancellationToken.None);
+        gate.Release();
+        await drain;
+
+        injector.Fired.ShouldBe(1); // the supervisor's real finalisation commit was the save that threw
+
+        // The run is TERMINAL, not stuck running: the golden result could not be committed, so the tail fell back to the
+        // same internal_error disposition an unexpected execution fault produces — asserted with a single GET, since the
+        // observed drain is what guarantees the tail is already done.
+        var state = await StateAsync(host, runId);
+        state.GetProperty("status").GetString().ShouldBe("failed");
+        state.GetProperty("failure").GetProperty("code").GetString().ShouldBe(SyncRunSupervisor.InternalErrorCode);
+
+        // And the operator can see WHY that run lost its result — the fault is logged at Error against its id, through the
+        // host's scrubbing logger like every other line.
+        logs.Lines.ShouldContain(line =>
+            line.Contains("Finalising upgraded run", StringComparison.Ordinal) && line.Contains(runId.ToString(), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_drain_whose_tail_faults_reports_the_run_it_left_for_recovery()
+    {
+        // The last-resort branch: the store is unusable, so even the minimal internal_error commit throws (the injector
+        // never disarms). The tail then faults — and the drain must SAY so rather than return "clean" while the run is
+        // still running, which is exactly how #167 hid.
+        var holder = new GateHolder();
+        var gate = new RunGate("pg=2");
+        holder.Arm(gate);
+        var injector = new FinalizeCommitInjector(oneShot: false);
+        var logs = new CapturingLoggerProvider();
+        await using var host = await DurableHost.BuildAsync(
+            "crawldad_synccap_drainfault", new GatedFakeBackend(Runner.FixturesRoot, holder), settings: LowThreshold(),
+            configureServices: services =>
+            {
+                services.ConfigureMarten(options => options.Listeners.Add(injector));
+                services.AddSingleton<ILoggerProvider>(logs);
+            });
+
+        var runId = await UpgradeAsync(host, SearchBody("caphome-resume"));
+        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(20));
+        injector.Arm(runId);
+
+        var supervisor = host.Services.GetRequiredService<SyncRunSupervisor>();
+        var drain = supervisor.StopAsync(CancellationToken.None);
+        gate.Release();
+        await drain; // still does not throw: a hosted service that throws from stop aborts the rest of shutdown
+
+        injector.Fired.ShouldBe(2); // both the real finalisation and its internal_error retry reached their commit
+
+        // The drain named the run it could not finish, at Error, with the recovery it depends on.
+        logs.Lines.ShouldContain(line =>
+            line.Contains("faulted while draining", StringComparison.Ordinal) && line.Contains(runId.ToString(), StringComparison.Ordinal));
+
+        // That end state is one the next host REPAIRS rather than strands: the failed commits rolled back, so the run is
+        // still `running` WITH its executor saga intact — precisely what RunRecoveryService re-publishes ExecuteRun for.
+        (await StateAsync(host, runId)).GetProperty("status").GetString().ShouldBe("running");
+        var store = host.Services.GetRequiredService<IDocumentStore>();
+        await using var session = store.QuerySession(TestTenants.PrimaryId);
+        (await session.LoadAsync<RunExecutorSaga>(runId)).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task A_drain_that_times_out_names_the_run_it_leaves_running()
+    {
+        // The other silent path: the drain window elapses with a tail still in flight. Deterministic without a sleep —
+        // the gate is NEVER released while the drain runs, so the tail provably cannot finish, and a short configured
+        // ShutdownDrainMs bounds the wait instead of the 15 s production default.
+        var holder = new GateHolder();
+        var gate = new RunGate("pg=2");
+        holder.Arm(gate);
+        var logs = new CapturingLoggerProvider();
+        await using var host = await DurableHost.BuildAsync(
+            "crawldad_synccap_drainslow", new GatedFakeBackend(Runner.FixturesRoot, holder),
+            settings: [.. LowThreshold(), new KeyValuePair<string, string?>("Crawldad:Limits:ShutdownDrainMs", "150")],
+            configureServices: services => services.AddSingleton<ILoggerProvider>(logs));
+
+        var runId = await UpgradeAsync(host, SearchBody("caphome-resume"));
+        await gate.Reached.WaitAsync(TimeSpan.FromSeconds(20));
+
+        var supervisor = host.Services.GetRequiredService<SyncRunSupervisor>();
+        await supervisor.StopAsync(CancellationToken.None); // the gate still holds the tail: the window must elapse
+
+        // The stranded run is named at Warning with the budget that elapsed, so an operator can see which run the host
+        // walked away from — and the run is still `running`, for the next host's recovery scan to re-drive.
+        logs.Lines.ShouldContain(line =>
+            line.Contains("still in flight when the", StringComparison.Ordinal) && line.Contains(runId.ToString(), StringComparison.Ordinal));
+        (await StateAsync(host, runId)).GetProperty("status").GetString().ShouldBe("running");
+
+        gate.Release(); // let the tail unwind so the host tears down without an orphaned interpreter
+        await DurableHost.PollUntilTerminalAsync(host, runId, DurableHost.PollTimeout);
+    }
+
+    // Throws out of the supervisor's own finalisation commit — identified by the terminal event staged on the target
+    // run's stream — either once (the store recovers, so the internal_error retry commits) or every time (the store is
+    // gone). Every other save in the host passes straight through, so the injection needs no threads and no real fault.
+    private sealed class FinalizeCommitInjector(bool oneShot) : DocumentSessionListenerBase
+    {
+        private Guid _runId;
+        private int _fired;
+
+        public int Fired => Volatile.Read(ref _fired);
+
+        public void Arm(Guid runId) => _runId = runId;
+
+        public override Task BeforeSaveChangesAsync(IDocumentSession session, CancellationToken token)
+        {
+            ArgumentNullException.ThrowIfNull(session);
+            var finalises = session.PendingChanges.Streams()
+                .Any(s => s.Id == _runId && s.Events.Any(e => e.Data is RunSucceeded or RunFailed or RunCancelled));
+            if (!finalises || (oneShot && Fired == 1))
+            {
+                return Task.CompletedTask;
+            }
+
+            Interlocked.Increment(ref _fired);
+            throw new InvalidOperationException("the finalisation commit could not reach the store");
+        }
     }
 
     // ----- helpers -----------------------------------------------------------
@@ -370,6 +517,16 @@ public class SyncCapTests(SyncCapFixture fixture)
         var root = (await accepted.ReadAsJsonAsync<JsonElement>()).Clone();
         root.GetProperty("status").GetString().ShouldBe("running"); // the auto-upgrade 202, not a queued 202
         return root.GetProperty("runId").GetGuid();
+    }
+
+    private static async Task<JsonElement> StateAsync(IAlbaHost host, Guid runId)
+    {
+        var result = await host.Scenario(x =>
+        {
+            x.Get.Url($"/runs/{runId}");
+            x.StatusCodeShouldBe(200);
+        });
+        return (await result.ReadAsJsonAsync<JsonElement>()).Clone();
     }
 
     private static async Task<Guid> DraftSearchPayloadAsync(IAlbaHost host)
