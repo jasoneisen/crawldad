@@ -6,7 +6,9 @@ using Crawldad.Contracts.Runs;
 using Crawldad.Tests.Support;
 using Marten;
 using Marten.Exceptions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Wolverine;
 
 namespace Crawldad.Tests.Integration;
@@ -465,13 +467,25 @@ public class SlotQueueTests
         await using (var promote = store.LightweightSession(TestTenants.PrimaryId))
         {
             await promote.Events.AppendExclusive(runId, new RunDequeued(clock.GetUtcNow(), 0)); // hold the stream lock
+            var promoterPid = await BackendPidAsync(promote); // asked on the promoting session's OWN connection
+
+            // The cancel has to be genuinely in flight to contend for the lock, so it starts on the pool — but the thread
+            // is not the choreography. The SIGNAL is Postgres itself: the commit below waits until a backend is parked in
+            // 'Lock' with pg_blocking_pids naming this promoter, i.e. the cancel's own AppendExclusive is provably blocked
+            // on the row this transaction holds. Asserting that observation is what makes the race non-vacuous: with the
+            // old Task.Delay(400) a slow runner could commit before the cancel ever reached the lock, and the test would
+            // pass having proven nothing. (Marten offers no hook that fires as AppendExclusive blocks — a session
+            // listener only runs at SaveChanges, which is after the lock is already held — so the lock table is the
+            // earliest honest observation point.)
             cancel = Task.Run(() => queue.CancelQueuedAsync(TestTenants.PrimaryId, runId, CancellationToken.None));
-            await Task.Delay(400); // let the cancel reach + block on the same lock
+            var blockedPid = await WaitUntilBlockedByAsync(host, promoterPid);
+            blockedPid.ShouldNotBe(promoterPid); // a second backend, waiting on this one — the cancel, not the promoter
+
             var progress = (await promote.LoadAsync<RunProgress>(runId))!;
             progress.Status = RunStatus.Running;
             promote.Store(progress);
             promote.Delete<QueuedRun>(runId);
-            await promote.SaveChangesAsync(); // promotion wins; releases the lock
+            await promote.SaveChangesAsync(); // promotion wins; releases the lock the cancel is waiting on
         }
 
         (await cancel).ShouldBeFalse(); // the cancel lost the race and committed nothing
@@ -483,6 +497,42 @@ public class SlotQueueTests
         gate.ActiveCount(TestTenants.PrimaryId).ShouldBe(1); // held by the legitimately-running run — NOT leaked by a cancelled zombie
 
         gate.Release(TestTenants.PrimaryId, runId); // cleanup (no executor drives this white-box run)
+    }
+
+    // The backend pid of a session's OWN connection — the lock holder every blocked backend below is measured against.
+    private static async Task<int> BackendPidAsync(IDocumentSession session)
+    {
+        await using var command = session.Connection!.CreateCommand();
+        command.CommandText = "select pg_backend_pid()";
+        return (int)(await command.ExecuteScalarAsync())!;
+    }
+
+    // Waits (bounded, on a THIRD connection so it never contends itself) until some backend is parked on a lock held by
+    // `blockerPid`, and returns its pid. A condition Postgres reports, not a blind delay: pg_blocking_pids is the
+    // authoritative "who is waiting for whom", so a return here means the waiter really is stuck behind the promoter's
+    // row lock. Times out loudly rather than letting the caller proceed on an unproven assumption.
+    private static async Task<int> WaitUntilBlockedByAsync(IAlbaHost host, int blockerPid)
+    {
+        var connectionString = host.Services.GetRequiredService<IConfiguration>().GetConnectionString("marten")!;
+        await using var observer = new NpgsqlConnection(connectionString);
+        await observer.OpenAsync();
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var command = new NpgsqlCommand(
+                "select pid from pg_stat_activity where wait_event_type = 'Lock' and @blocker = any(pg_blocking_pids(pid)) limit 1",
+                observer);
+            command.Parameters.AddWithValue("blocker", blockerPid);
+            if (await command.ExecuteScalarAsync() is int blocked)
+            {
+                return blocked;
+            }
+
+            await Task.Delay(5);
+        }
+
+        throw new TimeoutException($"no backend became blocked on the lock held by backend {blockerPid} within 10s");
     }
 
     // ----- a contended stream lock on the cancel path is a 409, never a 500 ---------
