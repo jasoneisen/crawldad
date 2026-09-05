@@ -22,6 +22,19 @@ public class RunLimitsOptionsValidatorTests
         _validator.Validate(name: null, new RunLimitsOptions { SyncUpgradeThresholdMs = 0 }).Succeeded.ShouldBeTrue();
 
     [Fact]
+    public void Accepts_a_disabled_shutdown_drain() => // 0 means "no drain window", a valid (if unforgiving) posture
+        _validator.Validate(name: null, new RunLimitsOptions { ShutdownDrainMs = 0 }).Succeeded.ShouldBeTrue();
+
+    [Fact]
+    public void Rejects_a_negative_shutdown_drain()
+    {
+        var result = _validator.Validate(name: null, new RunLimitsOptions { ShutdownDrainMs = -1 });
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain(nameof(RunLimitsOptions.ShutdownDrainMs));
+    }
+
+    [Fact]
     public void Rejects_a_negative_sync_upgrade_threshold()
     {
         var result = _validator.Validate(name: null, new RunLimitsOptions { SyncUpgradeThresholdMs = -1 });

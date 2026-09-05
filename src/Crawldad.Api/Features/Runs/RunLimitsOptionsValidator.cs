@@ -22,6 +22,7 @@ public sealed class RunLimitsOptionsValidator : IValidateOptions<RunLimitsOption
         Require(failures, options.MaxQueueDepthPerTenant >= 1, nameof(options.MaxQueueDepthPerTenant), "at least 1");
         Require(failures, options.MaxQueueWaitMs >= 0, nameof(options.MaxQueueWaitMs), "0 or greater (0 disables the bound)");
         Require(failures, options.SyncUpgradeThresholdMs >= 0, nameof(options.SyncUpgradeThresholdMs), "0 or greater (0 upgrades every sync run immediately)");
+        Require(failures, options.ShutdownDrainMs >= 0, nameof(options.ShutdownDrainMs), "0 or greater (0 disables the shutdown drain window)");
 
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
